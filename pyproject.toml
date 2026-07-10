@@ -40,3 +40,6 @@ files = ["src"]
 [tool.coverage.run]
 branch = true
 source = ["ghostlink"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
