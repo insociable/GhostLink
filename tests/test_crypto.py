@@ -1,12 +1,11 @@
 import pytest
-from nacl.exceptions import CryptoError
-
 from ghostlink.crypto import (
     Identity,
     decrypt_message,
     encrypt_message,
     import_public_key,
 )
+from nacl.exceptions import CryptoError
 
 
 def test_two_identities_can_exchange_an_encrypted_message() -> None:
