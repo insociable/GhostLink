@@ -1,5 +1,4 @@
 import pytest
-
 from ghostlink.identity import Identity, derive_ghost_id
 
 
