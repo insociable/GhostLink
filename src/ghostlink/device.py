@@ -1,4 +1,3 @@
-
 """Device identity primitives for GhostLink."""
 
 from __future__ import annotations
@@ -9,6 +8,8 @@ from dataclasses import dataclass
 
 from nacl.public import PrivateKey, PublicKey
 from nacl.signing import SigningKey, VerifyKey
+
+from ghostlink.device_certificate import SignedGhostDeviceCertificate
 
 _DEVICE_ID_PREFIX = "device1:"
 _DOMAIN_SEPARATOR = b"ghostlink-device"
@@ -38,6 +39,8 @@ def derive_device_id(public_key: bytes) -> str:
     )
 
     return f"{_DEVICE_ID_PREFIX}{encoded_digest}"
+
+
 @dataclass(frozen=True, slots=True)
 class GhostDevice:
     """A GhostLink device with separate signing and encryption keys."""
@@ -67,3 +70,16 @@ class GhostDevice:
     def device_id(self) -> str:
         """Return the self-certifying DeviceID."""
         return derive_device_id(bytes(self.signing_verify_key))
+
+
+@dataclass(frozen=True, slots=True)
+class EnrolledGhostDevice:
+    """A GhostDevice associated with its signed certificate."""
+
+    device: GhostDevice
+    certificate: SignedGhostDeviceCertificate
+
+    @property
+    def device_id(self) -> str:
+        """Return the enrolled device identifier."""
+        return self.device.device_id
