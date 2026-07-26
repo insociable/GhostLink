@@ -13,13 +13,17 @@ def test_missing_config_uses_safe_local_defaults(tmp_path: Path) -> None:
 def test_settings_are_loaded_from_toml(tmp_path: Path) -> None:
     config_path = tmp_path / "ghostlink.toml"
     config_path.write_text(
-        '[node]\nhost = "0.0.0.0"\nport = 9000\nlog_level = "DEBUG"\n',
+        '[node]\nhost = "0.0.0.0"\nport = 9000\nlog_level = "DEBUG"\n',  # noqa: S104
         encoding="utf-8",
     )
 
     settings = load_settings(config_path)
 
-    assert settings == NodeSettings(host="0.0.0.0", port=9000, log_level="debug")
+    assert settings == NodeSettings(  # noqa: S104
+        host="0.0.0.0",
+        port=9000,
+        log_level="debug",
+    )
 
 
 @pytest.mark.parametrize("port", [0, 65536])
