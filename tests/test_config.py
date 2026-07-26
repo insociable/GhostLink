@@ -19,8 +19,8 @@ def test_settings_are_loaded_from_toml(tmp_path: Path) -> None:
 
     settings = load_settings(config_path)
 
-    assert settings == NodeSettings(  # noqa: S104
-        host="0.0.0.0",
+    assert settings == NodeSettings(
+        host="0.0.0.0",  # noqa: S104
         port=9000,
         log_level="debug",
     )
