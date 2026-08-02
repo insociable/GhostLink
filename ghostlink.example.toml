@@ -1,0 +1,6 @@
+[node]
+# Use 127.0.0.1 for local-only access.
+# Use 0.0.0.0 only when the node must accept network connections.
+host = "127.0.0.1"
+port = 8000
+log_level = "info"

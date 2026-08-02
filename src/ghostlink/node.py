@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from fastapi import FastAPI, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 
+from ghostlink.config import NodeSettings, load_settings
+
 
 class MessageEnvelope(BaseModel):
     """Encrypted message envelope accepted by GhostNode."""
@@ -71,15 +73,18 @@ class InMemoryMessageStore:
 
 def create_app(
     store: InMemoryMessageStore | None = None,
+    settings: NodeSettings | None = None,
 ) -> FastAPI:
     """Create the GhostNode FastAPI application."""
     message_store = store or InMemoryMessageStore()
+    node_settings = settings or NodeSettings()
 
     app = FastAPI(
         title="GhostNode",
         version="0.1.0",
         description="Ciphertext-only relay for GhostLink.",
     )
+    app.state.settings = node_settings
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -120,5 +125,21 @@ def create_app(
     return app
 
 
+def main() -> None:
+    """Run GhostNode using settings from ghostlink.toml."""
+    import uvicorn
+
+    settings = load_settings()
+    uvicorn.run(
+        "ghostlink.node:app",
+        host=settings.host,
+        port=settings.port,
+        log_level=settings.log_level,
+    )
+
+
 app = create_app()
 
+
+if __name__ == "__main__":
+    main()
