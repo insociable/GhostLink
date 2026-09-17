@@ -1,7 +1,6 @@
 from dataclasses import replace
 
 import pytest
-
 from ghostlink.device import PublicGhostDevice
 from ghostlink.entity import GhostEntity
 
