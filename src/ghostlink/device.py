@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from nacl.public import PrivateKey, PublicKey
 from nacl.signing import SigningKey, VerifyKey
 
-from ghostlink.device_certificate import SignedGhostDeviceCertificate
+from ghostlink.device_certificate import (
+    SignedGhostDeviceCertificate,
+    verify_device_certificate,
+)
+from ghostlink.identity import derive_ghost_id
 
 _DEVICE_ID_PREFIX = "device1:"
 _DOMAIN_SEPARATOR = b"ghostlink-device"
@@ -73,6 +77,43 @@ class GhostDevice:
 
 
 @dataclass(frozen=True, slots=True)
+class PublicGhostDevice:
+    """Verified public information for a remote GhostLink device."""
+
+    ghost_id: str
+    device_id: str
+    signing_verify_key: VerifyKey
+    encryption_public_key: PublicKey
+
+    @classmethod
+    def from_certificate(
+        cls,
+        signed_certificate: SignedGhostDeviceCertificate,
+        identity_verify_key: VerifyKey,
+    ) -> PublicGhostDevice:
+        """Build a public peer only after validating its identity certificate."""
+        certificate = signed_certificate.certificate
+
+        expected_ghost_id = derive_ghost_id(bytes(identity_verify_key))
+        if certificate.ghost_id != expected_ghost_id:
+            raise ValueError("certificate GhostID does not match identity key")
+
+        expected_device_id = derive_device_id(certificate.signing_public_key)
+        if certificate.device_id != expected_device_id:
+            raise ValueError("certificate DeviceID does not match signing key")
+
+        if not verify_device_certificate(signed_certificate, identity_verify_key):
+            raise ValueError("device certificate signature is invalid")
+
+        return cls(
+            ghost_id=certificate.ghost_id,
+            device_id=certificate.device_id,
+            signing_verify_key=VerifyKey(certificate.signing_public_key),
+            encryption_public_key=PublicKey(certificate.encryption_public_key),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class EnrolledGhostDevice:
     """A GhostDevice associated with its signed certificate."""
 
@@ -83,3 +124,13 @@ class EnrolledGhostDevice:
     def device_id(self) -> str:
         """Return the enrolled device identifier."""
         return self.device.device_id
+
+    def public_device(self) -> PublicGhostDevice:
+        """Return the public-only representation safe to share with peers."""
+        certificate = self.certificate.certificate
+        return PublicGhostDevice(
+            ghost_id=certificate.ghost_id,
+            device_id=certificate.device_id,
+            signing_verify_key=self.device.signing_verify_key,
+            encryption_public_key=self.device.encryption_public_key,
+        )
