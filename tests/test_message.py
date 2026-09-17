@@ -16,18 +16,18 @@ def create_two_devices():
     return alice.enroll_device(), bob.enroll_device()
 
 
-def test_message_can_be_encrypted_and_decrypted() -> None:
+def test_message_can_be_encrypted_and_decrypted_with_public_peer_keys() -> None:
     alice_device, bob_device = create_two_devices()
 
     message = encrypt_message(
         sender=alice_device,
-        recipient=bob_device,
+        recipient=bob_device.public_device(),
         plaintext=b"Bonjour Bob",
     )
 
     plaintext = decrypt_message(
         recipient=bob_device,
-        sender=alice_device,
+        sender=alice_device.public_device(),
         message=message,
     )
 
@@ -40,7 +40,7 @@ def test_plaintext_is_not_visible_in_ciphertext() -> None:
 
     message = encrypt_message(
         sender=alice_device,
-        recipient=bob_device,
+        recipient=bob_device.public_device(),
         plaintext=plaintext,
     )
 
@@ -53,7 +53,7 @@ def test_wrong_recipient_cannot_decrypt_message() -> None:
 
     message = encrypt_message(
         sender=alice_device,
-        recipient=bob_device,
+        recipient=bob_device.public_device(),
         plaintext=b"secret",
     )
 
@@ -63,7 +63,7 @@ def test_wrong_recipient_cannot_decrypt_message() -> None:
     ):
         decrypt_message(
             recipient=mallory_device,
-            sender=alice_device,
+            sender=alice_device.public_device(),
             message=message,
         )
 
@@ -73,7 +73,7 @@ def test_modified_ciphertext_is_rejected() -> None:
 
     message = encrypt_message(
         sender=alice_device,
-        recipient=bob_device,
+        recipient=bob_device.public_device(),
         plaintext=b"secret",
     )
 
@@ -88,7 +88,7 @@ def test_modified_ciphertext_is_rejected() -> None:
     ):
         decrypt_message(
             recipient=bob_device,
-            sender=alice_device,
+            sender=alice_device.public_device(),
             message=modified_message,
         )
 
@@ -102,7 +102,7 @@ def test_empty_plaintext_is_rejected() -> None:
     ):
         encrypt_message(
             sender=alice_device,
-            recipient=bob_device,
+            recipient=bob_device.public_device(),
             plaintext=b"",
         )
 
@@ -112,7 +112,7 @@ def test_unsupported_message_version_is_rejected() -> None:
 
     message = encrypt_message(
         sender=alice_device,
-        recipient=bob_device,
+        recipient=bob_device.public_device(),
         plaintext=b"secret",
     )
 
@@ -124,6 +124,6 @@ def test_unsupported_message_version_is_rejected() -> None:
     ):
         decrypt_message(
             recipient=bob_device,
-            sender=alice_device,
+            sender=alice_device.public_device(),
             message=invalid_message,
         )
