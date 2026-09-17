@@ -124,10 +124,14 @@ def export_contact_bundle(
     device: EnrolledGhostDevice,
 ) -> str:
     """Export a deterministic JSON bundle containing public contact data only."""
-    public_device = PublicGhostDevice.from_certificate(
-        device.certificate,
-        entity.verify_key,
-    )
+    try:
+        public_device = PublicGhostDevice.from_certificate(
+            device.certificate,
+            entity.verify_key,
+        )
+    except ValueError as exc:
+        raise ContactBundleError(str(exc)) from exc
+
     certificate = device.certificate.certificate
 
     document = {
@@ -172,19 +176,18 @@ def import_contact_bundle(serialized: str) -> VerifiedContact:
         _SIGNATURE_SIZE,
     )
 
-    certificate = GhostDeviceCertificate(
-        ghost_id=ghost_id,
-        device_id=device_id,
-        signing_public_key=signing_public_key,
-        encryption_public_key=encryption_public_key,
-    )
-    signed_certificate = SignedGhostDeviceCertificate(
-        certificate=certificate,
-        signature=signature,
-    )
-    identity_verify_key = VerifyKey(identity_public_key)
-
     try:
+        certificate = GhostDeviceCertificate(
+            ghost_id=ghost_id,
+            device_id=device_id,
+            signing_public_key=signing_public_key,
+            encryption_public_key=encryption_public_key,
+        )
+        signed_certificate = SignedGhostDeviceCertificate(
+            certificate=certificate,
+            signature=signature,
+        )
+        identity_verify_key = VerifyKey(identity_public_key)
         public_device = PublicGhostDevice.from_certificate(
             signed_certificate,
             identity_verify_key,
