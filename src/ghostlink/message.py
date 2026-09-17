@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from nacl.exceptions import CryptoError
 from nacl.public import Box
 
-from ghostlink.device import EnrolledGhostDevice
+from ghostlink.device import EnrolledGhostDevice, PublicGhostDevice
 
 _MESSAGE_VERSION = 1
 
@@ -54,10 +54,10 @@ class GhostMessage:
 
 def encrypt_message(
     sender: EnrolledGhostDevice,
-    recipient: EnrolledGhostDevice,
+    recipient: PublicGhostDevice,
     plaintext: bytes,
 ) -> GhostMessage:
-    """Encrypt and authenticate a message for one recipient device."""
+    """Encrypt and authenticate a message for one public recipient device."""
     if not plaintext:
         raise ValueError("plaintext must not be empty")
 
@@ -72,7 +72,7 @@ def encrypt_message(
 
     box = Box(
         sender.device.encryption_key,
-        recipient.device.encryption_public_key,
+        recipient.encryption_public_key,
     )
 
     return GhostMessage(
@@ -85,10 +85,10 @@ def encrypt_message(
 
 def decrypt_message(
     recipient: EnrolledGhostDevice,
-    sender: EnrolledGhostDevice,
+    sender: PublicGhostDevice,
     message: GhostMessage,
 ) -> bytes:
-    """Decrypt and validate a message received from one sender device."""
+    """Decrypt and validate a message received from one public sender device."""
     if message.version != _MESSAGE_VERSION:
         raise MessageDecryptionError("unsupported message version")
 
@@ -100,7 +100,7 @@ def decrypt_message(
 
     box = Box(
         recipient.device.encryption_key,
-        sender.device.encryption_public_key,
+        sender.encryption_public_key,
     )
 
     try:
