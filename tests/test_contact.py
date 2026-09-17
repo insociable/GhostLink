@@ -75,6 +75,19 @@ def test_contact_bundle_rejects_wrong_identity_public_key() -> None:
         import_contact_bundle(json.dumps(document))
 
 
+def test_contact_bundle_rejects_invalid_ghost_id_format() -> None:
+    alice = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    document = json.loads(export_contact_bundle(alice, alice_device))
+    document["ghost_id"] = "invalid"
+
+    with pytest.raises(
+        ContactBundleError,
+        match="ghost_id must use the ghost1 format",
+    ):
+        import_contact_bundle(json.dumps(document))
+
+
 def test_contact_bundle_rejects_unknown_version() -> None:
     alice = GhostEntity.generate()
     alice_device = alice.enroll_device()
