@@ -14,15 +14,18 @@ def main() -> None:
     alice_device = alice.enroll_device()
     bob_device = bob.enroll_device()
 
+    alice_public_device = alice_device.public_device()
+    bob_public_device = bob_device.public_device()
+
     message = encrypt_message(
         sender=alice_device,
-        recipient=bob_device,
+        recipient=bob_public_device,
         plaintext=b"Hello GhostLink!",
     )
 
     plaintext = decrypt_message(
         recipient=bob_device,
-        sender=alice_device,
+        sender=alice_public_device,
         message=message,
     )
 
