@@ -1,58 +1,41 @@
-# M3 GhostNode client transport — Protocol v2
+# M3 GhostNode client transport — Current runtime
 
-The M3 client transport connects a local GhostLink client to a GhostNode relay using the canonical protocol-v2 envelope.
+`ghostlink.client.GhostNodeClient` is the synchronous HTTP transport used by the current ratcheted GhostLink runtime.
 
-## Boundary
+## Current API
 
-The transport layer receives a `GhostMessage` that has already been encrypted locally. It never receives the plaintext used to create that message and does not perform cryptographic message construction itself.
-
-The relay exchange is:
-
-1. construct and encrypt the authenticated protocol-v2 message locally;
-2. Base64-encode ciphertext for JSON transport;
-3. submit the envelope to `POST /v2/messages`;
-4. retrieve encrypted envelopes with `GET /v2/messages/{device_id}`;
-5. authenticate/decrypt locally with the verified sender public device;
-6. validate authenticated lifecycle metadata;
-7. record the message ID in persistent replay state before display;
-8. delete the relay copy after successful processing unless development `--keep` is enabled.
-
-## Client API
-
-`ghostlink.client.GhostNodeClient` exposes:
+The client exposes:
 
 - `health()`;
-- `send(message)`;
-- `receive(recipient_device_id)`;
-- `delete(recipient_device_id, message_id)`.
+- `send_ratchet(...)`;
+- `receive_ratchet(...)`;
+- `delete_ratchet(...)`;
+- `publish_prekeys(...)`;
+- `fetch_prekey(...)`;
+- `prekey_status(...)`.
 
-Version-specific V1 client methods have been removed.
+The historical static-v2 `send`, `receive` and `delete` message methods have been removed.
 
-The transport intentionally uses Python's standard HTTP stack so it does not add another runtime HTTP dependency.
+## Message boundary
+
+Protocol-v3 message operations transport opaque libsignal ciphertext envelopes. Submission is authenticated by the sender DeviceID; mailbox list/delete are authenticated by the recipient DeviceID. Request proofs bind the HTTP method, canonical path, request body digest where applicable, freshness timestamp and random request ID.
+
+The optional shared Bearer token is only an additional coarse relay access-control layer.
+
+## Pre-key boundary
+
+The `/v2/prekeys/...` routes remain current. Their `v2` namespace does not mean they are part of the retired static-v2 message relay.
+
+Publication, fetch and status operations use their documented DeviceID/request proofs and strict response validation before ratchet state is mutated.
 
 ## Response validation
 
-The client validates:
+The client validates absolute HTTP(S) base URLs without embedded credentials, expected status codes, exact response fields, canonical DeviceIDs and message IDs, bounded integers and canonical Base64 ciphertext.
 
-- an absolute HTTP(S) base URL without embedded credentials;
-- expected HTTP status codes;
-- exact protocol-v2 response fields;
-- protocol version `2`;
-- canonical 128-bit lowercase hexadecimal message IDs;
-- canonical `device1:` identifiers;
-- non-negative integer lifecycle timestamps;
-- valid Base64 ciphertext;
-- a maximum decoded ciphertext size of 1 MiB;
-- exact equality between a submitted encrypted envelope and the relay response.
-
-Cryptographic lifecycle validation is performed by the message layer after authenticated decryption, not by trusting the relay response.
+Current ratcheted message parsing is version-pinned to protocol v3.
 
 ## Security status
 
-The optional shared Bearer token is coarse relay access control, not per-device identity authentication.
+GhostNode remains outside the end-to-end trust boundary. Relay/client anti-rollback, key transparency, abuse controls, device revocation/recovery and independent review remain open hardening areas.
 
-Persistent recipient-side replay protection is implemented separately from relay deduplication. GhostNode remains outside the end-to-end trust boundary.
-
-Trusted TLS, per-device relay authentication, ratcheting, forward secrecy, traffic-analysis resistance, and independent cryptographic review remain future hardening work.
-
-GhostLink remains experimental and is not suitable for sensitive real-world communications yet.
+The retired `/v2/messages...` surface is not a fallback or compatibility path.

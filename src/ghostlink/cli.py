@@ -29,9 +29,7 @@ from ghostlink.contact_store import (
     load_contact_store,
     save_contact_store,
 )
-from ghostlink.entity import GhostEntity
 from ghostlink.identity import derive_identity_fingerprint
-from ghostlink.message import decrypt_message, encrypt_message
 from ghostlink.profile import (
     LocalProfile,
     ProfileError,
@@ -503,53 +501,6 @@ def _command_node_health(
     return 0
 
 
-def _command_node_smoke(
-    args: argparse.Namespace,
-    node_client_factory: NodeClientFactory,
-) -> int:
-    """Run the retained ephemeral static protocol-v2 relay smoke."""
-    client = node_client_factory(args.node)
-    if not client.health():
-        raise CLIError("GhostNode returned an unhealthy status")
-
-    alice = GhostEntity.generate()
-    bob = GhostEntity.generate()
-    alice_device = alice.enroll_device()
-    bob_device = bob.enroll_device()
-    expected_plaintext = b"ghostlink-e2ee-smoke-v2"
-
-    message = encrypt_message(
-        sender=alice_device,
-        recipient=bob_device.public_device(),
-        plaintext=expected_plaintext,
-    )
-    client.send(message)
-
-    try:
-        received = next(
-            (
-                candidate
-                for candidate in client.receive(bob_device.device_id)
-                if candidate.message_id == message.message_id
-            ),
-            None,
-        )
-        if received is None:
-            raise CLIError("smoke message was not returned by GhostNode")
-
-        plaintext = decrypt_message(
-            recipient=bob_device,
-            sender=alice_device.public_device(),
-            message=received,
-        )
-        if plaintext != expected_plaintext:
-            raise CLIError("smoke message plaintext did not round-trip correctly")
-    finally:
-        client.delete(bob_device.device_id, message.message_id)
-
-    print("GhostNode legacy static V2 smoke test passed")
-    return 0
-
 
 def _command_prekey_sync(
     args: argparse.Namespace,
@@ -810,12 +761,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     health_parser.add_argument("--node", required=True)
 
-    smoke_parser = subparsers.add_parser(
-        "node-smoke",
-        help="run the retained static-v2 relay smoke test",
-    )
-    smoke_parser.add_argument("--node", required=True)
-
     sync_parser = subparsers.add_parser(
         "prekey-sync",
         help="publish or maintain this device's ratchet pre-keys",
@@ -913,8 +858,6 @@ def run(
             return _command_contact_reject_change(args, password_reader)
         if args.command == "node-health":
             return _command_node_health(args, node_client_factory)
-        if args.command == "node-smoke":
-            return _command_node_smoke(args, node_client_factory)
         if args.command == "prekey-sync":
             return _command_prekey_sync(
                 args,

@@ -90,7 +90,7 @@ def _payload(message: RatchetMessage) -> dict[str, object]:
     }
 
 
-def test_v3_message_round_trip_is_device_authenticated_and_v2_isolated() -> None:
+def test_v3_message_round_trip_is_device_authenticated_and_static_v2_absent() -> None:
     alice = GhostEntity.generate().enroll_device()
     bob = GhostEntity.generate().enroll_device()
     api_client = TestClient(create_app())
@@ -101,8 +101,7 @@ def test_v3_message_round_trip_is_device_authenticated_and_v2_isolated() -> None
     assert node.receive_ratchet(bob) == [message]
 
     static = api_client.get(f"/v2/messages/{bob.device_id}")
-    assert static.status_code == 200
-    assert static.json() == []
+    assert static.status_code == 404
 
     node.delete_ratchet(bob, message.message_id)
     assert node.receive_ratchet(bob) == []

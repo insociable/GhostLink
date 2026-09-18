@@ -21,7 +21,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 
 ## M2 — Relay
 
-- [x] DeviceID-authenticated protocol-v3 message API with signed request replay protection (legacy static-v2 remains bearer-only diagnostic);
+- [x] DeviceID-authenticated protocol-v3 message API with signed request replay protection; historical static-v2 message relay retired;
 - [x] ciphertext-only storage;
 - [x] persistent SQLite storage option;
 - [ ] explicit delivery acknowledgement protocol;

@@ -177,13 +177,9 @@ This limitation MUST remain documented in the threat model and MUST NOT be descr
 
 ## Legacy protocol v2
 
-The static `/v2/messages` surface is retained only as an explicit legacy/diagnostic compatibility path.
+At the time of this ADR, the static `/v2/messages` surface was retained as a separate legacy path and was deliberately not upgraded here.
 
-It is not upgraded by this ADR and remains protected only by the optional shared Bearer access-control mechanism.
-
-GhostLink user-facing `send` / `inbox` do not fall back to this surface.
-
-A production public deployment MUST NOT treat legacy v2 as an authenticated user messaging API.
+That historical decision has since been superseded by ADR-0007: the static-v2 message relay is removed from the reference runtime. The `/v2/prekeys/...` ratchet bootstrap API remains current.
 
 ## Metadata consequences
 
@@ -243,5 +239,4 @@ Costs and limitations:
 - the request proof adds public metadata and signature-verification cost;
 - complete device revocation/recovery is still unsolved;
 - relay database rollback can also roll back the persisted request-replay cache;
-- legacy static-v2 relay operations remain bearer-only;
 - TLS, anti-abuse, key transparency and independent review remain required.

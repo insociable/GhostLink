@@ -944,12 +944,9 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
         bob_profile.read_text(encoding="utf-8"),
         unlock_phrase,
     )
-    assert (
-        api_client.get(
-            f"/v2/messages/{bob_profile_data.device.device_id}"
-        ).json()
-        == []
-    )
+    assert api_client.get(
+        f"/v2/messages/{bob_profile_data.device.device_id}"
+    ).status_code == 404
     assert len(
         api_client.get(
             f"/v3/messages/{bob_profile_data.device.device_id}"
@@ -1005,12 +1002,9 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
         alice_pool_after_reply.remaining_one_time_count
         == alice_pool_before_reply.remaining_one_time_count
     )
-    assert (
-        api_client.get(
-            f"/v2/messages/{alice_profile_data.device.device_id}"
-        ).json()
-        == []
-    )
+    assert api_client.get(
+        f"/v2/messages/{alice_profile_data.device.device_id}"
+    ).status_code == 404
 
     assert run_cli(
         [
