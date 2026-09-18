@@ -32,7 +32,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - bounded local Python-to-libsignal framed RPC with real cross-language PQXDH/restart smoke tests;
 - randomized collision-checked pre-key identifiers while retaining delayed-message private pre-key state;\n- documented production ratchet pre-key lifecycle with signed publication generations, one-time bundle pools, last-resort Kyber fallback, monotonic sequence continuity and bounded delayed-key retention;
 - ratchet binding v2 with device-signed publication sequence and explicit one-time/fallback bundle roles;
-- lifecycle-aware ratchet vault snapshots with v1 state migration and encrypted pending/active/retired pre-key generation metadata.
+- lifecycle-aware ratchet vault snapshots with v1 state migration and encrypted pending/active/retired pre-key generation metadata;
+- atomic pending pre-key generation preparation with shared signed EC material, one-time EC/Kyber pairs and a reusable Kyber last-resort fallback bundle.
 
 ### Security
 
