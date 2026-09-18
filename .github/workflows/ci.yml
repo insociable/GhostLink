@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate Compose configuration
-        run: docker compose config --quiet
+        run: GHOSTLINK_NODE_TOKEN=ci-placeholder docker compose config --quiet
 
       - name: Build GhostNode image
         run: docker build --tag ghostlink-ci .
