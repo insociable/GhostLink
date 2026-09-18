@@ -732,7 +732,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify_parser = subparsers.add_parser(
         "contact-verify",
-        help="verify a public contact bundle",
+        help="cryptographically validate a public contact bundle",
     )
     verify_parser.add_argument("bundle")
 
