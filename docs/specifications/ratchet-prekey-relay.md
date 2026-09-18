@@ -156,13 +156,29 @@ It cannot silently alter a binding without invalidating the DeviceID signature.
 
 This API does not provide key transparency.
 
+## Client publication orchestration
+
+The application layer now performs publication as one crash-safe workflow:
+
+1. recover or prepare the exact staged signed publication;
+2. submit it to GhostNode with the self-certifying DeviceID signing public key;
+3. require HTTP 200;
+4. parse the receipt with exact fields and bounded integer values;
+5. require receipt DeviceID, publication sequence, expiration and one-time count to equal the locally staged publication;
+6. only then call the local ratchet-engine publication commit.
+
+A successful HTTP status alone is not sufficient to mutate local lifecycle state.
+
+If the relay stores the generation but the response is lost, the local state remains pending. Restart retries the exact staged payload; GhostNode's same-sequence exact retry is idempotent.
+
+If the relay returns a malformed or mismatched receipt, the client fails closed and leaves the generation pending.
+
 ## Current limitations
 
 - shared Bearer access control is not general per-device authentication for the message relay;
 - publication authorization is cryptographic for the target DeviceID, but revocation policy is not yet implemented;
 - relay database rollback protection is not implemented;
 - fetch/pop and anti-drain are not implemented;
-- the client-side pending -> active acknowledgement primitive is implemented, but HTTP publication orchestration/receipt validation is not yet wired;
 - replenishment, rotation and GC execution are not implemented.
 
 GhostLink remains pre-alpha and has not undergone an independent cryptographic/protocol audit.

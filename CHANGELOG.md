@@ -37,7 +37,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - atomic pending pre-key generation preparation with shared signed EC material, one-time EC/Kyber pairs and a reusable Kyber last-resort fallback bundle;
 - crash-safe DeviceID-signed pre-key publication staging with exact payload recovery and local re-verification after restart;
 - GhostNode cryptographically authenticated pre-key publication with strict per-DeviceID sequencing and atomic SQLite replacement;
-- atomic idempotent local publication acknowledgement that promotes staged generations and retains the previous active generation for delayed messages.
+- atomic idempotent local publication acknowledgement that promotes staged generations and retains the previous active generation for delayed messages;
+- strict GhostNode publication orchestration that validates the complete relay receipt before committing local ratchet lifecycle state.
 
 ### Security
 

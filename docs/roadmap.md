@@ -63,7 +63,8 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] signed publication staging and crash-safe pending recovery;
 - [x] authenticated atomic relay publication and persistent public pool state;
 - [x] atomic local publication acknowledgement commit with retired-generation retention;
-- [ ] HTTP publication orchestration, fetch/anti-drain, replenishment/rotation/GC;
+- [x] strict HTTP publication orchestration with receipt validation and crash-safe retry;
+- [ ] fetch/anti-drain, replenishment/rotation/GC;
 - [ ] ratcheted relay envelope and CLI cutover;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;

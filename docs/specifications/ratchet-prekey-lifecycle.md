@@ -407,9 +407,16 @@ Local acknowledgement commit is now implemented:
 - unstaged, mismatched, expired or time-inconsistent acknowledgements fail closed;
 - retired generations are never silently dropped when the bounded history is full.
 
+Application HTTP publication orchestration is now implemented:
+
+- exact staged payloads are submitted through the canonical GhostNode client;
+- relay receipts are parsed with exact fields and strict bounds;
+- DeviceID, publication sequence, expiration and one-time count must match local staged state;
+- malformed/mismatched receipts do not commit lifecycle state;
+- connection loss after relay acceptance leaves the generation pending for exact idempotent retry.
+
 The following are still pending:
 
-- application HTTP publication orchestration and receipt validation;
 - atomic relay fetch/pop and anti-drain controls;
 - replenishment and rotation decisions;
 - delayed-key garbage collection.

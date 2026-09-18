@@ -49,7 +49,10 @@ The current codebase includes:
 - encrypted persistent ratchet/pre-key vault state;
 - DeviceID-signed binding-v2 pre-key publications;
 - crash-safe exact publication staging;
+- atomic/idempotent local publication acknowledgement from pending to active with retired-generation retention;
 - GhostNode verification of DeviceID control before accepting a pre-key publication;
+- strict client-side relay receipt validation before local lifecycle commit;
+- exact staged-payload retry after ambiguous network failure;
 - monotonic relay publication sequence checks within the current relay database state.
 
 These are implemented building blocks, not a production-security certification.
@@ -62,7 +65,6 @@ Before a ratcheted production cutover GhostLink still lacks:
 - relay database anti-rollback protection;
 - key transparency;
 - pre-key fetch/pop anti-drain and rate limiting;
-- local pending -> active acknowledgement handling;
 - automated pre-key replenishment and rotation execution;
 - delayed-key garbage collection;
 - complete device revocation and recovery design;
