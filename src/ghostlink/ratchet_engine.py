@@ -819,6 +819,11 @@ class RatchetEngineClient:
             key_copy[:] = b"\x00" * len(key_copy)
 
     @property
+    def local_device_id(self) -> str:
+        """Return the DeviceID bound to this ratchet engine instance."""
+        return self._local_device.device_id
+
+    @property
     def process_id(self) -> int:
         """Return the child process ID for diagnostics/tests."""
         return self._process.pid
