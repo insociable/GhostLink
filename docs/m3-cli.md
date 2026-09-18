@@ -82,7 +82,7 @@ unlock profile v2
   -> highest-seen sequence enforcement
   -> libsignal session establishment
   -> protocol-v3 context-bound encryption
-  -> POST /v3/messages
+  -> DeviceID-sign POST /v3/messages
 ```
 
 An existing durable session is reused. The client does not fetch a new pre-key on every send.
@@ -97,6 +97,8 @@ ghostlink inbox \
   --contact alice.contact \
   --node https://node.example.net
 ```
+
+The mailbox GET and delivered-message DELETE operations are signed by the local recipient DeviceID before GhostNode accepts them.
 
 For each candidate from the expected sender, the inbox:
 
@@ -146,7 +148,9 @@ The ratchet vault master key is inside the encrypted profile, not in the vault f
 
 `GHOSTLINK_NODE_TOKEN` remains optional shared relay access control when configured by GhostNode.
 
-It is not per-device cryptographic authentication and does not replace end-to-end verification.
+For protocol-v3 message operations it is only an additional coarse access-control layer. The client separately signs each POST/GET/DELETE request with the local DeviceID signing key; GhostNode verifies method/path/body binding, freshness and request-ID replay before allowing the operation.
+
+The Bearer token does not replace DeviceID request authentication or end-to-end libsignal/contact verification. Legacy static-v2 diagnostic message routes remain bearer-only.
 
 ## Diagnostic smoke
 
@@ -160,4 +164,4 @@ This command intentionally exercises the retained static-v2 compatibility path a
 
 The CLI cutover demonstrates the implemented v3/libsignal path across separate process invocations and persistent encrypted vault state.
 
-GhostLink remains pre-alpha. General per-device message-relay authentication, relay/client anti-rollback hardening, key transparency, production ingress hardening, revocation/recovery and independent cryptographic review remain open.
+GhostLink remains pre-alpha. Relay/client anti-rollback hardening, key transparency, production ingress hardening, device revocation/recovery, legacy-v2 hardening/removal and independent cryptographic review remain open.
