@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from nacl import utils
 from nacl.pwhash import argon2id
 from nacl.secret import SecretBox
-
 import ghostlink.cli as cli_module
 from ghostlink.cli import run
 from ghostlink.client import GhostNodeClient, GhostNodeRequestError
