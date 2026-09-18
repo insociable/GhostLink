@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import os
-import secrets
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
@@ -16,6 +15,8 @@ from fastapi import FastAPI, Header, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from ghostlink.config import NodeSettings, load_settings
+from ghostlink.relay_auth import require_relay_access
+from ghostlink.relay_v2 import create_v2_message_store, create_v2_router
 
 _MESSAGE_VERSION = 1
 _MAX_CIPHERTEXT_BYTES = 1_048_576
@@ -253,23 +254,6 @@ def create_message_store(settings: NodeSettings) -> MessageStore:
     return SQLiteMessageStore(settings.database_path)
 
 
-def _require_access(
-    settings: NodeSettings,
-    authorization: str | None,
-) -> None:
-    """Require the configured shared Bearer token for relay operations."""
-    if settings.access_token is None:
-        return
-
-    expected = f"Bearer {settings.access_token}"
-    if authorization is None or not secrets.compare_digest(authorization, expected):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="unauthorized",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
 def create_app(
     store: MessageStore | None = None,
     settings: NodeSettings | None = None,
@@ -281,6 +265,7 @@ def create_app(
         if store is not None
         else create_message_store(node_settings)
     )
+    v2_message_store = create_v2_message_store(node_settings)
 
     app = FastAPI(
         title="GhostNode",
@@ -288,11 +273,12 @@ def create_app(
         description="Ciphertext-only relay for GhostLink.",
     )
     app.state.settings = node_settings
+    app.include_router(create_v2_router(node_settings, v2_message_store))
 
     @app.get("/health")
     def health() -> dict[str, str]:
         """Return node health status, including relay storage availability."""
-        if not message_store.is_healthy():
+        if not message_store.is_healthy() or not v2_message_store.is_healthy():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="storage unavailable",
@@ -310,7 +296,7 @@ def create_app(
         authorization: Annotated[str | None, Header()] = None,
     ) -> StoredMessage:
         """Store one encrypted message envelope."""
-        _require_access(node_settings, authorization)
+        require_relay_access(node_settings, authorization)
         return message_store.add(envelope)
 
     @app.get(
@@ -322,7 +308,7 @@ def create_app(
         authorization: Annotated[str | None, Header()] = None,
     ) -> list[StoredMessage]:
         """Return encrypted messages addressed to one device."""
-        _require_access(node_settings, authorization)
+        require_relay_access(node_settings, authorization)
         return message_store.list_for_recipient(recipient_device_id)
 
     @app.delete(
@@ -334,7 +320,7 @@ def create_app(
         authorization: Annotated[str | None, Header()] = None,
     ) -> Response:
         """Delete a delivered encrypted message."""
-        _require_access(node_settings, authorization)
+        require_relay_access(node_settings, authorization)
         if not message_store.delete(message_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

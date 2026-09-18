@@ -12,6 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ghostlink.message import GhostMessage
+from ghostlink.message_v2 import MESSAGE_VERSION as V2_MESSAGE_VERSION
+from ghostlink.message_v2 import GhostMessageV2
 
 _MESSAGE_VERSION = 1
 _MAX_CIPHERTEXT_BYTES = 1_048_576
@@ -25,6 +27,17 @@ _EXPECTED_STORED_FIELDS = {
     "recipient_device_id",
     "ciphertext",
 }
+_EXPECTED_V2_FIELDS = {
+    "version",
+    "message_id",
+    "sender_device_id",
+    "recipient_device_id",
+    "created_at",
+    "expires_at",
+    "ciphertext",
+}
+_MESSAGE_ID_LENGTH = 32
+_HEX_ALPHABET = frozenset("0123456789abcdef")
 
 RequestFunction = Callable[
     [str, str, dict[str, object] | None, float, dict[str, str]],
@@ -164,6 +177,30 @@ def _require_version(document: dict[str, object]) -> int:
     return value
 
 
+def _require_v2_version(document: dict[str, object]) -> int:
+    value = document.get("version")
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise GhostNodeProtocolError("version must be an integer")
+    if value != V2_MESSAGE_VERSION:
+        raise GhostNodeProtocolError("unsupported protocol-v2 message version")
+    return value
+
+
+def _require_timestamp(document: dict[str, object], field: str) -> int:
+    value = document.get(field)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise GhostNodeProtocolError(f"{field} must be a non-negative integer")
+    return value
+
+
+def _validate_message_id(value: str) -> str:
+    if len(value) != _MESSAGE_ID_LENGTH:
+        raise GhostNodeProtocolError("message_id has an invalid length")
+    if value != value.lower() or any(character not in _HEX_ALPHABET for character in value):
+        raise GhostNodeProtocolError("message_id must be lowercase hexadecimal")
+    return value
+
+
 def _decode_ciphertext(value: str) -> bytes:
     try:
         ciphertext = base64.b64decode(value, validate=True)
@@ -210,6 +247,34 @@ def _parse_stored_message(value: object) -> StoredGhostMessage:
             recipient_device_id=recipient_device_id,
             ciphertext=_decode_ciphertext(ciphertext_text),
         ),
+    )
+
+
+def _parse_v2_message(value: object) -> GhostMessageV2:
+    document = _require_mapping(value, "protocol-v2 message")
+    if set(document) != _EXPECTED_V2_FIELDS:
+        raise GhostNodeProtocolError(
+            "protocol-v2 message fields do not match the specification"
+        )
+
+    message_id = _validate_message_id(_require_text(document, "message_id"))
+    sender_device_id = _validate_device_id(
+        _require_text(document, "sender_device_id"),
+        "sender_device_id",
+    )
+    recipient_device_id = _validate_device_id(
+        _require_text(document, "recipient_device_id"),
+        "recipient_device_id",
+    )
+
+    return GhostMessageV2(
+        version=_require_v2_version(document),
+        message_id=message_id,
+        sender_device_id=sender_device_id,
+        recipient_device_id=recipient_device_id,
+        created_at=_require_timestamp(document, "created_at"),
+        expires_at=_require_timestamp(document, "expires_at"),
+        ciphertext=_decode_ciphertext(_require_text(document, "ciphertext")),
     )
 
 
@@ -328,6 +393,79 @@ class GhostNodeClient:
             )
 
         return [_parse_stored_message(item) for item in body]
+
+    def send_v2(self, message: GhostMessageV2) -> str:
+        """Submit one protocol-v2 encrypted envelope."""
+        payload: dict[str, object] = {
+            "version": message.version,
+            "message_id": message.message_id,
+            "sender_device_id": message.sender_device_id,
+            "recipient_device_id": message.recipient_device_id,
+            "created_at": message.created_at,
+            "expires_at": message.expires_at,
+            "ciphertext": base64.b64encode(message.ciphertext).decode("ascii"),
+        }
+
+        status_code, body = self._request("POST", "/v2/messages", payload)
+        if status_code != 201:
+            raise GhostNodeRequestError(
+                status_code,
+                _extract_error_detail(body),
+            )
+
+        stored = _parse_v2_message(body)
+        if stored != message:
+            raise GhostNodeProtocolError(
+                "GhostNode returned a protocol-v2 envelope different from the submission"
+            )
+
+        return stored.message_id
+
+    def receive_v2(self, recipient_device_id: str) -> list[GhostMessageV2]:
+        """Retrieve protocol-v2 encrypted envelopes for one device."""
+        try:
+            _validate_device_id(recipient_device_id, "recipient_device_id")
+        except GhostNodeProtocolError as exc:
+            raise ValueError(str(exc)) from exc
+
+        encoded_device_id = urllib.parse.quote(recipient_device_id, safe=":")
+        status_code, body = self._request(
+            "GET",
+            f"/v2/messages/{encoded_device_id}",
+        )
+
+        if status_code != 200:
+            raise GhostNodeRequestError(
+                status_code,
+                _extract_error_detail(body),
+            )
+        if not isinstance(body, list):
+            raise GhostNodeProtocolError(
+                "protocol-v2 message list response must be a JSON array"
+            )
+
+        return [_parse_v2_message(item) for item in body]
+
+    def delete_v2(self, recipient_device_id: str, message_id: str) -> None:
+        """Delete one delivered protocol-v2 envelope."""
+        try:
+            _validate_device_id(recipient_device_id, "recipient_device_id")
+            _validate_message_id(message_id)
+        except GhostNodeProtocolError as exc:
+            raise ValueError(str(exc)) from exc
+
+        encoded_device_id = urllib.parse.quote(recipient_device_id, safe=":")
+        encoded_message_id = urllib.parse.quote(message_id, safe="")
+        status_code, body = self._request(
+            "DELETE",
+            f"/v2/messages/{encoded_device_id}/{encoded_message_id}",
+        )
+
+        if status_code != 204:
+            raise GhostNodeRequestError(
+                status_code,
+                _extract_error_detail(body),
+            )
 
     def delete(self, message_id: str) -> None:
         """Delete one relay message after successful local processing."""
