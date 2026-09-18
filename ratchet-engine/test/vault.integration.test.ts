@@ -37,19 +37,26 @@ async function establishPersistentPair(directory: string): Promise<{
   const alicePath = join(directory, 'alice.ratchet');
   const bobPath = join(directory, 'bob.ratchet');
 
+  const aliceDeviceId = 'device1:' + 'a'.repeat(52);
+  const bobDeviceId = 'device1:' + 'b'.repeat(52);
   const alice = await PersistentRatchetParty.open(
-    'alice',
+    aliceDeviceId,
     1,
     alicePath,
     aliceKey
   );
-  const bob = await PersistentRatchetParty.open('bob', 1, bobPath, bobKey);
+  const bob = await PersistentRatchetParty.open(
+    bobDeviceId,
+    1,
+    bobPath,
+    bobKey
+  );
 
   const bundle = await bob.createPreKeyBundle();
   const bobPreKeyId = bundle.preKeyId();
   const bobKyberPreKeyId = bundle.kyberPreKeyId();
   assert.notEqual(bobPreKeyId, null);
-  await alice.establishSession(bob, bundle);
+  await alice.establishSession(bob, 1, bundle);
 
   const first = await alice.encrypt(bob, 'first');
   assert.equal(await bob.decrypt(alice, first), 'first');
