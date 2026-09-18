@@ -1,0 +1,7 @@
+[node]
+# The container listens on all container interfaces.
+# Docker publishes the port only on the host loopback interface by default.
+host = "0.0.0.0"
+port = 8000
+log_level = "info"
+database_path = "/data/messages.sqlite3"
