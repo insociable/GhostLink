@@ -2,9 +2,6 @@ import base64
 import json
 
 import pytest
-from nacl import utils
-from nacl.pwhash import argon2id
-from nacl.secret import SecretBox
 from ghostlink.profile import (
     ProfileError,
     ProfileUnlockError,
@@ -13,6 +10,9 @@ from ghostlink.profile import (
     encrypt_local_profile,
     upgrade_local_profile,
 )
+from nacl import utils
+from nacl.pwhash import argon2id
+from nacl.secret import SecretBox
 
 
 def _legacy_v1_profile(profile, password: str) -> str:
