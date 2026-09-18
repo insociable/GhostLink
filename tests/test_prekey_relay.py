@@ -37,7 +37,6 @@ def material(
 
 
 def publication_request(
-    entity: GhostEntity,
     device: EnrolledGhostDevice,
     *,
     sequence: int,
@@ -87,7 +86,7 @@ def test_prekey_publication_is_cryptographically_verified_and_acknowledged() -> 
 
     entity = GhostEntity.generate()
     device = entity.enroll_device()
-    request = publication_request(entity, device, sequence=1)
+    request = publication_request(device, sequence=1)
     client = TestClient(create_app())
 
     response = client.put(f"/v2/prekeys/{device.device_id}", json=request)
@@ -102,7 +101,7 @@ def test_prekey_publication_rejects_route_device_mismatch() -> None:
 
     entity = GhostEntity.generate()
     device = entity.enroll_device()
-    request = publication_request(entity, device, sequence=1)
+    request = publication_request(device, sequence=1)
     other_device_id = GhostEntity.generate().enroll_device().device_id
 
     response = TestClient(create_app()).put(
@@ -120,7 +119,7 @@ def test_prekey_publication_rejects_structurally_valid_signature_tampering() -> 
 
     entity = GhostEntity.generate()
     device = entity.enroll_device()
-    request = publication_request(entity, device, sequence=1)
+    request = publication_request(device, sequence=1)
     document = json.loads(str(request["publication"]))
     document["one_time"][0]["pre_key"] = base64.b64encode(
         bytes([0x99]) * 33
@@ -146,18 +145,18 @@ def test_prekey_publication_sequence_is_strictly_monotonic_and_idempotent() -> N
     device = entity.enroll_device()
     client = TestClient(create_app())
 
-    first = publication_request(entity, device, sequence=1)
+    first = publication_request(device, sequence=1)
     assert client.put(f"/v2/prekeys/{device.device_id}", json=first).status_code == 200
     assert client.put(f"/v2/prekeys/{device.device_id}", json=first).status_code == 200
 
-    skipped = publication_request(entity, device, sequence=3)
+    skipped = publication_request(device, sequence=3)
     response = client.put(f"/v2/prekeys/{device.device_id}", json=skipped)
     assert response.status_code == 409
     assert response.json() == {
         "detail": "publication_sequence must advance by exactly one"
     }
 
-    second = publication_request(entity, device, sequence=2)
+    second = publication_request(device, sequence=2)
     accepted = client.put(f"/v2/prekeys/{device.device_id}", json=second)
     assert accepted.status_code == 200
     assert accepted.json()["publication_sequence"] == 2
@@ -171,7 +170,7 @@ def test_prekey_publication_requires_shared_relay_bearer_when_enabled() -> None:
     token = "prekey-relay-secret"  # noqa: S105
     entity = GhostEntity.generate()
     device = entity.enroll_device()
-    request = publication_request(entity, device, sequence=1)
+    request = publication_request(device, sequence=1)
     client = TestClient(
         create_app(settings=NodeSettings(access_token=token))
     )
@@ -218,7 +217,7 @@ def test_prekey_publication_sqlite_replacement_survives_app_recreation(
     entity = GhostEntity.generate()
     device = entity.enroll_device()
 
-    first = publication_request(entity, device, sequence=1)
+    first = publication_request(device, sequence=1)
     first_client = TestClient(create_app(settings=settings))
     assert (
         first_client.put(
@@ -236,7 +235,7 @@ def test_prekey_publication_sqlite_replacement_survives_app_recreation(
     assert retry.status_code == 200
     assert retry.json()["publication_sequence"] == 1
 
-    second = publication_request(entity, device, sequence=2)
+    second = publication_request(device, sequence=2)
     replaced = second_client.put(
         f"/v2/prekeys/{device.device_id}",
         json=second,
