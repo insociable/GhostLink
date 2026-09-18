@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from ghostlink.config import NodeSettings, load_settings
+from ghostlink.config import NODE_TOKEN_ENV, NodeSettings, load_settings
 
 
 def test_missing_config_uses_safe_local_defaults(tmp_path: Path) -> None:
@@ -68,3 +68,24 @@ def test_node_section_must_be_a_table(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match=r"\[node\]"):
         load_settings(config_path)
+
+
+def test_access_token_is_loaded_from_environment(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv(NODE_TOKEN_ENV, "server-secret")
+
+    settings = load_settings(tmp_path / "missing.toml")
+
+    assert settings.access_token == "server-secret"
+
+
+def test_blank_access_token_disables_authentication(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv(NODE_TOKEN_ENV, "   ")
+
+    settings = load_settings(tmp_path / "missing.toml")
+
+    assert settings.access_token is None
+
+
+def test_whitespace_access_token_is_rejected() -> None:
+    with pytest.raises(ValueError, match="access token"):
+        NodeSettings(access_token="   ")
