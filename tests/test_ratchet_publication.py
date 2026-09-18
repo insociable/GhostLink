@@ -36,7 +36,11 @@ def material(
     )
 
 
-def publication_fixture() -> tuple[GhostEntity, EnrolledGhostDevice, RatchetPreKeyPublication]:
+def publication_fixture() -> tuple[
+    GhostEntity,
+    EnrolledGhostDevice,
+    RatchetPreKeyPublication,
+]:
     entity = GhostEntity.generate()
     device = entity.enroll_device()
     publication = create_ratchet_prekey_publication(
