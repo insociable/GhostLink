@@ -13,7 +13,7 @@ import struct
 import time
 from dataclasses import dataclass
 
-from ghostlink.contact import VerifiedContact
+from ghostlink.contact import ValidatedContact
 from ghostlink.message import (
     MESSAGE_CLOCK_SKEW_SECONDS,
     MESSAGE_DEFAULT_TTL_SECONDS,
@@ -178,7 +178,7 @@ def _validate_receive_time(
 
 def encrypt_ratchet_message(
     engine: RatchetEngineClient,
-    contact: VerifiedContact,
+    contact: ValidatedContact,
     plaintext: bytes,
     *,
     ttl_seconds: int = MESSAGE_DEFAULT_TTL_SECONDS,
@@ -226,7 +226,7 @@ def encrypt_ratchet_message(
 
 def decrypt_ratchet_message(
     engine: RatchetEngineClient,
-    contact: VerifiedContact,
+    contact: ValidatedContact,
     message: RatchetMessage,
     replay_cache: SQLiteReplayCache,
     *,
