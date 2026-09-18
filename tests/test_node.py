@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from ghostlink.config import NodeSettings
-from ghostlink.node import SQLiteMessageStore, create_app
+from ghostlink.node import InMemoryMessageStore, SQLiteMessageStore, create_app
 
 
 def create_message_payload() -> dict[str, int | str]:
@@ -186,3 +186,23 @@ def test_health_remains_public_when_relay_authentication_is_enabled() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+class UnhealthyMessageStore(InMemoryMessageStore):
+    def is_healthy(self) -> bool:
+        return False
+
+
+def test_health_returns_service_unavailable_when_store_is_unhealthy() -> None:
+    client = TestClient(create_app(store=UnhealthyMessageStore()))
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "storage unavailable"}
+
+
+def test_sqlite_store_reports_healthy_when_database_is_available(tmp_path: Path) -> None:
+    store = SQLiteMessageStore(tmp_path / "messages.sqlite3")
+
+    assert store.is_healthy()
