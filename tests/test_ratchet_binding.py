@@ -38,6 +38,8 @@ def create_signed_fixture(*, issued_at: int = 1_000):
     binding = create_ratchet_prekey_binding(
         bob_device,
         ratchet_material(),
+        publication_sequence=7,
+        bundle_kind="one_time",
         issued_at=issued_at,
         lifetime_seconds=3_600,
         bundle_id=b"\xaa" * 16,
@@ -61,6 +63,8 @@ def test_signed_ratchet_binding_round_trip_verifies_against_contact() -> None:
     assert verified.signal_address_name == contact.device_id
     assert verified.signal_device_id == 1
     assert len(verified.bundle_id) == 16
+    assert verified.publication_sequence == 7
+    assert verified.bundle_kind == "one_time"
 
 
 def test_exported_binding_contains_public_material_only() -> None:
@@ -157,6 +161,8 @@ def test_binding_rejects_partial_optional_prekey() -> None:
         create_ratchet_prekey_binding(
             bob_device,
             material,
+            publication_sequence=1,
+            bundle_kind="one_time",
             issued_at=1_000,
             bundle_id=b"\xbb" * 16,
         )
@@ -192,6 +198,8 @@ def test_identity_replacement_changes_authenticated_binding_bytes() -> None:
     changed = create_ratchet_prekey_binding(
         bob_device,
         changed_material,
+        publication_sequence=binding.publication_sequence,
+        bundle_kind=binding.bundle_kind,
         issued_at=binding.issued_at,
         lifetime_seconds=binding.expires_at - binding.issued_at,
         bundle_id=binding.bundle_id,
@@ -201,3 +209,92 @@ def test_identity_replacement_changes_authenticated_binding_bytes() -> None:
     assert changed.identity_key != binding.identity_key
     assert changed.canonical_bytes() != binding.canonical_bytes()
     assert changed_signed.device_signature != signed.device_signature
+
+def test_publication_sequence_is_authenticated() -> None:
+    _, _, contact, _, signed = create_signed_fixture()
+    document = json.loads(export_ratchet_prekey_binding(signed))
+    document["publication_sequence"] += 1
+
+    imported = import_ratchet_prekey_binding(json.dumps(document))
+
+    with pytest.raises(RatchetBindingError, match="device signature is invalid"):
+        verify_ratchet_prekey_binding(imported, contact, now=1_100)
+
+
+def test_one_time_binding_requires_ec_one_time_prekey() -> None:
+    bob = GhostEntity.generate()
+    bob_device = bob.enroll_device()
+    material = replace(ratchet_material(), pre_key_id=None, pre_key=None)
+
+    with pytest.raises(
+        RatchetBindingError,
+        match="one_time binding requires",
+    ):
+        create_ratchet_prekey_binding(
+            bob_device,
+            material,
+            publication_sequence=1,
+            bundle_kind="one_time",
+            issued_at=1_000,
+        )
+
+
+def test_fallback_binding_requires_absent_ec_one_time_prekey() -> None:
+    bob = GhostEntity.generate()
+    bob_device = bob.enroll_device()
+    material = replace(ratchet_material(), pre_key_id=None, pre_key=None)
+
+    binding = create_ratchet_prekey_binding(
+        bob_device,
+        material,
+        publication_sequence=2,
+        bundle_kind="fallback",
+        issued_at=1_000,
+    )
+    signed = sign_ratchet_prekey_binding(binding, bob_device)
+    contact = import_contact_bundle(export_contact_bundle(bob, bob_device))
+
+    assert verify_ratchet_prekey_binding(signed, contact, now=1_100) == binding
+
+    with pytest.raises(
+        RatchetBindingError,
+        match="fallback binding must not contain",
+    ):
+        create_ratchet_prekey_binding(
+            bob_device,
+            ratchet_material(),
+            publication_sequence=2,
+            bundle_kind="fallback",
+            issued_at=1_000,
+        )
+
+
+@pytest.mark.parametrize("publication_sequence", [0, -1, 1 << 64])
+def test_binding_rejects_invalid_publication_sequence(
+    publication_sequence: int,
+) -> None:
+    bob = GhostEntity.generate()
+    bob_device = bob.enroll_device()
+
+    with pytest.raises(RatchetBindingError, match="publication_sequence"):
+        create_ratchet_prekey_binding(
+            bob_device,
+            ratchet_material(),
+            publication_sequence=publication_sequence,
+            bundle_kind="one_time",
+            issued_at=1_000,
+        )
+
+
+def test_binding_rejects_unknown_bundle_kind() -> None:
+    bob = GhostEntity.generate()
+    bob_device = bob.enroll_device()
+
+    with pytest.raises(RatchetBindingError, match="bundle_kind"):
+        create_ratchet_prekey_binding(
+            bob_device,
+            ratchet_material(),
+            publication_sequence=1,
+            bundle_kind="unexpected",
+            issued_at=1_000,
+        )
