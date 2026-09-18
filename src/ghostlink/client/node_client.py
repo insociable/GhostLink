@@ -77,7 +77,8 @@ def _urllib_request(
         ).encode("utf-8")
         headers["Content-Type"] = "application/json"
 
-    request = urllib.request.Request(
+    # The caller validates that base_url is absolute HTTP(S) before building this URL.
+    request = urllib.request.Request(  # noqa: S310
         url,
         data=body,
         headers=headers,
