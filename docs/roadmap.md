@@ -21,7 +21,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 
 ## M2 — Relay
 
-- [ ] authenticated client API (shared Bearer relay access control implemented; per-device authentication pending);
+- [x] DeviceID-authenticated protocol-v3 message API with signed request replay protection (legacy static-v2 remains bearer-only diagnostic);
 - [x] ciphertext-only storage;
 - [x] persistent SQLite storage option;
 - [ ] explicit delivery acknowledgement protocol;
