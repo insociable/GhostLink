@@ -23,6 +23,7 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 - signed GhostID/DeviceID-to-libsignal pre-key bindings;
 - crash-safe pre-key publication, fetch, highest-seen continuity, replenishment/rotation and 15-day retired-key GC;
 - explicit ratcheted **message protocol v3** on separate `/v3/messages` relay routes;
+- DeviceID-signed protocol-v3 relay requests with timestamp/request-ID replay protection;
 - context-bound ratchet decryption that rolls session state back when relay-visible metadata is tampered with;
 - real Python ↔ Node/libsignal ↔ GhostNode end-to-end tests, including restart continuity.
 
@@ -40,7 +41,7 @@ The ratchet path exercises forward-secrecy/post-compromise behavior through the 
 
 Important remaining gaps include:
 
-- general per-device authentication for message-relay operations;
+- legacy static-v2 relay operations remain bearer-only and diagnostic;
 - relay database anti-rollback protection;
 - key transparency;
 - production TLS ingress/deployment hardening;
