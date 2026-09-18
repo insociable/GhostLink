@@ -95,6 +95,27 @@ class RatchetPreKeyGeneration:
     public_payload: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class RatchetPreKeyGenerationStatus:
+    """Non-secret lifecycle metadata for one pending or active generation."""
+
+    publication_sequence: int
+    issued_at: int
+    expires_at: int
+    published_at: int | None
+    staged: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RatchetPreKeyLifecycleStatus:
+    """Non-secret ratchet pre-key lifecycle status used for maintenance."""
+
+    publication_sequence: int
+    pending: RatchetPreKeyGenerationStatus | None
+    active: RatchetPreKeyGenerationStatus | None
+    retired_count: int
+
+
 def _require_mapping(value: object, context: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise RatchetEngineProtocolError(
@@ -458,6 +479,168 @@ def _prekey_generation_from_wire(value: object) -> RatchetPreKeyGeneration:
     )
 
 
+def _generation_status_from_wire(
+    value: object,
+    *,
+    context: str,
+    role: str,
+) -> RatchetPreKeyGenerationStatus:
+    document = _require_mapping(value, context)
+    _require_exact_fields(
+        document,
+        {
+            "publication_sequence",
+            "issued_at",
+            "expires_at",
+            "published_at",
+            "staged",
+        },
+        context,
+    )
+    sequence = _require_integer(
+        document,
+        "publication_sequence",
+        minimum=1,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+    issued_at = _require_integer(document, "issued_at", minimum=0)
+    expires_at = _require_integer(document, "expires_at", minimum=0)
+    if expires_at <= issued_at:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            f"{context} expiration must follow issuance",
+        )
+
+    raw_published_at = document["published_at"]
+    if raw_published_at is None:
+        published_at: int | None = None
+    else:
+        if not isinstance(raw_published_at, int) or isinstance(
+            raw_published_at,
+            bool,
+        ):
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                f"{context} published_at must be an integer or null",
+            )
+        if raw_published_at < 0:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                f"{context} published_at is outside the supported range",
+            )
+        published_at = raw_published_at
+
+    staged = document["staged"]
+    if not isinstance(staged, bool):
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            f"{context} staged must be a boolean",
+        )
+
+    if role == "pending" and published_at is not None:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "pending pre-key lifecycle generation must not be published",
+        )
+    if role == "active":
+        if published_at is None:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "active pre-key lifecycle generation must be published",
+            )
+        if not staged:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "active pre-key lifecycle generation must be staged",
+            )
+
+    return RatchetPreKeyGenerationStatus(
+        publication_sequence=sequence,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        published_at=published_at,
+        staged=staged,
+    )
+
+
+def _lifecycle_status_from_wire(value: object) -> RatchetPreKeyLifecycleStatus:
+    document = _require_mapping(value, "pre-key lifecycle status")
+    _require_exact_fields(
+        document,
+        {
+            "version",
+            "publication_sequence",
+            "pending",
+            "active",
+            "retired_count",
+        },
+        "pre-key lifecycle status",
+    )
+    if _require_integer(document, "version", minimum=1) != 1:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "unsupported pre-key lifecycle status version",
+        )
+    publication_sequence = _require_integer(
+        document,
+        "publication_sequence",
+        minimum=0,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+
+    pending = (
+        None
+        if document["pending"] is None
+        else _generation_status_from_wire(
+            document["pending"],
+            context="pending pre-key lifecycle generation",
+            role="pending",
+        )
+    )
+    active = (
+        None
+        if document["active"] is None
+        else _generation_status_from_wire(
+            document["active"],
+            context="active pre-key lifecycle generation",
+            role="active",
+        )
+    )
+    retired_count = _require_integer(
+        document,
+        "retired_count",
+        minimum=0,
+        maximum=32,
+    )
+
+    if pending is not None and pending.publication_sequence != publication_sequence:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "pending sequence does not match lifecycle publication sequence",
+        )
+    if active is not None and active.publication_sequence > publication_sequence:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "active sequence exceeds lifecycle publication sequence",
+        )
+    if (
+        pending is not None
+        and active is not None
+        and pending.publication_sequence <= active.publication_sequence
+    ):
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "pending sequence must be newer than active sequence",
+        )
+
+    return RatchetPreKeyLifecycleStatus(
+        publication_sequence=publication_sequence,
+        pending=pending,
+        active=active,
+        retired_count=retired_count,
+    )
+
+
 def _binding_matches_material(
     binding: RatchetPreKeyBinding,
     material: RatchetPreKeyMaterial,
@@ -746,6 +929,14 @@ class RatchetEngineClient:
         if result is None:
             return None
         return _prekey_generation_from_wire(result)
+
+    def get_prekey_lifecycle_status(
+        self,
+    ) -> RatchetPreKeyLifecycleStatus:
+        """Return non-secret local lifecycle metadata for maintenance decisions."""
+        return _lifecycle_status_from_wire(
+            self._request("get_prekey_lifecycle_status", {})
+        )
 
     def stage_prekey_publication(
         self,
