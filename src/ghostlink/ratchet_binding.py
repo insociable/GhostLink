@@ -151,7 +151,9 @@ class RatchetPreKeyBinding:
             _validate_exact_bytes(self.pre_key, "pre_key", _EC_PUBLIC_KEY_BYTES)
 
         if self.bundle_kind == "one_time" and self.pre_key_id is None:
-            raise RatchetBindingError("one_time binding requires an EC one-time pre-key")
+            raise RatchetBindingError(
+                "one_time binding requires an EC one-time pre-key"
+            )
         if self.bundle_kind == "fallback" and self.pre_key_id is not None:
             raise RatchetBindingError(
                 "fallback binding must not contain an EC one-time pre-key"
