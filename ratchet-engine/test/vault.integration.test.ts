@@ -194,7 +194,7 @@ test('one-time EC and Kyber pre-key consumption survives restart', async () => {
   pair.bob.close();
 
   const bob = await PersistentRatchetParty.open(
-    'bob',
+    DEVICE_B,
     1,
     pair.bobPath,
     pair.bobKey
