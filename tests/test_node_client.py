@@ -8,6 +8,7 @@ from ghostlink.client.node_client import (
     GhostNodeProtocolError,
     GhostNodeRequestError,
 )
+from ghostlink.config import NodeSettings
 from ghostlink.entity import GhostEntity
 from ghostlink.message import decrypt_message, encrypt_message
 from ghostlink.node import create_app
@@ -16,7 +17,7 @@ from ghostlink.node import create_app
 def create_test_requester(
     api_client: TestClient,
 ) -> Callable[
-    [str, str, dict[str, object] | None, float],
+    [str, str, dict[str, object] | None, float, dict[str, str]],
     tuple[int, object | None],
 ]:
     def requester(
@@ -24,6 +25,7 @@ def create_test_requester(
         url: str,
         payload: dict[str, object] | None,
         timeout: float,
+        headers: dict[str, str],
     ) -> tuple[int, object | None]:
         assert timeout > 0
 
@@ -32,6 +34,7 @@ def create_test_requester(
             method,
             parsed.path,
             json=payload,
+            headers=headers,
         )
 
         body: object | None
@@ -113,6 +116,7 @@ def test_node_client_rejects_invalid_health_payload() -> None:
         url: str,
         payload: dict[str, object] | None,
         timeout: float,
+        headers: dict[str, str],
     ) -> tuple[int, object | None]:
         return 200, ["not", "an", "object"]
 
@@ -139,3 +143,33 @@ def test_node_client_rejects_invalid_health_payload() -> None:
 def test_node_client_rejects_unsafe_or_invalid_base_urls(base_url: str) -> None:
     with pytest.raises(ValueError):
         GhostNodeClient(base_url)
+
+
+def test_node_client_sends_bearer_access_token() -> None:
+    access_value = "secret-token"
+    api_client = TestClient(
+        create_app(settings=NodeSettings(access_token=access_value))
+    )
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        access_token=access_value,
+        requester=create_test_requester(api_client),
+    )
+
+    assert client.receive("device1:bob") == []
+
+
+def test_node_client_without_required_token_is_rejected() -> None:
+    access_value = "secret-token"
+    api_client = TestClient(
+        create_app(settings=NodeSettings(access_token=access_value))
+    )
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=create_test_requester(api_client),
+    )
+
+    with pytest.raises(GhostNodeRequestError) as error:
+        client.receive("device1:bob")
+
+    assert error.value.status_code == 401

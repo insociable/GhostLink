@@ -22,13 +22,13 @@ The repository now contains a complete automated M3 path:
 - a Docker/Compose deployment path for GhostNode;
 - an integration test where two independent client profiles exchange and decrypt a message through GhostNode.
 
-The next protocol priorities are relay authentication, replay protection, timestamps/expiration, metadata reduction and a ratcheting session protocol.
+The next protocol priorities are per-device relay authentication, replay protection, timestamps/expiration, metadata reduction and a ratcheting session protocol.
 
 ## Security status
 
 GhostLink is **experimental and not ready for real-world sensitive communications**.
 
-It has not been independently audited and does not yet provide forward secrecy, a ratcheting session protocol, replay protection, authenticated relay access, robust abuse controls, or a complete human contact-verification UX.
+It has not been independently audited and does not yet provide forward secrecy, a ratcheting session protocol, replay protection, per-device relay authentication, robust abuse controls, or a complete human contact-verification UX.
 
 A valid contact bundle proves internal cryptographic consistency. It does not by itself prove that the GhostID belongs to the human the user intended to contact.
 

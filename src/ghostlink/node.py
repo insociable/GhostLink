@@ -5,13 +5,14 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import secrets
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Annotated, Protocol
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, Header, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 
 from ghostlink.config import NodeSettings, load_settings
@@ -202,6 +203,23 @@ def create_message_store(settings: NodeSettings) -> MessageStore:
     return SQLiteMessageStore(settings.database_path)
 
 
+def _require_access(
+    settings: NodeSettings,
+    authorization: str | None,
+) -> None:
+    """Require the configured shared Bearer token for relay operations."""
+    if settings.access_token is None:
+        return
+
+    expected = f"Bearer {settings.access_token}"
+    if authorization is None or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 def create_app(
     store: MessageStore | None = None,
     settings: NodeSettings | None = None,
@@ -231,24 +249,36 @@ def create_app(
         response_model=StoredMessage,
         status_code=status.HTTP_201_CREATED,
     )
-    def submit_message(envelope: MessageEnvelope) -> StoredMessage:
+    def submit_message(
+        envelope: MessageEnvelope,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> StoredMessage:
         """Store one encrypted message envelope."""
+        _require_access(node_settings, authorization)
         return message_store.add(envelope)
 
     @app.get(
         "/v1/messages/{recipient_device_id}",
         response_model=list[StoredMessage],
     )
-    def receive_messages(recipient_device_id: str) -> list[StoredMessage]:
+    def receive_messages(
+        recipient_device_id: str,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> list[StoredMessage]:
         """Return encrypted messages addressed to one device."""
+        _require_access(node_settings, authorization)
         return message_store.list_for_recipient(recipient_device_id)
 
     @app.delete(
         "/v1/messages/{message_id}",
         status_code=status.HTTP_204_NO_CONTENT,
     )
-    def delete_message(message_id: str) -> Response:
+    def delete_message(
+        message_id: str,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> Response:
         """Delete a delivered encrypted message."""
+        _require_access(node_settings, authorization)
         if not message_store.delete(message_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

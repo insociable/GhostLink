@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from ghostlink.message import GhostMessage
 
 RequestFunction = Callable[
-    [str, str, dict[str, object] | None, float],
+    [str, str, dict[str, object] | None, float, dict[str, str]],
     tuple[int, object | None],
 ]
 
@@ -65,8 +65,9 @@ def _urllib_request(
     url: str,
     payload: dict[str, object] | None,
     timeout: float,
+    extra_headers: dict[str, str],
 ) -> tuple[int, object | None]:
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", **extra_headers}
     body: bytes | None = None
 
     if payload is not None:
@@ -168,6 +169,7 @@ class GhostNodeClient:
 
     base_url: str
     timeout: float = 10.0
+    access_token: str | None = None
     requester: RequestFunction = _urllib_request
 
     def __post_init__(self) -> None:
@@ -179,6 +181,8 @@ class GhostNodeClient:
             raise ValueError("base_url must not contain embedded credentials")
         if self.timeout <= 0:
             raise ValueError("timeout must be greater than zero")
+        if self.access_token is not None and not self.access_token.strip():
+            raise ValueError("access_token must not be empty")
 
         object.__setattr__(self, "base_url", self.base_url.rstrip("/"))
 
@@ -188,11 +192,16 @@ class GhostNodeClient:
         path: str,
         payload: dict[str, object] | None = None,
     ) -> tuple[int, object | None]:
+        headers: dict[str, str] = {}
+        if self.access_token is not None:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+
         return self.requester(
             method,
             f"{self.base_url}{path}",
             payload,
             self.timeout,
+            headers,
         )
 
     def health(self) -> bool:
