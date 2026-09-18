@@ -122,7 +122,7 @@ def test_publication_rejects_generation_identity_mismatch() -> None:
 def test_publication_tampering_breaks_local_signature_verification() -> None:
     _, device, publication = publication_fixture()
     document = json.loads(export_ratchet_prekey_publication(publication))
-    document["one_time"][0]["pre_key"] = base64.b64encode(b"\\x99" * 33).decode("ascii")
+    document["one_time"][0]["pre_key"] = base64.b64encode(bytes([0x99]) * 33).decode("ascii")
 
     imported = import_ratchet_prekey_publication(
         json.dumps(document, sort_keys=True, separators=(",", ":"))
