@@ -40,7 +40,9 @@ Tables are serialized in this fixed order:
 6. `relay_request_replay_v1`
 
 The canonical document is strict JSON UTF-8 using sorted object keys and compact
-separators. Table rows are arrays in the exact column order below.
+separators. Protected tables are represented as a list in the fixed order below; each
+entry is `{"name": <table>, "rows": [...]}`. Table rows are arrays in the exact column
+order below.
 
 ## Canonical rows
 
@@ -175,14 +177,14 @@ Conceptually:
 
 ```json
 {
-  "tables": {
-    "messages_v3": [],
-    "prekey_allocations": [],
-    "prekey_fetch_events": [],
-    "prekey_one_time": [],
-    "prekey_publications": [],
-    "relay_request_replay_v1": []
-  },
+  "tables": [
+    {"name":"messages_v3","rows":[]},
+    {"name":"prekey_publications","rows":[]},
+    {"name":"prekey_one_time","rows":[]},
+    {"name":"prekey_allocations","rows":[]},
+    {"name":"prekey_fetch_events","rows":[]},
+    {"name":"relay_request_replay_v1","rows":[]}
+  ],
   "version": 1
 }
 ```
