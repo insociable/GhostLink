@@ -46,7 +46,12 @@ The encrypted payload contains:
 - signed EC pre-keys;
 - Kyber/ML-KEM pre-keys;
 - consumed Kyber pre-key identifiers;
-- base-key reuse tracking required by libsignal.
+- base-key reuse tracking required by libsignal;
+- pre-key lifecycle metadata: monotonic publication sequence, pending/active/retired generations, generation key ownership and the exact staged public publication payload needed for crash-safe retry.
+
+The encrypted store snapshot is now version 2. Version-1 store snapshots are accepted only as a migration input and are normalized to version 2 with an empty lifecycle state. The outer AES-GCM vault envelope remains version 1, so existing encrypted vaults can be opened and migrated without changing their key or AAD.
+
+The lifecycle parser bounds generation history, one-time key lists and staged public payload size. It rejects duplicate generation sequences, duplicate one-time key identifiers and a last-resort Kyber identifier reused as a one-time Kyber identifier.
 
 The vault payload and every store use explicit format versions and strict field validation.
 
@@ -196,6 +201,9 @@ Integration tests cover:
 - persistence of Kyber pre-key usage;
 - persistence of identity trust;
 - byte-for-byte unchanged vault after failed decrypt;
-- serialized concurrent sends.
+- serialized concurrent sends;
+- version-1 store-state migration to lifecycle-aware version 2;
+- encrypted-at-rest lifecycle metadata and staged public publication payload;
+- lifecycle role/sequence/identifier invariant rejection.
 
 GhostLink remains pre-alpha and has not undergone an independent cryptographic audit.
