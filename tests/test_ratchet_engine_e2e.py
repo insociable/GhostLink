@@ -13,6 +13,7 @@ from ghostlink.client.node_client import GhostNodeClient
 from ghostlink.contact import export_contact_bundle, import_contact_bundle
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app
+from ghostlink.profile import decrypt_local_profile
 from ghostlink.ratchet_binding import (
     RatchetBindingError,
     SignedRatchetPreKeyBinding,
@@ -972,6 +973,16 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
     assert "hello Bob over ratcheted v3" in bob_inbox.out
 
     # Bob's incoming PreKey message established a durable session to Alice.
+    alice_profile_data = decrypt_local_profile(
+        alice_profile.read_text(encoding="utf-8"),
+        password,
+    )
+    node_client = node_client_factory(node_url)
+    alice_pool_before_reply = node_client.prekey_status(
+        alice_profile_data.device,
+    )
+    assert alice_pool_before_reply.remaining_one_time_count == 100
+
     assert run_cli(
         [
             "send",
@@ -987,9 +998,12 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
         node_client_factory=node_client_factory,
     ) == 0
 
-    alice_profile_data = decrypt_local_profile(
-        alice_profile.read_text(encoding="utf-8"),
-        password,
+    alice_pool_after_reply = node_client.prekey_status(
+        alice_profile_data.device,
+    )
+    assert (
+        alice_pool_after_reply.remaining_one_time_count
+        == alice_pool_before_reply.remaining_one_time_count
     )
     assert (
         api_client.get(
