@@ -5,6 +5,7 @@ import * as SignalClient from '@signalapp/libsignal-client';
 import { exportPreKeyMaterial, importPreKeyMaterial } from './prekey-material.js';
 import {
   PersistentRatchetParty,
+  type PreKeyGarbageCollectionResult,
   type PreKeyLifecycleStatus,
   type PreparedPreKeyGeneration,
 } from './persistent-party.js';
@@ -216,6 +217,17 @@ function exportLifecycleStatus(
   };
 }
 
+function exportGarbageCollectionResult(
+  result: PreKeyGarbageCollectionResult
+): Record<string, number> {
+  return {
+    retired_generations_removed: result.retiredGenerationsRemoved,
+    pre_keys_removed: result.preKeysRemoved,
+    signed_pre_keys_removed: result.signedPreKeysRemoved,
+    kyber_pre_keys_removed: result.kyberPreKeysRemoved,
+  };
+}
+
 function requireMessageType(value: unknown): SignalClient.CiphertextMessageType {
   if (
     value !== SignalClient.CiphertextMessageType.PreKey &&
@@ -299,6 +311,8 @@ class RatchetRpcService {
         return this.getPendingPreKeyGeneration(request.params);
       case 'get_prekey_lifecycle_status':
         return this.getPreKeyLifecycleStatus(request.params);
+      case 'garbage_collect_prekeys':
+        return this.garbageCollectPreKeys(request.params);
       case 'stage_prekey_publication':
         return this.stagePreKeyPublication(request.params);
       case 'commit_prekey_publication':
@@ -409,6 +423,22 @@ class RatchetRpcService {
     );
     return exportLifecycleStatus(
       await this.requireParty().getPreKeyLifecycleStatus()
+    );
+  }
+
+  private async garbageCollectPreKeys(
+    params: unknown
+  ): Promise<Record<string, number>> {
+    const document = requireObject(params, 'garbage_collect_prekeys params');
+    requireExactFields(
+      document,
+      ['now'],
+      'garbage_collect_prekeys params'
+    );
+    return exportGarbageCollectionResult(
+      await this.requireParty().garbageCollectPreKeys(
+        requireIntegerField(document, 'now', 0)
+      )
     );
   }
 
