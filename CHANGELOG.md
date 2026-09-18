@@ -21,7 +21,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 - persistent SQLite relay storage;
 - M3 command-line client for identity creation, contact exchange, send and inbox;
 - full two-client encrypted-message integration test;
-- Docker/Compose GhostNode deployment and Oracle VM runbook;\n- optional shared Bearer access control for GhostNode relay operations;
+- Docker/Compose GhostNode deployment and Oracle VM runbook;\n- optional shared Bearer access control for GhostNode relay operations;\n- strict protocol-v1 relay envelope validation with a 1 MiB ciphertext cap;
 - CI validation for Ruff, MyPy, pytest, Compose and container builds.
 
 ### Security
