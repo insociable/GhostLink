@@ -23,10 +23,14 @@ The client validates:
 
 - the GhostNode base URL;
 - expected HTTP status codes;
-- response JSON structure;
-- message identifiers;
+- exact protocol-v1 response fields;
+- protocol version `1`;
+- canonical `device1:` identifiers;
 - Base64 ciphertext;
+- a maximum decoded ciphertext size of 1 MiB;
 - that the relay echoes the same encrypted envelope that was submitted.
+
+GhostNode applies the matching validation to submitted envelopes: unknown fields, unsupported versions, malformed DeviceIDs, invalid Base64, empty ciphertext and ciphertext above 1 MiB are rejected.
 
 Network failures, HTTP failures, and malformed relay responses are represented by separate client exceptions.
 

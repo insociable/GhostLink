@@ -13,6 +13,19 @@ from dataclasses import dataclass
 
 from ghostlink.message import GhostMessage
 
+_MESSAGE_VERSION = 1
+_MAX_CIPHERTEXT_BYTES = 1_048_576
+_DEVICE_ID_PREFIX = "device1:"
+_DEVICE_ID_PAYLOAD_LENGTH = 52
+_BASE32_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz234567")
+_EXPECTED_STORED_FIELDS = {
+    "message_id",
+    "version",
+    "sender_device_id",
+    "recipient_device_id",
+    "ciphertext",
+}
+
 RequestFunction = Callable[
     [str, str, dict[str, object] | None, float, dict[str, str]],
     tuple[int, object | None],
@@ -110,6 +123,31 @@ def _require_mapping(value: object | None, context: str) -> dict[str, object]:
     return document
 
 
+def _require_exact_fields(
+    document: dict[str, object],
+    expected: set[str],
+    context: str,
+) -> None:
+    fields = set(document)
+    if fields != expected:
+        raise GhostNodeProtocolError(f"{context} fields do not match protocol v1")
+
+
+def _validate_device_id(value: str, field: str) -> str:
+    if not value.startswith(_DEVICE_ID_PREFIX):
+        raise GhostNodeProtocolError(f"{field} must use the device1 format")
+
+    payload = value[len(_DEVICE_ID_PREFIX) :]
+    if len(payload) != _DEVICE_ID_PAYLOAD_LENGTH:
+        raise GhostNodeProtocolError(f"{field} payload has an invalid length")
+    if any(character not in _BASE32_ALPHABET for character in payload):
+        raise GhostNodeProtocolError(
+            f"{field} payload is not valid lowercase Base32"
+        )
+
+    return value
+
+
 def _require_text(document: dict[str, object], field: str) -> str:
     value = document.get(field)
     if not isinstance(value, str) or not value:
@@ -121,6 +159,8 @@ def _require_version(document: dict[str, object]) -> int:
     value = document.get("version")
     if not isinstance(value, int) or isinstance(value, bool):
         raise GhostNodeProtocolError("version must be an integer")
+    if value != _MESSAGE_VERSION:
+        raise GhostNodeProtocolError("unsupported message version")
     return value
 
 
@@ -132,6 +172,8 @@ def _decode_ciphertext(value: str) -> bytes:
 
     if not ciphertext:
         raise GhostNodeProtocolError("ciphertext must not be empty")
+    if len(ciphertext) > _MAX_CIPHERTEXT_BYTES:
+        raise GhostNodeProtocolError("ciphertext exceeds the 1 MiB relay limit")
 
     return ciphertext
 
@@ -146,9 +188,17 @@ def _extract_error_detail(body: object | None) -> str:
 
 def _parse_stored_message(value: object) -> StoredGhostMessage:
     document = _require_mapping(value, "stored message")
+    _require_exact_fields(document, _EXPECTED_STORED_FIELDS, "stored message")
+
     message_id = _require_text(document, "message_id")
-    sender_device_id = _require_text(document, "sender_device_id")
-    recipient_device_id = _require_text(document, "recipient_device_id")
+    sender_device_id = _validate_device_id(
+        _require_text(document, "sender_device_id"),
+        "sender_device_id",
+    )
+    recipient_device_id = _validate_device_id(
+        _require_text(document, "recipient_device_id"),
+        "recipient_device_id",
+    )
     ciphertext_text = _require_text(document, "ciphertext")
     version = _require_version(document)
 
@@ -251,6 +301,11 @@ class GhostNodeClient:
         """Retrieve encrypted envelopes addressed to one device."""
         if not recipient_device_id:
             raise ValueError("recipient_device_id must not be empty")
+
+        try:
+            _validate_device_id(recipient_device_id, "recipient_device_id")
+        except GhostNodeProtocolError as exc:
+            raise ValueError(str(exc)) from exc
 
         encoded_device_id = urllib.parse.quote(
             recipient_device_id,

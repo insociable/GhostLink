@@ -1,3 +1,4 @@
+import base64
 import urllib.parse
 from collections.abc import Callable
 
@@ -12,6 +13,9 @@ from ghostlink.config import NodeSettings
 from ghostlink.entity import GhostEntity
 from ghostlink.message import decrypt_message, encrypt_message
 from ghostlink.node import create_app
+
+ALICE_DEVICE_ID = "device1:" + ("a" * 52)
+BOB_DEVICE_ID = "device1:" + ("b" * 52)
 
 
 def create_test_requester(
@@ -156,7 +160,7 @@ def test_node_client_sends_bearer_access_token() -> None:
         requester=create_test_requester(api_client),
     )
 
-    assert client.receive("device1:bob") == []
+    assert client.receive(BOB_DEVICE_ID) == []
 
 
 def test_node_client_without_required_token_is_rejected() -> None:
@@ -170,6 +174,74 @@ def test_node_client_without_required_token_is_rejected() -> None:
     )
 
     with pytest.raises(GhostNodeRequestError) as error:
-        client.receive("device1:bob")
+        client.receive(BOB_DEVICE_ID)
 
     assert error.value.status_code == 401
+
+
+def test_node_client_rejects_unexpected_stored_message_fields() -> None:
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        return 200, [
+            {
+                "message_id": "relay-id",
+                "version": 1,
+                "sender_device_id": ALICE_DEVICE_ID,
+                "recipient_device_id": BOB_DEVICE_ID,
+                "ciphertext": base64.b64encode(b"ciphertext").decode("ascii"),
+                "unexpected": "field",
+            }
+        ]
+
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+
+    with pytest.raises(
+        GhostNodeProtocolError,
+        match="fields do not match protocol v1",
+    ):
+        client.receive(BOB_DEVICE_ID)
+
+
+def test_node_client_rejects_unsupported_message_version() -> None:
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        return 200, [
+            {
+                "message_id": "relay-id",
+                "version": 2,
+                "sender_device_id": ALICE_DEVICE_ID,
+                "recipient_device_id": BOB_DEVICE_ID,
+                "ciphertext": base64.b64encode(b"ciphertext").decode("ascii"),
+            }
+        ]
+
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+
+    with pytest.raises(
+        GhostNodeProtocolError,
+        match="unsupported message version",
+    ):
+        client.receive(BOB_DEVICE_ID)
+
+
+def test_node_client_rejects_noncanonical_recipient_device_id() -> None:
+    client = GhostNodeClient("http://ghostnode.test")
+
+    with pytest.raises(ValueError, match="invalid length"):
+        client.receive("device1:bob")
