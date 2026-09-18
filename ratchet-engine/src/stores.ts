@@ -517,10 +517,11 @@ export class MemoryKyberPreKeyStore extends SignalClient.KyberPreKeyStore {
 
   removeKyberPreKey(id: number): boolean {
     const serialized = this.records.get(id);
-    const removed =
-      serialized === undefined
-        ? false
-        : (serialized.fill(0), this.records.delete(id));
+    let removed = false;
+    if (serialized !== undefined) {
+      serialized.fill(0);
+      removed = this.records.delete(id);
+    }
     this.used.delete(id);
 
     const keyId = BigInt(id);
