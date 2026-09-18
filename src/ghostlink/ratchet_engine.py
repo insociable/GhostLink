@@ -840,6 +840,7 @@ class RatchetEngineClient:
             "establish_session",
             {
                 "remote_device_id": contact.device_id,
+                "publication_sequence": binding.publication_sequence,
                 "material": _material_to_wire(binding),
             },
         )
