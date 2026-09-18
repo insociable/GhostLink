@@ -84,7 +84,7 @@ Expected health response:
 {"status":"ok"}
 ```
 
-The health endpoint is intentionally public. Message relay endpoints are not.
+The health endpoint is intentionally public. It returns HTTP 503 if the configured relay storage is unavailable. Message relay endpoints are not.
 
 ## 5. Persistent ciphertext store
 
