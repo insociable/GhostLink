@@ -122,9 +122,9 @@ A libsignal identity-key change for an existing verified GhostLink device must f
 
 ## Persistent storage
 
-The bootstrap PR uses in-memory stores only to prove the integration.
+The bootstrap PR first used in-memory stores to prove the integration.
 
-Production migration requires encrypted persistent implementations of:
+An encrypted persistent ratchet-state vault is now implemented for:
 
 - IdentityKeyStore;
 - SessionStore;
@@ -132,7 +132,7 @@ Production migration requires encrypted persistent implementations of:
 - SignedPreKeyStore;
 - KyberPreKeyStore.
 
-They must use atomic writes/transactions and private filesystem permissions.
+The vault uses AES-256-GCM, complete-state atomic replacement, rollback-on-failure semantics and private POSIX file permissions. Its detailed format and limitations are defined in `docs/specifications/ratchet-state-vault.md`.
 
 Secrets must not be stored in GhostNode or plaintext logs.
 

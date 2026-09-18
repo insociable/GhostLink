@@ -6,7 +6,7 @@ It intentionally delegates ratcheting to the official Signal `libsignal` impleme
 
 ## Current milestone
 
-The bootstrap milestone is test-only and uses in-memory stores.
+The engine now includes both the in-memory protocol harness and an encrypted persistent vault for libsignal identity, session and pre-key state.
 
 It proves:
 
@@ -16,7 +16,9 @@ It proves:
 - duplicate rejection;
 - simulated post-compromise recovery after fresh ratchet entropy.
 
-It is **not yet wired into GhostNode or the GhostLink CLI**.
+Persistent state is encrypted with AES-256-GCM, written atomically, and restored transactionally after restart.
+
+The engine is **not yet wired into GhostNode or the GhostLink CLI**.
 
 ## Dependency
 

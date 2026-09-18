@@ -27,6 +27,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 - removal of the experimental protocol-v1 runtime path;
 - automated dependency update monitoring;
 - experimental libsignal-based ratchet engine bootstrap with PQXDH, out-of-order delivery, duplicate rejection and simulated post-compromise recovery tests.
+- encrypted persistent ratchet-state vault with atomic multi-store commits and restart continuity tests.
 
 ### Security
 
