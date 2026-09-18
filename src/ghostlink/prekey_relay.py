@@ -714,14 +714,14 @@ class SQLitePreKeyPublicationStore:
             position = int(one_time[0])
             binding = str(one_time[1])
             deleted = connection.execute(
-                    """
-                    DELETE FROM prekey_one_time
-                    WHERE device_id = ?
-                      AND publication_sequence = ?
-                      AND position = ?
-                    """,
-                    (target_device_id, publication_sequence, position),
-                )
+                """
+                DELETE FROM prekey_one_time
+                WHERE device_id = ?
+                  AND publication_sequence = ?
+                  AND position = ?
+                """,
+                (target_device_id, publication_sequence, position),
+            )
             if deleted.rowcount != 1:
                 raise RuntimeError(
                     "pre-key one-time allocation lost atomic ownership"
