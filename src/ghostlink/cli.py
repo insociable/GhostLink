@@ -19,7 +19,7 @@ from ghostlink.contact import (
     import_contact_bundle,
 )
 from ghostlink.entity import GhostEntity
-from ghostlink.identity import format_ghost_id_fingerprint
+from ghostlink.identity import derive_identity_fingerprint
 from ghostlink.message import decrypt_message, encrypt_message
 from ghostlink.profile import (
     LocalProfile,
@@ -185,7 +185,7 @@ def _command_init(args: argparse.Namespace, password_reader: PasswordReader) -> 
 
     print(f"Profile created: {path}")
     print(f"GhostID: {profile.entity.ghost_id}")
-    print(f"Fingerprint: {format_ghost_id_fingerprint(profile.entity.ghost_id)}")
+    print(f"Fingerprint v2: {derive_identity_fingerprint(bytes(profile.entity.verify_key))}")
     print(f"DeviceID: {profile.device.device_id}")
     return 0
 
@@ -212,7 +212,7 @@ def _command_profile_upgrade(
 def _command_whoami(args: argparse.Namespace, password_reader: PasswordReader) -> int:
     profile = _load_profile(Path(args.profile), password_reader)
     print(f"GhostID: {profile.entity.ghost_id}")
-    print(f"Fingerprint: {format_ghost_id_fingerprint(profile.entity.ghost_id)}")
+    print(f"Fingerprint v2: {derive_identity_fingerprint(bytes(profile.entity.verify_key))}")
     print(f"DeviceID: {profile.device.device_id}")
     return 0
 
@@ -234,9 +234,9 @@ def _command_contact_export(
 
 def _command_contact_verify(args: argparse.Namespace) -> int:
     contact = import_contact_bundle(_read_text(Path(args.bundle)))
-    print("Contact bundle verified")
+    print("Contact bundle cryptographically valid")
     print(f"GhostID: {contact.ghost_id}")
-    print(f"Fingerprint: {format_ghost_id_fingerprint(contact.ghost_id)}")
+    print(f"Fingerprint v2: {derive_identity_fingerprint(bytes(contact.identity_verify_key))}")
     print(f"DeviceID: {contact.device_id}")
     return 0
 
