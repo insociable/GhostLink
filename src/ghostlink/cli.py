@@ -196,8 +196,11 @@ def _command_profile_upgrade(
 ) -> int:
     path = Path(args.profile)
     profile, password = _load_profile_with_password(path, password_reader)
-    if profile.ratchet_master_key is not None:
-        print("Profile already supports the ratchet vault.")
+    if (
+        profile.ratchet_master_key is not None
+        and profile.contact_store_key is not None
+    ):
+        print("Profile already uses the current local secret format.")
         return 0
 
     upgraded = upgrade_local_profile(profile)
@@ -205,7 +208,7 @@ def _command_profile_upgrade(
     _replace_private_file_atomic(path, serialized)
 
     print(f"Profile upgraded atomically: {path}")
-    print("Ratcheted protocol-v3 commands are now available.")
+    print("Ratcheted protocol-v3 and contact-store secrets are available.")
     return 0
 
 

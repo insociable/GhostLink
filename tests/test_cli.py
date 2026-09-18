@@ -538,6 +538,9 @@ def test_cli_profile_upgrade_atomically_migrates_v1(
     assert upgraded.device.device_id == before.device.device_id
     assert upgraded.ratchet_master_key is not None
     assert len(upgraded.ratchet_master_key) == 32
+    assert upgraded.contact_store_key is not None
+    assert len(upgraded.contact_store_key) == 32
+    assert upgraded.contact_store_key != upgraded.ratchet_master_key
     assert "upgraded atomically" in captured.out
 
 

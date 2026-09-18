@@ -1,38 +1,40 @@
-# GhostLink Local Profile v2
+# GhostLink Local Profile v3
 
 ## Purpose
 
-A local profile persists the private material required for one GhostLink identity/device and the secret used to unlock that device's encrypted libsignal ratchet vault across client restarts.
+A local profile persists the private material required for one GhostLink identity/device
+and two independent local keys used for encrypted client state across restarts.
 
-Unlike a contact bundle, a local profile contains secrets. It MUST NOT be shared.
+Unlike a Contact Bundle or QR payload, a local profile contains private material and MUST
+NOT be shared.
 
-## Version 2 secret payload
+## Version 3 payload
 
-Profile v2 keeps the existing identity/device material and adds:
+Profile v3 contains two independently random 32-byte keys:
 
-- a random 32-byte ratchet-vault master key.
+- `ratchet_master_key`: unlocks the encrypted libsignal ratchet/pre-key vault;
+- `contact_store_key`: protects the local human-trust contact store.
 
-The ratchet master key is generated independently with the operating-system-backed PyNaCl randomness source. It is not derived from the identity signing key, device signing key, device encryption key, password, DeviceID or GhostID.
+Both are generated independently with PyNaCl randomness. Neither is derived from the
+other, from identity/device keys, from the password, GhostID, or DeviceID.
 
-The master key is stored only inside the authenticated profile ciphertext. It is not written to:
+The ratchet key MUST NOT be reused for the contact store, and the contact-store key MUST
+NOT be used by the ratchet engine.
 
-- process arguments;
-- environment variables;
-- GhostNode;
-- logs;
-- the ratchet vault file itself.
-
-When the CLI starts the local ratchet engine, the unlocked master key is passed to the child only through the existing framed stdin RPC.
+Both values exist only inside the authenticated profile ciphertext. They are not included
+in Contact Bundles, QR payloads, GhostNode data, command-line arguments, or environment
+variables.
 
 ## At-rest protection
 
-Version 2 encrypts the private profile payload with libsodium SecretBox through PyNaCl.
+Profile v3 uses libsodium SecretBox through PyNaCl. The SecretBox key is derived from the
+user password with Argon2id.
 
-The SecretBox key is derived from the user's password with Argon2id. The outer profile stores:
+The outer document stores only:
 
 - version;
-- a random Argon2id salt;
-- the fixed supported KDF parameters;
+- random Argon2id salt;
+- fixed supported KDF parameters;
 - cipher identifier;
 - authenticated ciphertext.
 
@@ -40,47 +42,48 @@ GhostLink does not implement a custom cipher or password KDF.
 
 ## Validation
 
-When a profile is unlocked, GhostLink reconstructs the identity/device and verifies that:
+When a profile is opened, GhostLink verifies the existing identity/device relationships and
+also requires:
 
-1. the private identity seed derives the expected GhostID;
-2. the private device signing key derives the public signing key in the certificate;
-3. the private device encryption key derives the public encryption key in the certificate;
-4. the DeviceID matches the device signing public key;
-5. the device certificate is signed by the identity key;
-6. a v2 ratchet master key decodes to exactly 32 bytes.
+- a v2 or v3 ratchet master key, when present, to be exactly 32 bytes;
+- a v3 contact-store key to be exactly 32 bytes.
 
-Any mismatch rejects the profile.
+Malformed or inconsistent profiles are rejected.
 
-## Legacy v1 compatibility
+## v1 and v2 compatibility
 
-Profile v1 remains readable for identity/contact operations.
+Older profiles remain readable for explicit migration:
 
-A v1 profile intentionally decrypts with `ratchet_master_key = None`. Ratcheted CLI commands fail closed and instruct the user to run:
+- v1 contains neither local state key;
+- v2 contains the ratchet master key only;
+- v3 contains both independent keys.
+
+Missing keys decode as `None`. The explicit command remains:
 
 ```bash
 ghostlink profile-upgrade --profile alice.ghost
 ```
 
-The upgrade:
+The upgrade preserves GhostID, DeviceID, identity/device private material, and any existing
+v2 ratchet master key. It generates only the missing random keys, serializes profile v3
+under the same password, and atomically replaces the encrypted profile.
 
-1. decrypts and validates the legacy profile;
-2. generates a fresh independent 32-byte ratchet master key;
-3. serializes profile v2 under the same user password;
-4. atomically replaces the encrypted profile file;
-5. preserves the GhostID, DeviceID and existing identity/device private keys.
+There is no silent migration during messaging or trusted-contact operations.
 
-There is no silent migration during `send` or `inbox`.
+## Contact-store boundary
 
-## Resource limits
+Profile v3 supplies the independent key required by the contact store defined in ADR-0006.
+It does not contain contact records, labels, trust states, or replacement candidates.
 
-Profiles accept only the fixed Argon2id work parameters emitted by the implementation. A modified profile therefore cannot request an arbitrarily expensive KDF invocation.
+This keeps contact trust persistence separate from identity/device and ratchet state while
+retaining authenticated local storage.
 
 ## Limitations
 
-Password-based local encryption does not protect a running client whose process, password or unlocked keys are compromised.
+Password-based local encryption does not protect an already compromised running endpoint.
 
-Profile-v2 encryption does not provide hardware-backed key storage, forensic secure erasure, recovery, rotation or device revocation.
+Profile v3 does not provide hardware-backed storage, forensic secure erasure, recovery,
+rotation, device revocation, or client-state anti-rollback. Restoring older local snapshots
+can restore older client state.
 
-The separate ratchet vault is only as recoverable as its encrypted profile-held master key. Restoring an older profile/vault pair can restore older local state; client-state anti-rollback remains a separate hardening problem.
-
-GhostLink remains pre-alpha and unsuitable for sensitive real-world communications until the documented security gaps and independent review are addressed.
+GhostLink remains pre-alpha and is not production-ready.
