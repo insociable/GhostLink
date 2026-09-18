@@ -74,7 +74,7 @@ jobs:
   container:
     runs-on: ubuntu-latest
     env:
-      GHOSTLINK_NODE_TOKEN_FILE: /tmp/ghostlink-ci-token
+      GHOSTLINK_NODE_TOKEN_FILE: /tmp/ghostlink-ci-secrets/ghostlink_node_token
       GHOSTLINK_PUBLIC_HOSTNAME: node.example.com
       GHOSTLINK_ACME_EMAIL: admin@example.com
 
@@ -84,7 +84,10 @@ jobs:
       - name: Create relay token secret file
         run: |
           umask 077
+          mkdir -p "$(dirname "$GHOSTLINK_NODE_TOKEN_FILE")"
+          chmod 700 "$(dirname "$GHOSTLINK_NODE_TOKEN_FILE")"
           printf '%s\n' 'ci-placeholder-token' > "$GHOSTLINK_NODE_TOKEN_FILE"
+          chmod 444 "$GHOSTLINK_NODE_TOKEN_FILE"
 
       - name: Validate Compose configuration
         run: docker compose config --quiet
