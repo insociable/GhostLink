@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import json
 import urllib.parse
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient
 from nacl import utils
 from nacl.pwhash import argon2id
 from nacl.secret import SecretBox
+import pytest
 
 import ghostlink.cli as cli_module
 from ghostlink.cli import run
@@ -507,30 +510,30 @@ def test_cli_profile_upgrade_atomically_migrates_v1(
     tmp_path: Path,
     capsys,
 ) -> None:
-    password = "legacy migration password"
+    unlock_phrase = "legacy migration password"
     profile_path = tmp_path / "legacy.ghost"
 
     assert run(
         ["init", "--profile", str(profile_path)],
-        password_reader=lambda prompt: password,
+        password_reader=lambda prompt: unlock_phrase,
     ) == 0
     capsys.readouterr()
 
     current = profile_path.read_text()
     profile_path.write_text(
-        _legacy_v1_profile(current, password),
+        _legacy_v1_profile(current, unlock_phrase),
         encoding="utf-8",
     )
-    before = decrypt_local_profile(profile_path.read_text(), password)
+    before = decrypt_local_profile(profile_path.read_text(), unlock_phrase)
     assert before.ratchet_master_key is None
 
     assert run(
         ["profile-upgrade", "--profile", str(profile_path)],
-        password_reader=lambda prompt: password,
+        password_reader=lambda prompt: unlock_phrase,
     ) == 0
 
     captured = capsys.readouterr()
-    upgraded = decrypt_local_profile(profile_path.read_text(), password)
+    upgraded = decrypt_local_profile(profile_path.read_text(), unlock_phrase)
     assert upgraded.entity.ghost_id == before.entity.ghost_id
     assert upgraded.device.device_id == before.device.device_id
     assert upgraded.ratchet_master_key is not None
