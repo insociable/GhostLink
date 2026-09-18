@@ -550,6 +550,16 @@ def test_cli_profile_upgrade_atomically_migrates_v1(
     assert upgraded.contact_store_key is not None
     assert len(upgraded.contact_store_key) == 32
     assert upgraded.contact_store_key != upgraded.ratchet_master_key
+    assert upgraded.client_state_id is not None
+    assert len(upgraded.client_state_id) == 32
+    assert upgraded.state_coordination_key is not None
+    assert len(upgraded.state_coordination_key) == 32
+    assert upgraded.state_coordination_key not in {
+        upgraded.ratchet_master_key,
+        upgraded.contact_store_key,
+    }
+    assert upgraded.state_revision == 1
+    assert upgraded.state_previous_digest is None
     assert "upgraded atomically" in captured.out
 
 

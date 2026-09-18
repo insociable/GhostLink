@@ -26,18 +26,19 @@ ghostlink init --profile alice.ghost
 ghostlink init --profile bob.ghost
 ```
 
-New profiles are profile v3. Their encrypted secret payload contains independent random
-32-byte keys for the ratchet vault and the encrypted contact trust store.
+New profiles are profile v4. Their encrypted secret payload contains independent random
+32-byte keys for the ratchet vault, encrypted contact trust store and rollback-state
+coordination, plus a random 128-bit client-state identifier.
 
-Existing profile-v1/v2 files remain readable. Upgrade them explicitly before using current
-ratcheted/contact-trust commands:
+Existing profile-v1/v2/v3 files remain readable. Upgrade them explicitly before using the
+current rollback-aware local-state format:
 
 ```bash
 ghostlink profile-upgrade --profile alice.ghost
 ```
 
-Migration atomically replaces only the encrypted profile file and preserves an existing
-v2 ratchet-vault key.
+Migration atomically replaces only the encrypted profile file, preserves existing
+ratchet/contact-store keys, and adds only missing state-coordination material.
 
 ## Exchange and verify contacts
 
@@ -144,7 +145,7 @@ ghostlink send \
 The send path is:
 
 ```text
-unlock profile v3
+unlock profile v4
   -> open encrypted contact store
   -> require local state = verified
   -> open encrypted ratchet vault
@@ -217,7 +218,7 @@ messages and remains a documented local-state limitation.
 
 For a profile named `alice.ghost`, the development runtime normally uses:
 
-- `alice.ghost` — password-encrypted profile v3;
+- `alice.ghost` — password-encrypted profile v4;
 - `alice.ghost.contacts` — authenticated-encrypted local contact trust store;
 - `alice.ghost.ratchet` — encrypted libsignal ratchet vault;
 - `alice.ghost.state.sqlite3` — replay cache.

@@ -75,8 +75,8 @@ The current codebase includes:
 - canonical v3 routing/lifecycle context encrypted inside libsignal plaintext;
 - transaction-bound context verification that restores ratchet state when relay-visible v3 metadata is modified;
 - replay-cache acceptance after authenticated v3 context validation and before application plaintext is returned;
-- encrypted local profile v3 carrying independently random ratchet-vault and contact-store master keys;
-- explicit atomic profile-v1/v2 -> profile-v3 migration before current ratcheted/contact-trust commands are allowed;
+- encrypted local profile v4 carrying independently random ratchet-vault, contact-store and state-coordination keys plus a stable client-state identity;
+- explicit atomic profile-v1/v2/v3 -> profile-v4 migration that establishes the stable client-state identity and coordination key required by later witness-integrated stores;
 - user-facing CLI send/inbox bound to protocol v3, with the historical static-v2 network relay retired;
 - durable-session detection before first-contact bootstrap, preventing unnecessary pre-key consumption on later sends;
 - DeviceID-signed protocol-v3 message-relay requests bound to HTTP method, canonical logical path, canonical-body digest, freshness timestamp and random request ID;
