@@ -146,7 +146,7 @@ The ratchet vault master key is inside the encrypted profile, not in the vault f
 
 ## Relay access
 
-`GHOSTLINK_NODE_TOKEN` remains optional shared relay access control when configured by GhostNode.
+The optional shared relay Bearer token is loaded from a local file. Set `GHOSTLINK_NODE_TOKEN_FILE` to the path of that file; the token value itself must not be placed in argv or an environment variable.
 
 For protocol-v3 message operations it is only an additional coarse access-control layer. The client separately signs each POST/GET/DELETE request with the local DeviceID signing key; GhostNode verifies method/path/body binding, freshness and request-ID replay before allowing the operation.
 
@@ -164,4 +164,4 @@ This command intentionally exercises the retained static-v2 compatibility path a
 
 The CLI cutover demonstrates the implemented v3/libsignal path across separate process invocations and persistent encrypted vault state.
 
-GhostLink remains pre-alpha. Relay/client anti-rollback hardening, key transparency, production ingress hardening, device revocation/recovery, legacy-v2 hardening/removal and independent cryptographic review remain open.
+GhostLink remains pre-alpha. Relay/client anti-rollback hardening, key transparency, live external validation of the reference TLS ingress, device revocation/recovery, legacy-v2 hardening/removal and independent cryptographic review remain open.
