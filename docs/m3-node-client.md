@@ -32,6 +32,6 @@ Network failures, HTTP failures, and malformed relay responses are represented b
 
 ## Security status
 
-The transport does not yet authenticate a GhostNode and the current relay does not authenticate clients. TLS, relay authentication, replay protection, expiration, delivery acknowledgement, and persistent ciphertext storage remain later milestones.
+The client can send an optional shared Bearer access token to GhostNode. This provides coarse relay access control, not per-device identity authentication. The client still does not authenticate the GhostNode itself without trusted TLS. Per-device relay authentication, replay protection, expiration and explicit delivery acknowledgement remain later milestones.
 
 GhostLink remains experimental and is not suitable for sensitive real-world communications.
