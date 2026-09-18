@@ -47,9 +47,17 @@ export interface PreKeyLifecycleStatus {
   readonly retiredCount: number;
 }
 
+export interface PreKeyGarbageCollectionResult {
+  readonly retiredGenerationsRemoved: number;
+  readonly preKeysRemoved: number;
+  readonly signedPreKeysRemoved: number;
+  readonly kyberPreKeysRemoved: number;
+}
+
 const DEFAULT_ONE_TIME_POOL_TARGET = 100;
 const MAX_ONE_TIME_POOL_SIZE = 256;
 const MAX_BINDING_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
+export const RETIRED_PREKEY_RETENTION_SECONDS = 15 * 24 * 60 * 60;
 const MAX_PUBLICATION_SEQUENCE = Number.MAX_SAFE_INTEGER;
 const MAX_SECONDS_SAFE_FOR_MILLISECONDS = Math.floor(
   Number.MAX_SAFE_INTEGER / 1000
@@ -398,6 +406,163 @@ export class PersistentRatchetParty {
         },
         retired,
       });
+    });
+  }
+
+  async garbageCollectPreKeys(
+    nowSeconds = Math.floor(Date.now() / 1000)
+  ): Promise<PreKeyGarbageCollectionResult> {
+    if (
+      !Number.isSafeInteger(nowSeconds) ||
+      nowSeconds < 0 ||
+      nowSeconds > MAX_SECONDS_SAFE_FOR_MILLISECONDS
+    ) {
+      throw new Error('nowSeconds is outside the supported range');
+    }
+
+    return this.exclusive(async () => {
+      const lifecycle = this.inner.stores.lifecycle.snapshot();
+
+      if (
+        lifecycle.active !== null &&
+        lifecycle.active.publicPayload === null
+      ) {
+        throw new Error('active pre-key generation is missing staged metadata');
+      }
+
+      for (const generation of lifecycle.retired) {
+        if (
+          generation.retiredAt === null ||
+          generation.publicPayload === null
+        ) {
+          throw new Error(
+            'retired pre-key generation metadata is incomplete'
+          );
+        }
+        if (nowSeconds < generation.retiredAt) {
+          throw new Error(
+            'current time predates a retired pre-key generation'
+          );
+        }
+      }
+
+      const expired = lifecycle.retired.filter(
+        (generation) =>
+          generation.retiredAt !== null &&
+          nowSeconds - generation.retiredAt >=
+            RETIRED_PREKEY_RETENTION_SECONDS
+      );
+      if (expired.length === 0) {
+        return {
+          retiredGenerationsRemoved: 0,
+          preKeysRemoved: 0,
+          signedPreKeysRemoved: 0,
+          kyberPreKeysRemoved: 0,
+        };
+      }
+
+      const retained = lifecycle.retired.filter(
+        (generation) =>
+          generation.retiredAt !== null &&
+          nowSeconds - generation.retiredAt <
+            RETIRED_PREKEY_RETENTION_SECONDS
+      );
+
+      const protectedPreKeys = new Set<number>();
+      const protectedSignedPreKeys = new Set<number>();
+      const protectedKyberPreKeys = new Set<number>();
+
+      const protectGeneration = (
+        generation: typeof lifecycle.active
+      ): void => {
+        if (generation === null) {
+          return;
+        }
+        protectedSignedPreKeys.add(generation.signedPreKeyId);
+        protectedKyberPreKeys.add(generation.lastResortKyberPreKeyId);
+        for (const [preKeyId, kyberPreKeyId] of generation.oneTimeKeyIds) {
+          protectedPreKeys.add(preKeyId);
+          protectedKyberPreKeys.add(kyberPreKeyId);
+        }
+      };
+
+      protectGeneration(lifecycle.pending);
+      protectGeneration(lifecycle.active);
+      for (const generation of retained) {
+        protectGeneration(generation);
+      }
+
+      const preKeysToRemove = new Set<number>();
+      const signedPreKeysToRemove = new Set<number>();
+      const kyberPreKeysToRemove = new Set<number>();
+
+      for (const generation of expired) {
+        if (!protectedSignedPreKeys.has(generation.signedPreKeyId)) {
+          signedPreKeysToRemove.add(generation.signedPreKeyId);
+        }
+        if (
+          !protectedKyberPreKeys.has(
+            generation.lastResortKyberPreKeyId
+          )
+        ) {
+          kyberPreKeysToRemove.add(
+            generation.lastResortKyberPreKeyId
+          );
+        }
+        for (const [preKeyId, kyberPreKeyId] of generation.oneTimeKeyIds) {
+          if (!protectedPreKeys.has(preKeyId)) {
+            preKeysToRemove.add(preKeyId);
+          }
+          if (!protectedKyberPreKeys.has(kyberPreKeyId)) {
+            kyberPreKeysToRemove.add(kyberPreKeyId);
+          }
+        }
+      }
+
+      const before = exportPartyStores(this.inner.stores);
+      try {
+        let preKeysRemoved = 0;
+        for (const id of preKeysToRemove) {
+          if (this.inner.stores.preKey.hasPreKey(id)) {
+            await this.inner.stores.preKey.removePreKey(id);
+            preKeysRemoved += 1;
+          }
+        }
+
+        let signedPreKeysRemoved = 0;
+        for (const id of signedPreKeysToRemove) {
+          if (this.inner.stores.signedPreKey.removeSignedPreKey(id)) {
+            signedPreKeysRemoved += 1;
+          }
+        }
+
+        let kyberPreKeysRemoved = 0;
+        for (const id of kyberPreKeysToRemove) {
+          if (this.inner.stores.kyberPreKey.removeKyberPreKey(id)) {
+            kyberPreKeysRemoved += 1;
+          }
+        }
+
+        this.inner.stores.lifecycle.replace({
+          ...lifecycle,
+          retired: retained,
+        });
+
+        await this.vault.save(
+          this.owner,
+          exportPartyStores(this.inner.stores)
+        );
+
+        return {
+          retiredGenerationsRemoved: expired.length,
+          preKeysRemoved,
+          signedPreKeysRemoved,
+          kyberPreKeysRemoved,
+        };
+      } catch (error) {
+        this.inner = this.rebuild(before);
+        throw error;
+      }
     });
   }
 
