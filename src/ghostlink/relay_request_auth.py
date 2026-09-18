@@ -417,8 +417,12 @@ class SQLiteRelayRequestReplayStore:
 
 def create_relay_request_replay_store(
     settings: NodeSettings,
+    coordinator: RelayStateCoordinator | None = None,
 ) -> RelayRequestReplayStore:
     """Create replay storage matching GhostNode persistence mode."""
     if settings.database_path is None:
         return InMemoryRelayRequestReplayStore()
-    return SQLiteRelayRequestReplayStore(settings.database_path)
+    return SQLiteRelayRequestReplayStore(
+        settings.database_path,
+        coordinator=coordinator,
+    )

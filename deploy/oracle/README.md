@@ -45,41 +45,59 @@ cd GhostLink
 git checkout main
 ```
 
-## 3. Create the relay Bearer-token file
+## 3. Create the relay secret files
 
-Create a private local secret directory and generate the token directly into a file:
+Create a private local secret directory and generate both relay secrets directly into files:
 
 ```bash
 umask 077
 mkdir -p .secrets
 chmod 700 .secrets
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > .secrets/ghostlink_node_token
-chmod 444 .secrets/ghostlink_node_token
+python3 -c 'import secrets; print(secrets.token_hex(32))' > .secrets/ghostlink_relay_state_key
+chmod 444 .secrets/ghostlink_node_token .secrets/ghostlink_relay_state_key
 ```
 
-Do not print the token, place it in shell history, pass it in argv, or store its value in an environment variable.
+Do not print either secret, place secret values in shell history, pass them in argv, or store their values in environment variables.
 
-The source file is read-only because the non-root GhostNode container must be able to read the Compose secret bind mount. Host confidentiality comes from the parent `.secrets` directory being mode `0700`; do not move the read-only token file into a traversable shared directory.
+The source files are read-only because the non-root GhostNode container must be able to read the Compose secret bind mounts. Host confidentiality comes from the parent `.secrets` directory being mode `0700`; do not move these files into a traversable shared directory.
 
 The repository ignores `.secrets/`.
 
-Compose needs only the **path** of the token file:
+Generate one non-secret 128-bit relay-state ID and keep that exact value for the lifetime of this GhostNode database:
 
 ```bash
+export GHOSTLINK_RELAY_STATE_ID="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
 export GHOSTLINK_NODE_TOKEN_FILE="$PWD/.secrets/ghostlink_node_token"
+export GHOSTLINK_RELAY_STATE_KEY_FILE="$PWD/.secrets/ghostlink_relay_state_key"
 ```
 
-The environment variable contains a filesystem path, not the secret value.
+Persist the same `GHOSTLINK_RELAY_STATE_ID` in the deployment's non-secret configuration. Never generate a new ID for an already enrolled database.
+
+The two `*_FILE` environment variables contain filesystem paths, not secret values.
 
 ## 4. Loopback-only deployment
 
 The root `compose.yaml` is the retained local/SSH-tunnel mode.
 
-Validate and start it:
+Validate and build it:
 
 ```bash
 docker compose config --quiet
 docker compose build --pull
+```
+
+For a new volume or a legacy pre-ADR-0009 relay database, enroll persistent state exactly once before normal startup:
+
+```bash
+docker compose run --rm --no-deps ghostnode ghostnode --migrate-relay-state
+```
+
+Do not run the migration command as a routine update step for an already enrolled database.
+
+Then start normally:
+
+```bash
 docker compose up -d
 ```
 
@@ -142,11 +160,14 @@ Create or update a local `.env` containing only non-secret deployment values:
 
 ```dotenv
 GHOSTLINK_NODE_TOKEN_FILE=.secrets/ghostlink_node_token
+GHOSTLINK_RELAY_STATE_KEY_FILE=.secrets/ghostlink_relay_state_key
+GHOSTLINK_RELAY_STATE_ID=00112233445566778899aabbccddeeff
 GHOSTLINK_PUBLIC_HOSTNAME=node.example.net
 GHOSTLINK_ACME_EMAIL=admin@example.net
 ```
 
-The token **value** is not stored in `.env`.
+Replace the example relay-state ID with the stable value generated for this deployment.
+Neither secret **value** is stored in `.env`; only secret-file paths are.
 
 ## 8. Oracle and host firewall policy
 
@@ -191,10 +212,23 @@ docker run --rm \
 
 ## 10. Start public HTTPS
 
-Build GhostNode and start the public stack:
+Build GhostNode:
 
 ```bash
 docker compose -f deploy/oracle/compose.public.yaml build --pull
+```
+
+For a new volume, or once when upgrading a legacy pre-ADR-0009 database, enroll relay rollback state before normal startup:
+
+```bash
+docker compose -f deploy/oracle/compose.public.yaml run --rm --no-deps ghostnode ghostnode --migrate-relay-state
+```
+
+Do not rerun migration for an already enrolled database.
+
+Then start and inspect the public stack:
+
+```bash
 docker compose -f deploy/oracle/compose.public.yaml up -d
 ```
 
@@ -300,6 +334,13 @@ Distribute the new token to authorized clients through a trusted channel and rep
 git pull --ff-only
 docker compose -f deploy/oracle/compose.public.yaml config --quiet
 docker compose -f deploy/oracle/compose.public.yaml build --pull
+```
+
+If this update is the first version introducing ADR-0009 to an existing legacy database, perform the one-time migration described in section 10 before starting. Otherwise, do not rerun migration.
+
+Recreate the already enrolled public stack normally:
+
+```bash
 docker compose -f deploy/oracle/compose.public.yaml up -d
 docker compose -f deploy/oracle/compose.public.yaml ps
 ```
@@ -310,15 +351,18 @@ Re-run the external HTTPS health check after every update.
 
 The public stack uses:
 
-- `ghostnode_data` for the relay SQLite database;
+- `ghostnode_data` for the relay SQLite database **and the reference relay witness sidecar**;
 - `caddy_data` for certificate/ACME state;
-- `caddy_config` for Caddy runtime state.
+- `caddy_config` for Caddy runtime state;
+- the operator-managed relay-state ID plus `ghostlink_relay_state_key` secret as part of the relay recovery state.
 
 Do not use `docker compose down -v` unless those states are intentionally being destroyed.
 
-A relay-database rollback is security relevant because it can also roll back publication/request-replay state. Ordinary application rollback must preserve the current GhostNode data volume.
+A relay-database rollback is security relevant because it can also roll back publication, one-time pre-key, anti-drain and request-replay state. Ordinary application rollback must preserve the current GhostNode data volume and the exact relay-state identity/key.
 
-For an early-development offline archive, stop the relevant service before copying its volume. A production backup/anti-rollback design remains separate work.
+The reference witness detects restoration of an older relay database only while the witness remains newer. Because the reference Oracle layout stores the witness in the same `ghostnode_data` volume, restoring the whole volume/VM to an older snapshot can roll the witness back too and is **not** covered by the anti-rollback claim.
+
+For an offline archive, stop GhostNode before copying coordinated state. A production whole-host anti-rollback claim requires a monotonic witness outside the restored host/volume domain.
 
 ## 16. Rollback
 

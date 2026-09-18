@@ -458,3 +458,149 @@ def test_shared_relay_coordinator_latches_all_stores_unsafe_after_witness_failur
 
     with pytest.raises(RelayStateError, match="unsafe or not reconciled"):
         prekey_store.status("device1:" + ("c" * 52))
+
+
+def _assert_relay_snapshot_is_older_than_witness(
+    tmp_path: Path,
+    path: Path,
+    witness: SQLiteRelayMonotonicWitness,
+) -> None:
+    reopened = _coordinator(tmp_path, path, witness=witness)
+    with pytest.raises(
+        RelayStateRollbackError,
+        match="older than monotonic witness",
+    ):
+        reopened.reconcile()
+
+
+def test_message_deletion_resurrection_rollback_is_rejected(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "relay.sqlite3"
+    _initialize_protected_schema(path)
+    witness = _witness(tmp_path)
+    coordinator = _coordinator(tmp_path, path, witness=witness)
+    coordinator.migrate_legacy()
+    store = SQLiteV3MessageStore(path, coordinator=coordinator)
+    now = int(time.time())
+    envelope = V3MessageEnvelope(
+        version=3,
+        message_id="c" * 32,
+        sender_device_id="device1:" + ("a" * 52),
+        recipient_device_id="device1:" + ("b" * 52),
+        created_at=now,
+        expires_at=now + 3_600,
+        ciphertext_type=3,
+        ciphertext="Y2lwaGVydGV4dA==",
+    )
+
+    store.add(envelope)
+    before_delete = path.read_bytes()
+    assert store.delete(envelope.recipient_device_id, envelope.message_id)
+    assert witness.get().revision == 3
+
+    path.write_bytes(before_delete)
+
+    _assert_relay_snapshot_is_older_than_witness(tmp_path, path, witness)
+
+
+def test_prekey_generation_rollback_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "relay.sqlite3"
+    _initialize_protected_schema(path)
+    witness = _witness(tmp_path)
+    coordinator = _coordinator(tmp_path, path, witness=witness)
+    coordinator.migrate_legacy()
+    store = SQLitePreKeyPublicationStore(path, coordinator=coordinator)
+    now = int(time.time())
+    device_id = "device1:" + ("c" * 52)
+
+    store.publish(
+        RelayPreKeyGeneration(
+            device_id=device_id,
+            publication_sequence=1,
+            expires_at=now + 3_600,
+            publication_payload='{"generation":1}',
+            one_time_bindings=("one-a",),
+            fallback_binding="fallback-a",
+        )
+    )
+    sequence_one = path.read_bytes()
+    store.publish(
+        RelayPreKeyGeneration(
+            device_id=device_id,
+            publication_sequence=2,
+            expires_at=now + 7_200,
+            publication_payload='{"generation":2}',
+            one_time_bindings=("one-b",),
+            fallback_binding="fallback-b",
+        )
+    )
+    assert witness.get().revision == 3
+
+    path.write_bytes(sequence_one)
+
+    _assert_relay_snapshot_is_older_than_witness(tmp_path, path, witness)
+
+
+def test_consumed_one_time_prekey_and_antidrain_rollback_is_rejected(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "relay.sqlite3"
+    _initialize_protected_schema(path)
+    witness = _witness(tmp_path)
+    coordinator = _coordinator(tmp_path, path, witness=witness)
+    coordinator.migrate_legacy()
+    store = SQLitePreKeyPublicationStore(path, coordinator=coordinator)
+    now = int(time.time())
+    target = "device1:" + ("c" * 52)
+    requester = "device1:" + ("d" * 52)
+
+    store.publish(
+        RelayPreKeyGeneration(
+            device_id=target,
+            publication_sequence=1,
+            expires_at=now + 3_600,
+            publication_payload='{"generation":1}',
+            one_time_bindings=("one",),
+            fallback_binding="fallback",
+        )
+    )
+    before_fetch = path.read_bytes()
+
+    fetched = store.fetch(
+        target,
+        requester,
+        "3" * 32,
+        now=now,
+    )
+    assert fetched.bundle_kind == "one_time"
+    assert witness.get().revision == 3
+
+    path.write_bytes(before_fetch)
+
+    _assert_relay_snapshot_is_older_than_witness(tmp_path, path, witness)
+
+
+def test_authenticated_request_replay_rollback_is_rejected(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "relay.sqlite3"
+    _initialize_protected_schema(path)
+    witness = _witness(tmp_path)
+    coordinator = _coordinator(tmp_path, path, witness=witness)
+    coordinator.migrate_legacy()
+    store = SQLiteRelayRequestReplayStore(path, coordinator=coordinator)
+    revision_one = path.read_bytes()
+    now = int(time.time())
+
+    assert store.accept(
+        "device1:" + ("d" * 52),
+        "4" * 32,
+        expires_at=now + 300,
+        now=now,
+    )
+    assert witness.get().revision == 2
+
+    path.write_bytes(revision_one)
+
+    _assert_relay_snapshot_is_older_than_witness(tmp_path, path, witness)

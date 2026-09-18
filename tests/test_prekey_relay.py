@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from ghostlink.config import NodeSettings
 from ghostlink.device import EnrolledGhostDevice
 from ghostlink.entity import GhostEntity
-from ghostlink.node import create_app
+from ghostlink.node import create_app, migrate_relay_state
 from ghostlink.prekey_fetch import create_prekey_fetch_request
 from ghostlink.prekey_relay import (
     RelayPreKeyGeneration,
@@ -24,6 +24,23 @@ from ghostlink.ratchet_publication import (
     create_ratchet_prekey_publication,
     export_ratchet_prekey_publication,
 )
+
+_RELAY_STATE_ID = "00112233445566778899aabbccddeeff"
+_RELAY_STATE_KEY = bytes(range(32))
+
+
+def _migrated_node_settings(
+    tmp_path: Path,
+    database_name: str = "relay.sqlite3",
+) -> NodeSettings:
+    settings = NodeSettings(
+        database_path=tmp_path / database_name,
+        relay_state_id=_RELAY_STATE_ID,
+        relay_witness_path=tmp_path / "relay-witness.sqlite3",
+        relay_state_coordination_key=_RELAY_STATE_KEY,
+    )
+    migrate_relay_state(settings)
+    return settings
 
 
 def material(
@@ -253,8 +270,9 @@ def test_prekey_publication_sqlite_replacement_survives_app_recreation(
     tmp_path: Path,
 ) -> None:
 
-    database_path = tmp_path / "relay.sqlite3"
-    settings = NodeSettings(database_path=database_path)
+    settings = _migrated_node_settings(tmp_path)
+    database_path = settings.database_path
+    assert database_path is not None
     entity = GhostEntity.generate()
     device = entity.enroll_device()
 
@@ -515,8 +533,9 @@ def test_prekey_fetch_unknown_target_is_not_found() -> None:
 def test_sqlite_publication_retry_after_pop_does_not_restore_pool(
     tmp_path: Path,
 ) -> None:
-    database_path = tmp_path / "relay.sqlite3"
-    settings = NodeSettings(database_path=database_path)
+    settings = _migrated_node_settings(tmp_path)
+    database_path = settings.database_path
+    assert database_path is not None
     target = GhostEntity.generate().enroll_device()
     requesters = [
         GhostEntity.generate().enroll_device()
@@ -564,7 +583,7 @@ def test_sqlite_publication_retry_after_pop_does_not_restore_pool(
 def test_sqlite_fetch_allocation_survives_app_recreation(
     tmp_path: Path,
 ) -> None:
-    settings = NodeSettings(database_path=tmp_path / "relay.sqlite3")
+    settings = _migrated_node_settings(tmp_path)
     target = GhostEntity.generate().enroll_device()
     requester = GhostEntity.generate().enroll_device()
     request = fetch_request(requester, target.device_id)

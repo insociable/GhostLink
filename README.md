@@ -44,7 +44,7 @@ The ratchet path exercises forward-secrecy/post-compromise behavior through the 
 
 Important remaining gaps include:
 
-- relay database anti-rollback protection;
+- a production relay monotonic witness outside the relay host/volume snapshot domain;
 - key transparency;
 - public Caddy/TLS reference deployment implemented, but live external certificate/closed-port verification is still required;
 - Sybil-resistant abuse controls;

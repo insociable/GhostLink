@@ -10,8 +10,11 @@ services:
     environment:
       GHOSTLINK_CONFIG: /config/ghostlink.toml
       GHOSTLINK_NODE_TOKEN_FILE: /run/secrets/ghostlink_node_token
+      GHOSTLINK_RELAY_STATE_ID: ${GHOSTLINK_RELAY_STATE_ID:?Set a stable 128-bit relay state ID}
+      GHOSTLINK_RELAY_STATE_KEY_FILE: /run/secrets/ghostlink_relay_state_key
     secrets:
       - ghostlink_node_token
+      - ghostlink_relay_state_key
     volumes:
       - ghostnode_data:/data
       - ./ghostlink.toml:/config/ghostlink.toml:ro
@@ -62,6 +65,8 @@ networks:
 secrets:
   ghostlink_node_token:
     file: ${GHOSTLINK_NODE_TOKEN_FILE:?Set GHOSTLINK_NODE_TOKEN_FILE to the relay-token file path}
+  ghostlink_relay_state_key:
+    file: ${GHOSTLINK_RELAY_STATE_KEY_FILE:?Set GHOSTLINK_RELAY_STATE_KEY_FILE to the relay-state key file path}
 
 volumes:
   ghostnode_data:

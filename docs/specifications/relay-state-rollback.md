@@ -1,6 +1,6 @@
 # Relay-state rollback coordination
 
-Status: design accepted; coordinator core and persistent-store integration implemented; runtime configuration/readiness wiring remains under issue #86.
+Status: implemented under ADR-0009 / issue #86 with explicit migration, runtime reconciliation, shared-store coordination and fail-closed health; the reference sidecar witness does not protect whole-volume/VM rollback.
 
 ## Scope
 

@@ -3,8 +3,11 @@ from pathlib import Path
 import pytest
 from ghostlink.config import (
     NODE_TOKEN_FILE_ENV,
+    RELAY_STATE_ID_ENV,
+    RELAY_STATE_KEY_FILE_ENV,
     NodeSettings,
     load_access_token_from_file,
+    load_relay_state_coordination_key_from_file,
     load_settings,
 )
 
@@ -138,3 +141,109 @@ def test_access_log_defaults_to_enabled_for_development() -> None:
 def test_invalid_access_log_value_is_rejected() -> None:
     with pytest.raises(ValueError, match="node.access_log"):
         NodeSettings(access_log="false")  # type: ignore[arg-type]
+
+
+def test_relay_state_key_is_loaded_from_secret_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    key_file = tmp_path / "relay-state-key"
+    key_file.write_text(("ab" * 32) + "\n", encoding="ascii")
+    monkeypatch.setenv(RELAY_STATE_KEY_FILE_ENV, str(key_file))
+
+    key = load_relay_state_coordination_key_from_file()
+
+    assert key == bytes.fromhex("ab" * 32)
+
+
+def test_invalid_relay_state_key_file_is_rejected(tmp_path: Path) -> None:
+    key_file = tmp_path / "relay-state-key"
+    key_file.write_text("AB" * 32, encoding="ascii")
+
+    with pytest.raises(ValueError, match="lowercase hex"):
+        load_relay_state_coordination_key_from_file(key_file)
+
+
+def test_relay_rollback_settings_load_from_config_and_secret_sources(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "ghostlink.toml"
+    config_path.write_text(
+        (
+            '[node]\n'
+            'database_path = "data/relay.sqlite3"\n'
+            'relay_witness_path = "data/relay-witness.sqlite3"\n'
+        ),
+        encoding="utf-8",
+    )
+    key_file = tmp_path / "relay-state-key"
+    key_file.write_text(("01" * 32) + "\n", encoding="ascii")
+    monkeypatch.setenv(RELAY_STATE_KEY_FILE_ENV, str(key_file))
+    monkeypatch.setenv(
+        RELAY_STATE_ID_ENV,
+        "00112233445566778899aabbccddeeff",
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.database_path == tmp_path / "data/relay.sqlite3"
+    assert settings.relay_witness_path == tmp_path / "data/relay-witness.sqlite3"
+    assert settings.relay_state_id == "00112233445566778899aabbccddeeff"
+    assert settings.relay_state_coordination_key == bytes.fromhex("01" * 32)
+
+
+def test_relay_state_id_can_be_loaded_from_toml(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "ghostlink.toml"
+    config_path.write_text(
+        (
+            '[node]\n'
+            'database_path = "relay.sqlite3"\n'
+            'relay_witness_path = "relay-witness.sqlite3"\n'
+            'relay_state_id = "00112233445566778899aabbccddeeff"\n'
+        ),
+        encoding="utf-8",
+    )
+    key_file = tmp_path / "relay-state-key"
+    key_file.write_text("02" * 32, encoding="ascii")
+    monkeypatch.setenv(RELAY_STATE_KEY_FILE_ENV, str(key_file))
+
+    settings = load_settings(config_path)
+
+    assert settings.relay_state_id == "00112233445566778899aabbccddeeff"
+
+
+def test_partial_relay_rollback_configuration_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must be configured together"):
+        NodeSettings(
+            database_path=tmp_path / "relay.sqlite3",
+            relay_state_id="00112233445566778899aabbccddeeff",
+        )
+
+
+def test_relay_witness_must_not_share_database_path(tmp_path: Path) -> None:
+    path = tmp_path / "relay.sqlite3"
+    with pytest.raises(ValueError, match="must differ from database_path"):
+        NodeSettings(
+            database_path=path,
+            relay_state_id="00112233445566778899aabbccddeeff",
+            relay_witness_path=path,
+            relay_state_coordination_key=bytes(32),
+        )
+
+
+def test_relay_state_key_is_rejected_from_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / "ghostlink.toml"
+    config_path.write_text(
+        (
+            '[node]\n'
+            'relay_state_coordination_key = "must-not-be-here"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="must not be stored in TOML"):
+        load_settings(config_path)

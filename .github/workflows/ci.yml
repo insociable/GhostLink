@@ -75,19 +75,22 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GHOSTLINK_NODE_TOKEN_FILE: /tmp/ghostlink-ci-secrets/ghostlink_node_token
+      GHOSTLINK_RELAY_STATE_KEY_FILE: /tmp/ghostlink-ci-secrets/ghostlink_relay_state_key
+      GHOSTLINK_RELAY_STATE_ID: 00112233445566778899aabbccddeeff
       GHOSTLINK_PUBLIC_HOSTNAME: node.example.com
       GHOSTLINK_ACME_EMAIL: admin@example.com
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create relay token secret file
+      - name: Create relay secret files
         run: |
           umask 077
           mkdir -p "$(dirname "$GHOSTLINK_NODE_TOKEN_FILE")"
           chmod 700 "$(dirname "$GHOSTLINK_NODE_TOKEN_FILE")"
           printf '%s\n' 'ci-placeholder-token' > "$GHOSTLINK_NODE_TOKEN_FILE"
-          chmod 444 "$GHOSTLINK_NODE_TOKEN_FILE"
+          printf '%s\n' '0101010101010101010101010101010101010101010101010101010101010101' > "$GHOSTLINK_RELAY_STATE_KEY_FILE"
+          chmod 444 "$GHOSTLINK_NODE_TOKEN_FILE" "$GHOSTLINK_RELAY_STATE_KEY_FILE"
 
       - name: Validate Compose configuration
         run: docker compose config --quiet
@@ -127,6 +130,9 @@ jobs:
 
       - name: Build GhostNode image
         run: docker compose build
+
+      - name: Initialize relay rollback state
+        run: docker compose run --rm --no-deps ghostnode ghostnode --migrate-relay-state
 
       - name: Start GhostNode
         run: docker compose up -d --no-build

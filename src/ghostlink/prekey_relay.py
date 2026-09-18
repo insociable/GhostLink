@@ -912,6 +912,7 @@ class SQLitePreKeyPublicationStore:
 
 def create_prekey_publication_store(
     settings: NodeSettings,
+    coordinator: RelayStateCoordinator | None = None,
 ) -> PreKeyPublicationStore:
     if settings.database_path is None:
         return InMemoryPreKeyPublicationStore(
@@ -924,6 +925,7 @@ def create_prekey_publication_store(
         settings.database_path,
         fetch_window_seconds=settings.prekey_fetch_window_seconds,
         fetch_max_new_allocations=settings.prekey_fetch_max_new_allocations,
+        coordinator=coordinator,
     )
 
 
