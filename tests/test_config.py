@@ -1,7 +1,12 @@
 from pathlib import Path
 
 import pytest
-from ghostlink.config import NODE_TOKEN_ENV, NodeSettings, load_settings
+from ghostlink.config import (
+    NODE_TOKEN_FILE_ENV,
+    NodeSettings,
+    load_access_token_from_file,
+    load_settings,
+)
 
 
 def test_missing_config_uses_safe_local_defaults(tmp_path: Path) -> None:
@@ -76,20 +81,36 @@ def test_node_section_must_be_a_table(tmp_path: Path) -> None:
         load_settings(config_path)
 
 
-def test_access_token_is_loaded_from_environment(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv(NODE_TOKEN_ENV, "server-secret")
+def test_access_token_is_loaded_from_secret_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    token_file = tmp_path / "relay-token"
+    token_file.write_text("server-secret\n", encoding="utf-8")
+    monkeypatch.setenv(NODE_TOKEN_FILE_ENV, str(token_file))
 
     settings = load_settings(tmp_path / "missing.toml")
 
     assert settings.access_token == "server-secret"  # noqa: S105
 
 
-def test_blank_access_token_disables_authentication(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv(NODE_TOKEN_ENV, "   ")
+def test_blank_token_file_reference_disables_authentication(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(NODE_TOKEN_FILE_ENV, "   ")
 
     settings = load_settings(tmp_path / "missing.toml")
 
     assert settings.access_token is None
+
+
+def test_empty_access_token_file_is_rejected(tmp_path: Path) -> None:
+    token_file = tmp_path / "relay-token"
+    token_file.write_text("\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="access token file"):
+        load_access_token_from_file(token_file)
 
 
 def test_whitespace_access_token_is_rejected() -> None:
