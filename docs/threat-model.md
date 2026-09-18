@@ -93,7 +93,7 @@ These are implemented building blocks, not a production-security certification.
 
 Current security gaps still include:
 
-- relay database anti-rollback protection;
+- relay database anti-rollback protection remains pending under ADR-0009 / issue #86;
 - the reference SQLite client-state witness protects contact, replay, and ratchet/highest-seen components only while the witness remains newer; it does not provide whole-device rollback protection against a filesystem snapshot that rolls the witness back too;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
