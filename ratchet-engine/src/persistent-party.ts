@@ -213,6 +213,76 @@ export class PersistentRatchetParty {
     });
   }
 
+  async getPendingPreKeyGeneration(): Promise<
+    (PreparedPreKeyGeneration & { readonly publicPayload: string | null }) | null
+  > {
+    return this.exclusive(async () => {
+      const lifecycle = this.inner.stores.lifecycle.snapshot();
+      const pending = lifecycle.pending;
+      if (pending === null) {
+        return null;
+      }
+
+      const material = await this.inner.loadPreKeyGeneration(pending);
+      return {
+        ...material,
+        sequence: pending.sequence,
+        createdAt: pending.createdAt,
+        expiresAt: pending.expiresAt,
+        publicPayload: pending.publicPayload,
+      };
+    });
+  }
+
+  async stagePreKeyPublication(
+    sequence: number,
+    publicPayload: string
+  ): Promise<void> {
+    if (
+      !Number.isSafeInteger(sequence) ||
+      sequence <= 0 ||
+      sequence > MAX_PUBLICATION_SEQUENCE
+    ) {
+      throw new Error('publication sequence is outside the supported range');
+    }
+    if (
+      publicPayload.length === 0 ||
+      Buffer.byteLength(publicPayload, 'utf8') > 1024 * 1024
+    ) {
+      throw new Error('public payload must be bounded non-empty UTF-8 text');
+    }
+
+    await this.transaction(async (party) => {
+      const lifecycle = party.stores.lifecycle.snapshot();
+      const pending = lifecycle.pending;
+      if (pending === null) {
+        throw new Error('no pending pre-key generation exists');
+      }
+      if (pending.sequence !== sequence) {
+        throw new Error('pending pre-key generation sequence does not match');
+      }
+      if (
+        pending.publicPayload !== null &&
+        pending.publicPayload !== publicPayload
+      ) {
+        throw new Error(
+          'pending pre-key generation already has a different public payload'
+        );
+      }
+      if (pending.publicPayload === publicPayload) {
+        return;
+      }
+
+      party.stores.lifecycle.replace({
+        ...lifecycle,
+        pending: {
+          ...pending,
+          publicPayload,
+        },
+      });
+    });
+  }
+
   private remoteAddress(name: string): SignalClient.ProtocolAddress {
     if (!name) {
       throw new Error('remote ratchet address must not be empty');
