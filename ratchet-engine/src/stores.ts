@@ -6,6 +6,11 @@ import {
   parsePreKeyLifecycleState,
   type PreKeyLifecycleState,
 } from './prekey-lifecycle-state.js';
+import {
+  MemoryRemotePublicationSequenceStore,
+  parseRemotePublicationSequences,
+  type RemotePublicationSequenceState,
+} from './remote-publication-state.js';
 import { validateRegistrationId } from './protocol-profile.js';
 
 const MAX_STORE_ENTRIES = 100_000;
@@ -54,7 +59,7 @@ function assertString(value: unknown, field: string): string {
 }
 
 export interface PartyStoresState {
-  readonly version: 2;
+  readonly version: 3;
   readonly session: readonly (readonly [string, string])[];
   readonly identity: {
     readonly registrationId: number;
@@ -69,6 +74,7 @@ export interface PartyStoresState {
     readonly baseKeysSeen: readonly (readonly [string, readonly string[]])[];
   };
   readonly lifecycle: PreKeyLifecycleState;
+  readonly remotePublicationSequences: RemotePublicationSequenceState;
 }
 
 function parseStringEntries(
@@ -108,22 +114,33 @@ export function parsePartyStoresState(value: unknown): PartyStoresState {
 
   const document = value as Record<string, unknown>;
   const version = assertInteger(document.version, 'version');
-  if (version !== 1 && version !== 2) {
+  if (version !== 1 && version !== 2 && version !== 3) {
     throw new Error('unsupported stores state version');
   }
 
   const expected =
     version === 1
       ? ['version', 'session', 'identity', 'preKey', 'signedPreKey', 'kyberPreKey']
-      : [
-          'version',
-          'session',
-          'identity',
-          'preKey',
-          'signedPreKey',
-          'kyberPreKey',
-          'lifecycle',
-        ];
+      : version === 2
+        ? [
+            'version',
+            'session',
+            'identity',
+            'preKey',
+            'signedPreKey',
+            'kyberPreKey',
+            'lifecycle',
+          ]
+        : [
+            'version',
+            'session',
+            'identity',
+            'preKey',
+            'signedPreKey',
+            'kyberPreKey',
+            'lifecycle',
+            'remotePublicationSequences',
+          ];
   if (
     Object.keys(document).sort().join(',') !== expected.slice().sort().join(',')
   ) {
@@ -186,7 +203,7 @@ export function parsePartyStoresState(value: unknown): PartyStoresState {
   });
 
   return {
-    version: 2,
+    version: 3,
     session: parseStringEntries(document.session, 'session'),
     identity: {
       registrationId: validateRegistrationId(
@@ -211,6 +228,10 @@ export function parsePartyStoresState(value: unknown): PartyStoresState {
       version === 1
         ? emptyPreKeyLifecycleState()
         : parsePreKeyLifecycleState(document.lifecycle),
+    remotePublicationSequences:
+      version === 3
+        ? parseRemotePublicationSequences(document.remotePublicationSequences)
+        : [],
   };
 }
 
@@ -533,6 +554,7 @@ export interface PartyStores {
   readonly signedPreKey: MemorySignedPreKeyStore;
   readonly kyberPreKey: MemoryKyberPreKeyStore;
   readonly lifecycle: MemoryPreKeyLifecycleStore;
+  readonly remotePublicationSequences: MemoryRemotePublicationSequenceStore;
 }
 
 export function createPartyStores(registrationId: number): PartyStores {
@@ -543,18 +565,21 @@ export function createPartyStores(registrationId: number): PartyStores {
     signedPreKey: new MemorySignedPreKeyStore(),
     kyberPreKey: new MemoryKyberPreKeyStore(),
     lifecycle: new MemoryPreKeyLifecycleStore(),
+    remotePublicationSequences: new MemoryRemotePublicationSequenceStore(),
   };
 }
 
 export function exportPartyStores(stores: PartyStores): PartyStoresState {
   return {
-    version: 2,
+    version: 3,
     session: stores.session.exportState(),
     identity: stores.identity.exportState(),
     preKey: stores.preKey.exportState(),
     signedPreKey: stores.signedPreKey.exportState(),
     kyberPreKey: stores.kyberPreKey.exportState(),
     lifecycle: stores.lifecycle.exportState(),
+    remotePublicationSequences:
+      stores.remotePublicationSequences.exportState(),
   };
 }
 
