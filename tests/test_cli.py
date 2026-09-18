@@ -159,3 +159,21 @@ def test_cli_refuses_to_overwrite_existing_profile(tmp_path: Path, capsys) -> No
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "error:" in captured.err
+
+
+def test_cli_node_smoke_runs_ephemeral_e2ee_round_trip(capsys) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    exit_code = run(
+        ["node-smoke", "--node", "http://ghostnode.test"],
+        node_client_factory=node_client_factory,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "GhostNode E2EE smoke test passed" in captured.out
+    assert captured.err == ""

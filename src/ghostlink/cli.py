@@ -16,6 +16,7 @@ from ghostlink.contact import (
     export_contact_bundle,
     import_contact_bundle,
 )
+from ghostlink.entity import GhostEntity
 from ghostlink.identity import format_ghost_id_fingerprint
 from ghostlink.message import MessageDecryptionError, decrypt_message, encrypt_message
 from ghostlink.profile import (
@@ -134,6 +135,54 @@ def _command_node_health(
     return 0
 
 
+def _command_node_smoke(
+    args: argparse.Namespace,
+    node_client_factory: NodeClientFactory,
+) -> int:
+    """Run an ephemeral end-to-end encrypted round trip through one GhostNode."""
+    client = node_client_factory(args.node)
+    if not client.health():
+        raise CLIError("GhostNode returned an unhealthy status")
+
+    alice = GhostEntity.generate()
+    bob = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    bob_device = bob.enroll_device()
+    expected_plaintext = b"ghostlink-e2ee-smoke-v1"
+
+    message = encrypt_message(
+        sender=alice_device,
+        recipient=bob_device.public_device(),
+        plaintext=expected_plaintext,
+    )
+    relay_message_id = client.send(message)
+
+    try:
+        stored = next(
+            (
+                candidate
+                for candidate in client.receive(bob_device.device_id)
+                if candidate.message_id == relay_message_id
+            ),
+            None,
+        )
+        if stored is None:
+            raise CLIError("smoke message was not returned by GhostNode")
+
+        plaintext = decrypt_message(
+            recipient=bob_device,
+            sender=alice_device.public_device(),
+            message=stored.message,
+        )
+        if plaintext != expected_plaintext:
+            raise CLIError("smoke message plaintext did not round-trip correctly")
+    finally:
+        client.delete(relay_message_id)
+
+    print("GhostNode E2EE smoke test passed")
+    return 0
+
+
 def _command_send(
     args: argparse.Namespace,
     password_reader: PasswordReader,
@@ -238,6 +287,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     health_parser.add_argument("--node", required=True)
 
+    smoke_parser = subparsers.add_parser(
+        "node-smoke",
+        help="run an ephemeral E2EE round trip through GhostNode",
+    )
+    smoke_parser.add_argument("--node", required=True)
+
     send_parser = subparsers.add_parser(
         "send",
         help="encrypt and send one text message",
@@ -284,6 +339,8 @@ def run(
             return _command_contact_verify(args)
         if args.command == "node-health":
             return _command_node_health(args, node_client_factory)
+        if args.command == "node-smoke":
+            return _command_node_smoke(args, node_client_factory)
         if args.command == "send":
             return _command_send(args, password_reader, node_client_factory)
         if args.command == "inbox":
