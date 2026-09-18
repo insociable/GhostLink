@@ -119,6 +119,7 @@ def maintain_prekeys(
     ):
         raise ValueError("now must be a non-negative integer")
 
+    engine.garbage_collect_prekeys(now=current_time)
     local = engine.get_prekey_lifecycle_status()
 
     if local.retired_count >= _MAX_RETIRED_GENERATIONS:
