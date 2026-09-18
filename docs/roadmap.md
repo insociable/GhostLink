@@ -58,9 +58,11 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] GhostID/DeviceID binding to libsignal identities;
 - [x] local framed Python ↔ libsignal engine RPC + cross-language restart smoke;
 - [x] randomized collision-checked pre-key identifiers with persistent consumption state;
-- [x] pre-key replenishment, rotation and garbage-collection policy specified;\n- [x] encrypted pre-key lifecycle metadata and atomic pending generation preparation;
+- [x] pre-key replenishment, rotation and garbage-collection policy specified;
+- [x] encrypted pre-key lifecycle metadata and atomic pending generation preparation;
 - [x] signed publication staging and crash-safe pending recovery;
-- [ ] relay publication/commit, replenishment/rotation/GC and relay-side pool state;
+- [x] authenticated atomic relay publication and persistent public pool state;
+- [ ] local publication acknowledgement commit, fetch/anti-drain, replenishment/rotation/GC;
 - [ ] ratcheted relay envelope and CLI cutover;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;

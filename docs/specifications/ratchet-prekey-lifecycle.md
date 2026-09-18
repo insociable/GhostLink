@@ -1,6 +1,6 @@
 # Ratchet pre-key lifecycle
 
-Status: accepted design; pending generation and signed publication staging implemented, relay publication/rotation/GC pending
+Status: accepted design; pending generation, signed staging and relay publication implemented; fetch/rotation/GC pending
 
 ## Purpose
 
@@ -389,12 +389,22 @@ Signed publication staging is now implemented:
 - pending public bundles are reconstructable from persisted libsignal records after restart;
 - staged payloads are locally reverified and compared to the pending records before reuse.
 
+Relay publication storage is now implemented:
+
+- GhostNode authenticates control of the target self-certifying DeviceID from its signing public key;
+- every binding signature is verified before storage;
+- exact same-sequence retry is idempotent;
+- conflicting, stale and skipped sequences fail closed;
+- SQLite replacement of the active generation and one-time pool is atomic.
+
+The relay does not receive the full GhostID contact bundle for publication authorization. GhostID trust verification remains end-to-end at the sender.
+
 The following are still pending:
 
-- relay publication acknowledgement and active/retired transitions;
+- local relay acknowledgement -> pending/active/retired transition;
+- atomic relay fetch/pop and anti-drain controls;
 - replenishment and rotation decisions;
-- delayed-key garbage collection;
-- relay-side pool storage/pop semantics.
+- delayed-key garbage collection.
 
 ## RPC implications
 

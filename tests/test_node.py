@@ -45,6 +45,7 @@ def test_runtime_exposes_v2_routes_and_not_v1_routes() -> None:
     assert "/v2/messages" in paths
     assert "/v2/messages/{recipient_device_id}" in paths
     assert "/v2/messages/{recipient_device_id}/{message_id}" in paths
+    assert "/v2/prekeys/{device_id}" in paths
     assert all(not path.startswith("/v1/") for path in paths)
 
 
