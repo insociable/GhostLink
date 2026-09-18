@@ -53,6 +53,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 - DeviceID-signed protocol-v3 message-relay requests bound to method, canonical path, canonical-body digest, timestamp and random request ID;
 - persistent SQLite protocol-v3 request-replay state that survives GhostNode restart;
 - Oracle public HTTPS reference stack with Caddy, TCP/443-only exposure, internal GhostNode networking and automatic TLS certificate lifecycle.
+- rollback-aware client-state checkpoint primitives plus an authenticated SQLite monotonic-witness reference backend with crash-safe one-step witness recovery.
 
 ### Removed
 

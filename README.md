@@ -72,6 +72,7 @@ Specifications:
 - [Ratcheted relay v3](docs/specifications/relay-v3.md)
 - [Ratchet pre-key lifecycle](docs/specifications/ratchet-prekey-lifecycle.md)
 - [Local ratchet RPC](docs/specifications/ratchet-local-rpc.md)
+- [Client-state rollback checkpoints](docs/specifications/client-state-rollback.md)
 
 ## Principles
 
