@@ -10,6 +10,7 @@ build/
 *.egg-info/
 .venv/
 .env
+.secrets/
 .idea/
 .vscode/
 .DS_Store
