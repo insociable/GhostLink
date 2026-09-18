@@ -229,7 +229,6 @@ def test_prekey_publication_staging_survives_restart_exactly(tmp_path: Path) -> 
             )
 
 
-
 def test_full_prekey_publication_flow_survives_engine_restart(
     tmp_path: Path,
 ) -> None:
@@ -300,7 +299,6 @@ def test_full_prekey_publication_flow_survives_engine_restart(
             lifetime_seconds=3_600,
         )
         assert second.publication_sequence == 2
-
 
 
 def test_remote_publication_sequence_rollback_rejected_after_restart(
