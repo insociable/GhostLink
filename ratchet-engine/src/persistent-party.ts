@@ -32,6 +32,21 @@ export interface PreparedPreKeyGeneration extends PreKeyGenerationMaterial {
   readonly expiresAt: number;
 }
 
+export interface PreKeyGenerationStatus {
+  readonly sequence: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly publishedAt: number | null;
+  readonly staged: boolean;
+}
+
+export interface PreKeyLifecycleStatus {
+  readonly publicationSequence: number;
+  readonly pending: PreKeyGenerationStatus | null;
+  readonly active: PreKeyGenerationStatus | null;
+  readonly retiredCount: number;
+}
+
 const DEFAULT_ONE_TIME_POOL_TARGET = 100;
 const MAX_ONE_TIME_POOL_SIZE = 256;
 const MAX_BINDING_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
@@ -231,6 +246,33 @@ export class PersistentRatchetParty {
         createdAt: pending.createdAt,
         expiresAt: pending.expiresAt,
         publicPayload: pending.publicPayload,
+      };
+    });
+  }
+
+  async getPreKeyLifecycleStatus(): Promise<PreKeyLifecycleStatus> {
+    return this.exclusive(async () => {
+      const lifecycle = this.inner.stores.lifecycle.snapshot();
+      const summarize = (
+        generation: typeof lifecycle.pending
+      ): PreKeyGenerationStatus | null => {
+        if (generation === null) {
+          return null;
+        }
+        return {
+          sequence: generation.sequence,
+          createdAt: generation.createdAt,
+          expiresAt: generation.expiresAt,
+          publishedAt: generation.publishedAt,
+          staged: generation.publicPayload !== null,
+        };
+      };
+
+      return {
+        publicationSequence: lifecycle.publicationSequence,
+        pending: summarize(lifecycle.pending),
+        active: summarize(lifecycle.active),
+        retiredCount: lifecycle.retired.length,
       };
     });
   }
