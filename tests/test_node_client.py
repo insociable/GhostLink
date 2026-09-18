@@ -146,10 +146,13 @@ def test_node_client_rejects_unsafe_or_invalid_base_urls(base_url: str) -> None:
 
 
 def test_node_client_sends_bearer_access_token() -> None:
-    api_client = TestClient(create_app(settings=NodeSettings(access_token="secret-token")  # noqa: S106))
+    access_value = "secret-token"
+    api_client = TestClient(
+        create_app(settings=NodeSettings(access_token=access_value))
+    )
     client = GhostNodeClient(
         "http://ghostnode.test",
-        access_token="secret-token",  # noqa: S106
+        access_token=access_value,
         requester=create_test_requester(api_client),
     )
 
@@ -157,7 +160,10 @@ def test_node_client_sends_bearer_access_token() -> None:
 
 
 def test_node_client_without_required_token_is_rejected() -> None:
-    api_client = TestClient(create_app(settings=NodeSettings(access_token="secret-token")  # noqa: S106))
+    access_value = "secret-token"
+    api_client = TestClient(
+        create_app(settings=NodeSettings(access_token=access_value))
+    )
     client = GhostNodeClient(
         "http://ghostnode.test",
         requester=create_test_requester(api_client),
