@@ -279,6 +279,23 @@ The Python API accepts a `VerifiedContact`.
 
 A failed decrypt is rolled back transactionally by the persistent ratchet layer and does not commit new vault state.
 
+### `decrypt_context_bound`
+
+Parameters:
+
+- verified remote DeviceID;
+- supported libsignal message type;
+- serialized libsignal ciphertext as canonical Base64;
+- non-empty expected context bytes as canonical Base64, maximum 4096 bytes.
+
+The engine decrypts inside the normal durable ratchet transaction and requires the authenticated plaintext to begin with the exact expected context.
+
+If libsignal decryption fails, the plaintext is shorter than the context, or any context byte differs, the operation fails and the pre-operation ratchet state is restored before returning an error.
+
+On success, the engine commits the ratchet state and returns only the bytes after the authenticated context prefix.
+
+Protocol v3 uses this method so relay-visible routing/lifecycle metadata tampering cannot advance the ratchet before the application detects the mismatch.
+
 ### `close`
 
 Parameters: empty object.
@@ -336,9 +353,11 @@ The detailed formats and lifecycle are specified in:
 - `ratchet-prekey-lifecycle.md`;
 - `ratchet-prekey-publication.md`.
 
-## Pre-key lifecycle still pending
+## Ratchet cutover status
 
-Before relay cutover GhostLink still needs the explicit ratcheted message-envelope/CLI cutover.
+The context-bound ratcheted message-v3 envelope and GhostNode v3 transport are implemented.
+
+The remaining explicit cutover step is switching user-facing CLI send/inbox to v3 without adding any ratchet-to-static fallback.
 
 ## Error handling
 
@@ -368,7 +387,8 @@ The repository runs a real Python-to-Node smoke test that:
 12. closes both processes;
 13. reopens both vaults in new processes;
 14. continues the same ratcheted session;
-15. exercises Python-to-Node retired pre-key GC, validates strict result parsing and confirms the collected lifecycle state survives restart.
+15. exercises Python-to-Node retired pre-key GC, validates strict result parsing and confirms the collected lifecycle state survives restart;
+16. sends a real ratcheted v3 envelope through GhostNode, proves external metadata tampering rolls the ratchet transaction back, then successfully decrypts the original ciphertext and a ratcheted reply.
 
 The Node test suite separately exercises raw RPC validation and the same restart behavior.
 
