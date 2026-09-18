@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from ghostlink.cli import run as run_cli
 from ghostlink.client.node_client import GhostNodeClient
 from ghostlink.contact import export_contact_bundle, import_contact_bundle
 from ghostlink.entity import GhostEntity
@@ -834,3 +835,181 @@ def test_ratchet_v3_relay_round_trip_and_tamper_rollback(
             )
             assert node.receive_ratchet(bob_device.device_id) == []
             assert node.receive_ratchet(alice_device.device_id) == []
+
+
+
+def test_cli_v3_cutover_round_trip_survives_process_restarts(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    api_client = TestClient(create_app())
+
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        assert timeout > 0
+        parsed = urllib.parse.urlparse(url)
+        response = api_client.request(
+            method,
+            parsed.path,
+            json=payload,
+            headers=headers,
+        )
+        return (
+            response.status_code,
+            response.json() if response.content else None,
+        )
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "cross-language CLI password"
+
+    def password_reader(prompt: str) -> str:
+        del prompt
+        return password
+
+    alice_profile = tmp_path / "alice-cli-v3.ghost"
+    bob_profile = tmp_path / "bob-cli-v3.ghost"
+    alice_contact = tmp_path / "alice-cli-v3.contact"
+    bob_contact = tmp_path / "bob-cli-v3.contact"
+    node_url = "http://ghostnode.test"
+
+    for profile_path in (alice_profile, bob_profile):
+        assert run_cli(
+            ["init", "--profile", str(profile_path)],
+            password_reader=password_reader,
+            node_client_factory=node_client_factory,
+        ) == 0
+
+    assert run_cli(
+        [
+            "contact-export",
+            "--profile",
+            str(alice_profile),
+            "--output",
+            str(alice_contact),
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    assert run_cli(
+        [
+            "contact-export",
+            "--profile",
+            str(bob_profile),
+            "--output",
+            str(bob_contact),
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    # Bob explicitly publishes pre-keys before Alice's first-contact send.
+    assert run_cli(
+        [
+            "prekey-sync",
+            "--profile",
+            str(bob_profile),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    assert run_cli(
+        [
+            "send",
+            "--profile",
+            str(alice_profile),
+            "--contact",
+            str(bob_contact),
+            "--node",
+            node_url,
+            "hello Bob over ratcheted v3",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+
+    bob_profile_data = decrypt_local_profile(
+        bob_profile.read_text(encoding="utf-8"),
+        password,
+    )
+    assert (
+        api_client.get(
+            f"/v2/messages/{bob_profile_data.device.device_id}"
+        ).json()
+        == []
+    )
+    assert len(
+        api_client.get(
+            f"/v3/messages/{bob_profile_data.device.device_id}"
+        ).json()
+    ) == 1
+
+    assert run_cli(
+        [
+            "inbox",
+            "--profile",
+            str(bob_profile),
+            "--contact",
+            str(alice_contact),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    bob_inbox = capsys.readouterr()
+    assert "hello Bob over ratcheted v3" in bob_inbox.out
+
+    # Bob's incoming PreKey message established a durable session to Alice.
+    assert run_cli(
+        [
+            "send",
+            "--profile",
+            str(bob_profile),
+            "--contact",
+            str(alice_contact),
+            "--node",
+            node_url,
+            "hello Alice over the persisted ratchet",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+
+    alice_profile_data = decrypt_local_profile(
+        alice_profile.read_text(encoding="utf-8"),
+        password,
+    )
+    assert (
+        api_client.get(
+            f"/v2/messages/{alice_profile_data.device.device_id}"
+        ).json()
+        == []
+    )
+
+    assert run_cli(
+        [
+            "inbox",
+            "--profile",
+            str(alice_profile),
+            "--contact",
+            str(bob_contact),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    alice_inbox = capsys.readouterr()
+    assert "hello Alice over the persisted ratchet" in alice_inbox.out
