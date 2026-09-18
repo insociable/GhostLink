@@ -18,6 +18,7 @@ def test_settings_are_loaded_from_toml(tmp_path: Path) -> None:
             'host = "0.0.0.0"\n'
             'port = 9000\n'
             'log_level = "DEBUG"\n'
+            'access_log = false\n'
             'database_path = "data/messages.sqlite3"\n'
             'prekey_fetch_window_seconds = 120\n'
             'prekey_fetch_max_new_allocations = 7\n'
@@ -31,6 +32,7 @@ def test_settings_are_loaded_from_toml(tmp_path: Path) -> None:
         host="0.0.0.0",  # noqa: S104
         port=9000,
         log_level="debug",
+        access_log=False,
         database_path=tmp_path / "data/messages.sqlite3",
         prekey_fetch_window_seconds=120,
         prekey_fetch_max_new_allocations=7,
@@ -106,3 +108,12 @@ def test_invalid_prekey_fetch_window_is_rejected(window: int) -> None:
 def test_invalid_prekey_fetch_allocation_limit_is_rejected(limit: int) -> None:
     with pytest.raises(ValueError, match="prekey_fetch_max_new_allocations"):
         NodeSettings(prekey_fetch_max_new_allocations=limit)
+
+
+def test_access_log_defaults_to_enabled_for_development() -> None:
+    assert NodeSettings().access_log is True
+
+
+def test_invalid_access_log_value_is_rejected() -> None:
+    with pytest.raises(ValueError, match="node.access_log"):
+        NodeSettings(access_log="false")  # type: ignore[arg-type]
