@@ -13,6 +13,10 @@ import ghostlink.cli as cli_module
 from fastapi.testclient import TestClient
 from ghostlink.cli import run
 from ghostlink.client import GhostNodeClient, GhostNodeRequestError
+from ghostlink.contact import export_contact_bundle, import_contact_bundle
+from ghostlink.contact_store import ContactTrustState, load_contact_store
+from ghostlink.entity import GhostEntity
+from ghostlink.identity import derive_identity_fingerprint
 from ghostlink.node import create_app
 from ghostlink.profile import LocalProfile, decrypt_local_profile
 from ghostlink.ratchet_engine import RatchetEngineClient
@@ -556,6 +560,237 @@ def test_cli_refuses_to_overwrite_existing_profile(tmp_path: Path, capsys) -> No
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "error:" in captured.err
+
+
+def test_cli_persists_imported_contact_and_records_human_verification(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    password_reader = lambda prompt: "contact trust password"  # noqa: E731
+    alice_profile = tmp_path / "alice.ghost"
+    bob_profile = tmp_path / "bob.ghost"
+    bob_contact = tmp_path / "bob.contact"
+
+    assert run(
+        ["init", "--profile", str(alice_profile)],
+        password_reader=password_reader,
+    ) == 0
+    assert run(
+        ["init", "--profile", str(bob_profile)],
+        password_reader=password_reader,
+    ) == 0
+    assert run(
+        [
+            "contact-export",
+            "--profile",
+            str(bob_profile),
+            "--output",
+            str(bob_contact),
+        ],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    assert run(
+        [
+            "contact-import",
+            "--profile",
+            str(alice_profile),
+            "--label",
+            "Bob",
+            str(bob_contact),
+        ],
+        password_reader=password_reader,
+    ) == 0
+    imported_output = capsys.readouterr()
+    assert "human verification pending" in imported_output.out
+
+    alice = decrypt_local_profile(
+        alice_profile.read_text(),
+        "contact trust password",
+    )
+    assert alice.contact_store_key is not None
+    store_path = Path(f"{alice_profile}.contacts")
+    store = load_contact_store(store_path, alice.contact_store_key)
+    record = store.list_records()[0]
+    assert record.state is ContactTrustState.IMPORTED
+
+    bob = import_contact_bundle(bob_contact.read_text())
+    fingerprint = derive_identity_fingerprint(bytes(bob.identity_verify_key))
+
+    assert run(
+        [
+            "contact-show",
+            "--profile",
+            str(alice_profile),
+            record.record_id,
+        ],
+        password_reader=password_reader,
+    ) == 0
+    shown = capsys.readouterr()
+    assert fingerprint in shown.out
+    assert "Trust state: imported" in shown.out
+
+    assert run(
+        [
+            "contact-trust",
+            "--profile",
+            str(alice_profile),
+            "--fingerprint",
+            fingerprint,
+            record.record_id,
+        ],
+        password_reader=password_reader,
+    ) == 0
+    trusted_output = capsys.readouterr()
+    assert "Human identity verification recorded." in trusted_output.out
+
+    restored = load_contact_store(store_path, alice.contact_store_key)
+    verified = restored.get(record.record_id)
+    assert verified.state is ContactTrustState.VERIFIED
+    assert restored.require_verified_contact(record.record_id).ghost_id == bob.ghost_id
+
+
+def test_cli_send_by_contact_id_requires_verified_state_and_blocks_changes(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+    session_state: dict[str, set[str]] = {}
+    install_fake_ratchet_operations(monkeypatch)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password_reader = lambda prompt: "trusted send password"  # noqa: E731
+    alice_profile, _bob_profile, _alice_contact, bob_contact = (
+        _create_profiles_and_contacts(
+            tmp_path,
+            capsys,
+            password_reader,
+            node_client_factory,
+        )
+    )
+
+    assert run(
+        [
+            "contact-import",
+            "--profile",
+            str(alice_profile),
+            "--label",
+            "Bob",
+            str(bob_contact),
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    alice = decrypt_local_profile(
+        alice_profile.read_text(),
+        "trusted send password",
+    )
+    assert alice.contact_store_key is not None
+    store_path = Path(f"{alice_profile}.contacts")
+    store = load_contact_store(store_path, alice.contact_store_key)
+    record = store.list_records()[0]
+
+    blocked = run(
+        [
+            "send",
+            "--profile",
+            str(alice_profile),
+            "--contact-id",
+            record.record_id,
+            "--node",
+            "http://ghostnode.test",
+            "not yet trusted",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+        ratchet_engine_factory=fake_engine_factory(session_state),
+    )
+    blocked_output = capsys.readouterr()
+    assert blocked == 1
+    assert "has not been human-verified" in blocked_output.err
+
+    bob = import_contact_bundle(bob_contact.read_text())
+    fingerprint = derive_identity_fingerprint(bytes(bob.identity_verify_key))
+    assert run(
+        [
+            "contact-trust",
+            "--profile",
+            str(alice_profile),
+            "--fingerprint",
+            fingerprint,
+            record.record_id,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    assert run(
+        [
+            "send",
+            "--profile",
+            str(alice_profile),
+            "--contact-id",
+            record.record_id,
+            "--node",
+            "http://ghostnode.test",
+            "trusted message",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+        ratchet_engine_factory=fake_engine_factory(session_state),
+    ) == 0
+    sent = capsys.readouterr()
+    assert "Ratcheted message queued:" in sent.out
+    assert "human verification state is bypassed" not in sent.out
+
+    replacement = GhostEntity.generate()
+    replacement_bundle = tmp_path / "replacement.contact"
+    replacement_bundle.write_text(
+        export_contact_bundle(replacement, replacement.enroll_device()),
+        encoding="utf-8",
+    )
+
+    assert run(
+        [
+            "contact-update",
+            "--profile",
+            str(alice_profile),
+            record.record_id,
+            str(replacement_bundle),
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    changed_output = capsys.readouterr()
+    assert "IDENTITY CHANGED" in changed_output.err
+    assert "Trust state: changed" in changed_output.out
+
+    blocked_changed = run(
+        [
+            "send",
+            "--profile",
+            str(alice_profile),
+            "--contact-id",
+            record.record_id,
+            "--node",
+            "http://ghostnode.test",
+            "must fail closed",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+        ratchet_engine_factory=fake_engine_factory(session_state),
+    )
+    changed_send = capsys.readouterr()
+    assert blocked_changed == 1
+    assert "identity changed and requires re-verification" in changed_send.err
 
 
 def test_cli_node_smoke_remains_explicit_legacy_v2(capsys) -> None:
