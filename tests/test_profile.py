@@ -1,10 +1,10 @@
 import base64
 import json
 
-import pytest
 from nacl import utils
 from nacl.pwhash import argon2id
 from nacl.secret import SecretBox
+import pytest
 
 from ghostlink.profile import (
     ProfileError,
