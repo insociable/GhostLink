@@ -12,6 +12,8 @@ _GHOST_ID_PREFIX = "ghost1:"
 _DOMAIN_SEPARATOR = b"ghostlink-identity"
 _FORMAT_VERSION = b"\x01"
 _KEY_TYPE = b"ed25519"
+_GHOST_ID_PAYLOAD_LENGTH = 52
+_BASE32_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz234567")
 
 
 def derive_ghost_id(public_key: bytes) -> str:
@@ -35,6 +37,25 @@ def derive_ghost_id(public_key: bytes) -> str:
     )
 
     return f"{_GHOST_ID_PREFIX}{encoded_digest}"
+
+
+def format_ghost_id_fingerprint(ghost_id: str) -> str:
+    """Render the complete GhostID digest as grouped text for human comparison."""
+    if not ghost_id.startswith(_GHOST_ID_PREFIX):
+        raise ValueError("ghost_id must use the ghost1 format")
+
+    payload = ghost_id[len(_GHOST_ID_PREFIX) :]
+
+    if len(payload) != _GHOST_ID_PAYLOAD_LENGTH:
+        raise ValueError("ghost_id payload has an invalid length")
+    if any(character not in _BASE32_ALPHABET for character in payload):
+        raise ValueError("ghost_id payload is not valid lowercase Base32")
+
+    groups = [
+        payload[index : index + 4].upper()
+        for index in range(0, len(payload), 4)
+    ]
+    return "-".join(groups)
 
 
 @dataclass(frozen=True, slots=True)

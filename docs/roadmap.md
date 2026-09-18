@@ -44,7 +44,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [ ] desktop interface;
 - [x] password-encrypted local profile format;
 - [ ] OS keychain / hardware-backed secret integration;
-- [ ] contact fingerprint / QR verification UX;
+- [ ] contact fingerprint / QR verification UX (full fingerprint display implemented; QR/trust state pending);
 - [ ] local conversation history;
 - [ ] packaging for Linux and Windows;
 - [ ] mobile application architecture.

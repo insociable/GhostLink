@@ -59,6 +59,11 @@ def test_cli_two_client_encrypted_message_workflow(
         password_reader=password_reader,
         node_client_factory=node_client_factory,
     ) == 0
+
+    alice_init = capsys.readouterr()
+    assert "GhostID:" in alice_init.out
+    assert "Fingerprint:" in alice_init.out
+
     assert run(
         ["init", "--profile", str(bob_profile)],
         password_reader=password_reader,
