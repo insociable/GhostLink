@@ -1,5 +1,4 @@
-import base64
-import json
+import time
 import urllib.parse
 from collections.abc import Callable
 from typing import cast
@@ -138,7 +137,12 @@ def _requester(
 def test_publication_orchestration_commits_only_after_valid_relay_receipt() -> None:
     entity = GhostEntity.generate()
     device = entity.enroll_device()
-    payload = _publication(device)
+    now = int(time.time())
+    payload = _publication(
+        device,
+        issued_at=now,
+        expires_at=now + 3_600,
+    )
     fake_engine = FakeEngine(payload)
     node = GhostNodeClient(
         "http://ghostnode.test",
@@ -149,14 +153,14 @@ def test_publication_orchestration_commits_only_after_valid_relay_receipt() -> N
         cast(RatchetEngineClient, fake_engine),
         node,
         device,
-        acknowledged_at=1_100,
+        acknowledged_at=now + 1,
     )
 
     assert receipt.device_id == device.device_id
     assert receipt.publication_sequence == 1
-    assert receipt.expires_at == 4_600
+    assert receipt.expires_at == now + 3_600
     assert receipt.one_time_count == 2
-    assert fake_engine.commits == [(1, 1_100)]
+    assert fake_engine.commits == [(1, now + 1)]
 
 
 @pytest.mark.parametrize(
