@@ -36,12 +36,48 @@ jobs:
 
   container:
     runs-on: ubuntu-latest
+    env:
+      GHOSTLINK_NODE_TOKEN: ci-placeholder-token
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate Compose configuration
-        run: GHOSTLINK_NODE_TOKEN=ci-placeholder docker compose config --quiet
+        run: docker compose config --quiet
 
       - name: Build GhostNode image
-        run: docker build --tag ghostlink-ci .
+        run: docker compose build
+
+      - name: Start GhostNode
+        run: docker compose up -d --no-build
+
+      - name: Wait for GhostNode health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose ps
+          docker compose logs ghostnode
+          exit 1
+
+      - name: Verify unauthenticated relay access is rejected
+        run: |
+          DEVICE_ID="device1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}'             "http://127.0.0.1:8000/v1/messages/$DEVICE_ID")"
+          test "$STATUS" = "401"
+
+      - name: Verify authenticated relay access works
+        run: |
+          DEVICE_ID="device1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          RESPONSE="$(curl --fail --silent             --header "Authorization: Bearer $GHOSTLINK_NODE_TOKEN"             "http://127.0.0.1:8000/v1/messages/$DEVICE_ID")"
+          test "$RESPONSE" = "[]"
+
+      - name: Show GhostNode status
+        run: docker compose ps
+
+      - name: Stop GhostNode
+        if: always()
+        run: docker compose down -v
