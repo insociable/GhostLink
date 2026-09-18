@@ -40,7 +40,7 @@ class PreKeyPublicationConflictError(RuntimeError):
 
 
 class PreKeyPublicationRequest(BaseModel):
-    """Exact public material submitted by one certified GhostLink device."""
+    """Exact public material submitted by one self-certifying GhostLink device."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -416,7 +416,7 @@ def _verified_generation(
         )
 
     return RelayPreKeyGeneration(
-        device_id=contact.device_id,
+        device_id=route_device_id,
         publication_sequence=publication.publication_sequence,
         expires_at=expires_at,
         publication_payload=request.publication,
