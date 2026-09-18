@@ -15,8 +15,15 @@ from ghostlink.client import GhostNodeClient, GhostNodeClientError
 from ghostlink.config import load_access_token_from_file
 from ghostlink.contact import (
     ContactBundleError,
+    ValidatedContact,
     export_contact_bundle,
     import_contact_bundle,
+)
+from ghostlink.contact_store import (
+    ContactTrustRecord,
+    ContactTrustState,
+    load_contact_store,
+    save_contact_store,
 )
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import derive_identity_fingerprint
@@ -71,6 +78,12 @@ def _replay_state_path(profile_path: Path, explicit_path: str | None) -> Path:
     return Path(f"{profile_path}.state.sqlite3")
 
 
+def _contact_store_path(profile_path: Path, explicit_path: str | None) -> Path:
+    if explicit_path is not None:
+        return Path(explicit_path)
+    return Path(f"{profile_path}.contacts")
+
+
 def _require_ratchet_key(profile: LocalProfile) -> bytes:
     key = profile.ratchet_master_key
     if key is None:
@@ -79,6 +92,17 @@ def _require_ratchet_key(profile: LocalProfile) -> bytes:
         )
     if len(key) != 32:
         raise CLIError("profile ratchet vault key has an invalid length")
+    return key
+
+
+def _require_contact_store_key(profile: LocalProfile) -> bytes:
+    key = profile.contact_store_key
+    if key is None:
+        raise CLIError(
+            "legacy profile has no contact-store key; run profile-upgrade first"
+        )
+    if len(key) != 32:
+        raise CLIError("profile contact-store key has an invalid length")
     return key
 
 
@@ -244,6 +268,172 @@ def _command_contact_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fingerprint_for_contact(contact: ValidatedContact) -> str:
+    return derive_identity_fingerprint(bytes(contact.identity_verify_key))
+
+
+def _print_contact_record(record: ContactTrustRecord) -> None:
+    current = record.current_contact
+    print(f"Contact ID: {record.record_id}")
+    print(f"Label: {record.label}")
+    print(f"Trust state: {record.state.value}")
+    print(f"GhostID: {current.ghost_id}")
+    print(f"Fingerprint v2: {_fingerprint_for_contact(current)}")
+    print(f"DeviceID: {current.device_id}")
+    candidate = record.candidate_contact
+    if candidate is not None:
+        print("IDENTITY CHANGE CANDIDATE:")
+        print(f"Candidate GhostID: {candidate.ghost_id}")
+        print(f"Candidate Fingerprint v2: {_fingerprint_for_contact(candidate)}")
+        print(f"Candidate DeviceID: {candidate.device_id}")
+
+
+def _load_profile_contact_store(
+    profile_path: Path,
+    profile: LocalProfile,
+    explicit_path: str | None,
+):
+    return load_contact_store(
+        _contact_store_path(profile_path, explicit_path),
+        _require_contact_store_key(profile),
+    )
+
+
+def _save_profile_contact_store(
+    profile_path: Path,
+    profile: LocalProfile,
+    explicit_path: str | None,
+    store,
+) -> None:
+    save_contact_store(
+        _contact_store_path(profile_path, explicit_path),
+        _require_contact_store_key(profile),
+        store,
+    )
+
+
+def _command_contact_import(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    store = _load_profile_contact_store(profile_path, profile, args.contacts)
+    record = store.add_contact(args.label, _read_text(Path(args.bundle)))
+    _save_profile_contact_store(profile_path, profile, args.contacts, store)
+
+    print("Contact bundle cryptographically valid; human verification pending.")
+    _print_contact_record(record)
+    return 0
+
+
+def _command_contact_list(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    store = _load_profile_contact_store(profile_path, profile, args.contacts)
+    records = store.list_records()
+    if not records:
+        print("No saved contacts.")
+        return 0
+
+    for record in records:
+        print(
+            f"{record.record_id}  {record.state.value:<8}  "
+            f"{record.label}  {record.current_contact.ghost_id}"
+        )
+    return 0
+
+
+def _command_contact_show(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    store = _load_profile_contact_store(profile_path, profile, args.contacts)
+    _print_contact_record(store.get(args.contact_id))
+    return 0
+
+
+def _command_contact_trust(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    store = _load_profile_contact_store(profile_path, profile, args.contacts)
+    record = store.verify_identity(args.contact_id, args.fingerprint)
+    _save_profile_contact_store(profile_path, profile, args.contacts, store)
+
+    print("Human identity verification recorded.")
+    _print_contact_record(record)
+    return 0
+
+
+def _command_contact_update(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    store = _load_profile_contact_store(profile_path, profile, args.contacts)
+    record = store.update_contact_bundle(
+        args.contact_id,
+        _read_text(Path(args.bundle)),
+    )
+    _save_profile_contact_store(profile_path, profile, args.contacts, store)
+
+    if record.state is ContactTrustState.CHANGED:
+        print(
+            "IDENTITY CHANGED: trusted messaging is blocked until the "
+            "candidate fingerprint is verified or rejected.",
+            file=sys.stderr,
+        )
+    _print_contact_record(record)
+    return 0
+
+
+def _command_contact_reject_change(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    store = _load_profile_contact_store(profile_path, profile, args.contacts)
+    record = store.reject_identity_change(args.contact_id)
+    _save_profile_contact_store(profile_path, profile, args.contacts, store)
+
+    print("Candidate identity rejected; previous verified identity restored.")
+    _print_contact_record(record)
+    return 0
+
+
+def _resolve_message_contact(
+    args: argparse.Namespace,
+    profile_path: Path,
+    profile: LocalProfile,
+) -> ValidatedContact:
+    if args.contact_id is not None:
+        store = _load_profile_contact_store(
+            profile_path,
+            profile,
+            args.contacts,
+        )
+        return store.require_verified_contact(args.contact_id)
+
+    if args.contact is None:
+        raise CLIError("a contact ID or raw contact bundle is required")
+
+    print(
+        "Contact trust: raw bundle diagnostic path; "
+        "human verification state is bypassed."
+    )
+    return import_contact_bundle(_read_text(Path(args.contact)))
+
+
 def _command_node_health(
     args: argparse.Namespace,
     node_client_factory: NodeClientFactory,
@@ -333,7 +523,7 @@ def _command_send(
     profile_path = Path(args.profile)
     profile = _load_profile(profile_path, password_reader)
     _require_ratchet_key(profile)
-    contact = import_contact_bundle(_read_text(Path(args.contact)))
+    contact = _resolve_message_contact(args, profile_path, profile)
     plaintext = args.message.encode("utf-8")
     client = node_client_factory(args.node)
 
@@ -368,7 +558,7 @@ def _command_inbox(
     profile_path = Path(args.profile)
     profile = _load_profile(profile_path, password_reader)
     _require_ratchet_key(profile)
-    contact = import_contact_bundle(_read_text(Path(args.contact)))
+    contact = _resolve_message_contact(args, profile_path, profile)
     client = node_client_factory(args.node)
     replay_cache = SQLiteReplayCache(
         _replay_state_path(profile_path, args.state)
@@ -481,6 +671,56 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument("bundle")
 
+    import_parser = subparsers.add_parser(
+        "contact-import",
+        help="save a cryptographically valid contact as human-unverified",
+    )
+    import_parser.add_argument("--profile", required=True)
+    import_parser.add_argument("--contacts")
+    import_parser.add_argument("--label", required=True)
+    import_parser.add_argument("bundle")
+
+    list_parser = subparsers.add_parser(
+        "contact-list",
+        help="list persisted local contact trust states",
+    )
+    list_parser.add_argument("--profile", required=True)
+    list_parser.add_argument("--contacts")
+
+    show_parser = subparsers.add_parser(
+        "contact-show",
+        help="show fingerprints and trust state for one saved contact",
+    )
+    show_parser.add_argument("--profile", required=True)
+    show_parser.add_argument("--contacts")
+    show_parser.add_argument("contact_id")
+
+    trust_parser = subparsers.add_parser(
+        "contact-trust",
+        help="record explicit human verification of a complete Fingerprint v2",
+    )
+    trust_parser.add_argument("--profile", required=True)
+    trust_parser.add_argument("--contacts")
+    trust_parser.add_argument("--fingerprint", required=True)
+    trust_parser.add_argument("contact_id")
+
+    update_parser = subparsers.add_parser(
+        "contact-update",
+        help="apply new valid public material to a saved contact",
+    )
+    update_parser.add_argument("--profile", required=True)
+    update_parser.add_argument("--contacts")
+    update_parser.add_argument("contact_id")
+    update_parser.add_argument("bundle")
+
+    reject_parser = subparsers.add_parser(
+        "contact-reject-change",
+        help="reject a staged identity replacement",
+    )
+    reject_parser.add_argument("--profile", required=True)
+    reject_parser.add_argument("--contacts")
+    reject_parser.add_argument("contact_id")
+
     health_parser = subparsers.add_parser(
         "node-health",
         help="check GhostNode health",
@@ -505,7 +745,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="send one ratcheted protocol-v3 text message",
     )
     send_parser.add_argument("--profile", required=True)
-    send_parser.add_argument("--contact", required=True)
+    send_contact = send_parser.add_mutually_exclusive_group(required=True)
+    send_contact.add_argument(
+        "--contact-id",
+        help="persisted human-verified contact record ID",
+    )
+    send_contact.add_argument(
+        "--contact",
+        help="raw bundle path; diagnostic only and bypasses human trust",
+    )
+    send_parser.add_argument("--contacts")
     send_parser.add_argument("--node", required=True)
     send_parser.add_argument("message")
 
@@ -514,7 +763,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="receive ratcheted protocol-v3 messages from one verified contact",
     )
     inbox_parser.add_argument("--profile", required=True)
-    inbox_parser.add_argument("--contact", required=True)
+    inbox_contact = inbox_parser.add_mutually_exclusive_group(required=True)
+    inbox_contact.add_argument(
+        "--contact-id",
+        help="persisted human-verified contact record ID",
+    )
+    inbox_contact.add_argument(
+        "--contact",
+        help="raw bundle path; diagnostic only and bypasses human trust",
+    )
+    inbox_parser.add_argument("--contacts")
     inbox_parser.add_argument("--node", required=True)
     inbox_parser.add_argument(
         "--state",
@@ -552,6 +810,18 @@ def run(
             return _command_contact_export(args, password_reader)
         if args.command == "contact-verify":
             return _command_contact_verify(args)
+        if args.command == "contact-import":
+            return _command_contact_import(args, password_reader)
+        if args.command == "contact-list":
+            return _command_contact_list(args, password_reader)
+        if args.command == "contact-show":
+            return _command_contact_show(args, password_reader)
+        if args.command == "contact-trust":
+            return _command_contact_trust(args, password_reader)
+        if args.command == "contact-update":
+            return _command_contact_update(args, password_reader)
+        if args.command == "contact-reject-change":
+            return _command_contact_reject_change(args, password_reader)
         if args.command == "node-health":
             return _command_node_health(args, node_client_factory)
         if args.command == "node-smoke":
