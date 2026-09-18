@@ -235,6 +235,7 @@ test('two local RPC engines establish PQXDH and exchange arbitrary bytes', async
   const bobMaterial = await bob.request('create_prekey_material', {});
   await alice.request('establish_session', {
     remote_device_id: DEVICE_B,
+    publication_sequence: 1,
     material: bobMaterial,
   });
 
@@ -456,5 +457,41 @@ test('publication acknowledgement RPC is durable and idempotent', async () => {
   };
   assert.equal(second.publication_sequence, 2);
 
+  await bob.close();
+});
+
+
+test('remote publication sequence persists and rejects rollback after restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ghostlink-rpc-remote-seq-'));
+  const aliceKey = randomBytes(32);
+  const bobKey = randomBytes(32);
+  const alicePath = join(directory, 'alice.ratchet');
+  const bobPath = join(directory, 'bob.ratchet');
+
+  let alice = await openEngine(DEVICE_A, alicePath, aliceKey);
+  const bob = await openEngine(DEVICE_B, bobPath, bobKey);
+
+  const firstMaterial = await bob.request('create_prekey_material', {});
+  await alice.request('establish_session', {
+    remote_device_id: DEVICE_B,
+    publication_sequence: 2,
+    material: firstMaterial,
+  });
+
+  await alice.close();
+  alice = await openEngine(DEVICE_A, alicePath, aliceKey);
+
+  const rollbackMaterial = await bob.request('create_prekey_material', {});
+  await assert.rejects(
+    () =>
+      alice.request('establish_session', {
+        remote_device_id: DEVICE_B,
+        publication_sequence: 1,
+        material: rollbackMaterial,
+      }),
+    /remote publication sequence regressed/
+  );
+
+  await alice.close();
   await bob.close();
 });
