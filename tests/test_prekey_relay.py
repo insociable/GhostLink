@@ -5,7 +5,6 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from ghostlink.config import NodeSettings
-from ghostlink.contact import export_contact_bundle
 from ghostlink.device import EnrolledGhostDevice
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app
@@ -77,7 +76,9 @@ def publication_request(
     )
     return {
         "version": 1,
-        "contact_bundle": export_contact_bundle(entity, device),
+        "device_signing_public_key": base64.b64encode(
+            bytes(device.device.signing_verify_key)
+        ).decode("ascii"),
         "publication": export_ratchet_prekey_publication(publication),
     }
 
@@ -111,7 +112,7 @@ def test_prekey_publication_rejects_route_device_mismatch() -> None:
 
     assert response.status_code == 422
     assert response.json() == {
-        "detail": "route DeviceID does not match certified contact bundle"
+        "detail": "route DeviceID does not match device signing public key"
     }
 
 
