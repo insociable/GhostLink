@@ -12,7 +12,7 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 
 - self-certifying GhostID and DeviceID identities;
 - identity-signed device authorization certificates;
-- verified public contact bundles;
+- cryptographically validated public contact bundles;
 - password-encrypted local profiles;
 - persistent replay protection for authenticated message IDs;
 - ciphertext-only GhostNode relay with optional SQLite persistence;
@@ -26,7 +26,9 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 - DeviceID-signed protocol-v3 relay requests with timestamp/request-ID replay protection;
 - context-bound ratchet decryption that rolls session state back when relay-visible metadata is tampered with;
 - real Python ↔ Node/libsignal ↔ GhostNode end-to-end tests, including restart continuity;
-- reviewed Oracle public HTTPS stack with Caddy, 443-only exposure and file-backed relay-token secrets.
+- reviewed Oracle public HTTPS stack with Caddy, 443-only exposure and file-backed relay-token secrets;
+- Fingerprint v2 human contact verification with encrypted local `imported` / `verified` / `changed` trust state;
+- versioned public contact QR payloads and standard SVG QR export.
 
 ### Runtime status
 
@@ -48,7 +50,6 @@ Important remaining gaps include:
 - public Caddy/TLS reference deployment implemented, but live external certificate/closed-port verification is still required;
 - Sybil-resistant abuse controls;
 - complete device revocation/recovery;
-- persisted human contact-verification / QR trust workflow;
 - independent cryptographic/protocol review.
 
 A valid contact bundle proves internal cryptographic consistency. It does not by itself prove that the GhostID belongs to the human the user intended to contact.
@@ -110,6 +111,29 @@ poetry run ghostlink contact-export \
   --profile alice.ghost \
   --output alice.contact
 ```
+
+
+
+Export the same public contact data as a standard SVG QR code:
+
+```bash
+poetry run ghostlink contact-export-qr \
+  --profile alice.ghost \
+  --output alice-contact.svg
+```
+
+A scanner returns the public `ghostlink:contact:1:...` payload. Importing that payload
+creates an `imported` record only; it does **not** mark the human identity as verified:
+
+```bash
+poetry run ghostlink contact-import-qr \
+  --profile bob.ghost \
+  --label Alice \
+  --payload 'ghostlink:contact:1:...'
+```
+
+After comparing the complete Fingerprint v2 through an authenticated out-of-band channel,
+record the explicit human verification with `contact-trust`.
 
 Start a local development GhostNode:
 
