@@ -119,6 +119,8 @@ Secrets, authorization tokens, private keys and plaintext must not be logged.
 
 The shared Bearer token remains required by the reference Compose deployment as an additional coarse control.
 
+Its value is read from a mounted secret file. The token value is not passed in argv or stored in an environment variable; only the secret-file path may be configured through `GHOSTLINK_NODE_TOKEN_FILE`.
+
 For protocol-v3 messaging it is not the device identity mechanism; DeviceID request signatures remain mandatory.
 
 ## Certificate renewal
