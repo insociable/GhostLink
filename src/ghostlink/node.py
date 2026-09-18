@@ -59,6 +59,9 @@ class MessageStore(Protocol):
     def delete(self, message_id: str) -> bool:
         """Delete one stored message."""
 
+    def is_healthy(self) -> bool:
+        """Return whether the store is available for relay operations."""
+
 
 @dataclass(slots=True)
 class InMemoryMessageStore:
@@ -87,6 +90,10 @@ class InMemoryMessageStore:
     def delete(self, message_id: str) -> bool:
         """Delete one stored message."""
         return self._messages.pop(message_id, None) is not None
+
+    def is_healthy(self) -> bool:
+        """The in-memory development store is always available."""
+        return True
 
 
 @dataclass(slots=True)
@@ -194,6 +201,16 @@ class SQLiteMessageStore:
 
         return cursor.rowcount > 0
 
+    def is_healthy(self) -> bool:
+        """Return whether SQLite can be opened and queried."""
+        try:
+            with self._connect() as connection:
+                connection.execute("SELECT 1").fetchone()
+        except sqlite3.Error:
+            return False
+
+        return True
+
 
 def create_message_store(settings: NodeSettings) -> MessageStore:
     """Create the configured GhostNode message store."""
@@ -241,7 +258,13 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        """Return node health status."""
+        """Return node health status, including relay storage availability."""
+        if not message_store.is_healthy():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="storage unavailable",
+            )
+
         return {"status": "ok"}
 
     @app.post(
