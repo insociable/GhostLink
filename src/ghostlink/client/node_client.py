@@ -11,6 +11,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from ghostlink.device import derive_device_id
 from ghostlink.message import MESSAGE_VERSION, GhostMessage
 
 _MAX_CIPHERTEXT_BYTES = 1_048_576
@@ -19,6 +20,17 @@ _DEVICE_ID_PAYLOAD_LENGTH = 52
 _BASE32_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz234567")
 _MESSAGE_ID_LENGTH = 32
 _HEX_ALPHABET = frozenset("0123456789abcdef")
+_PREKEY_PUBLICATION_VERSION = 1
+_MAX_PUBLICATION_SEQUENCE = (1 << 53) - 1
+_MAX_ONE_TIME_PREKEYS = 256
+_MAX_PREKEY_PUBLICATION_BYTES = 1_048_576
+_EXPECTED_PREKEY_RECEIPT_FIELDS = {
+    "version",
+    "device_id",
+    "publication_sequence",
+    "expires_at",
+    "one_time_count",
+}
 _EXPECTED_MESSAGE_FIELDS = {
     "version",
     "message_id",
@@ -33,6 +45,17 @@ RequestFunction = Callable[
     [str, str, dict[str, object] | None, float, dict[str, str]],
     tuple[int, object | None],
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class PreKeyPublicationReceipt:
+    """Strictly validated GhostNode acknowledgement for one generation."""
+
+    version: int
+    device_id: str
+    publication_sequence: int
+    expires_at: int
+    one_time_count: int
 
 
 class GhostNodeClientError(RuntimeError):
@@ -182,6 +205,70 @@ def _extract_error_detail(body: object | None) -> str:
     return "unexpected GhostNode response"
 
 
+def _require_bounded_integer(
+    document: dict[str, object],
+    field: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = document.get(field)
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < minimum
+        or value > maximum
+    ):
+        raise GhostNodeProtocolError(
+            f"{field} is outside the supported integer range"
+        )
+    return value
+
+
+def _parse_prekey_receipt(value: object | None) -> PreKeyPublicationReceipt:
+    document = _require_mapping(value, "pre-key publication receipt")
+    if set(document) != _EXPECTED_PREKEY_RECEIPT_FIELDS:
+        raise GhostNodeProtocolError(
+            "pre-key publication receipt fields do not match the protocol"
+        )
+
+    version = _require_bounded_integer(
+        document,
+        "version",
+        minimum=_PREKEY_PUBLICATION_VERSION,
+        maximum=_PREKEY_PUBLICATION_VERSION,
+    )
+    device_id = _validate_device_id(
+        _require_text(document, "device_id"),
+        "device_id",
+    )
+    publication_sequence = _require_bounded_integer(
+        document,
+        "publication_sequence",
+        minimum=1,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+    expires_at = _require_bounded_integer(
+        document,
+        "expires_at",
+        minimum=1,
+        maximum=(1 << 63) - 1,
+    )
+    one_time_count = _require_bounded_integer(
+        document,
+        "one_time_count",
+        minimum=1,
+        maximum=_MAX_ONE_TIME_PREKEYS,
+    )
+    return PreKeyPublicationReceipt(
+        version=version,
+        device_id=device_id,
+        publication_sequence=publication_sequence,
+        expires_at=expires_at,
+        one_time_count=one_time_count,
+    )
+
+
 def _parse_message(value: object) -> GhostMessage:
     document = _require_mapping(value, "message")
     if set(document) != _EXPECTED_MESSAGE_FIELDS:
@@ -289,6 +376,56 @@ class GhostNodeClient:
                 "GhostNode returned an envelope different from the submission"
             )
         return stored.message_id
+
+    def publish_prekeys(
+        self,
+        device_id: str,
+        device_signing_public_key: bytes,
+        publication: str,
+    ) -> PreKeyPublicationReceipt:
+        """Submit one exact signed ratchet pre-key generation."""
+        try:
+            _validate_device_id(device_id, "device_id")
+        except GhostNodeProtocolError as exc:
+            raise ValueError(str(exc)) from exc
+
+        if len(device_signing_public_key) != 32:
+            raise ValueError(
+                "device_signing_public_key must contain exactly 32 bytes"
+            )
+        if derive_device_id(device_signing_public_key) != device_id:
+            raise ValueError(
+                "device_signing_public_key does not derive the target DeviceID"
+            )
+
+        publication_bytes = publication.encode("utf-8")
+        if (
+            not publication_bytes
+            or len(publication_bytes) > _MAX_PREKEY_PUBLICATION_BYTES
+        ):
+            raise ValueError(
+                "publication must be non-empty and no larger than 1 MiB"
+            )
+
+        encoded_device_id = urllib.parse.quote(device_id, safe=":")
+        payload: dict[str, object] = {
+            "version": _PREKEY_PUBLICATION_VERSION,
+            "device_signing_public_key": base64.b64encode(
+                device_signing_public_key
+            ).decode("ascii"),
+            "publication": publication,
+        }
+        status_code, body = self._request(
+            "PUT",
+            f"/v2/prekeys/{encoded_device_id}",
+            payload,
+        )
+        if status_code != 200:
+            raise GhostNodeRequestError(
+                status_code,
+                _extract_error_detail(body),
+            )
+        return _parse_prekey_receipt(body)
 
     def receive(self, recipient_device_id: str) -> list[GhostMessage]:
         """Retrieve encrypted protocol-v2 envelopes for one device."""
