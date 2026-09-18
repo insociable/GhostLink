@@ -8,23 +8,20 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-from fastapi.testclient import TestClient
-from nacl import utils
-from nacl.pwhash import argon2id
-from nacl.secret import SecretBox
 import ghostlink.cli as cli_module
+from fastapi.testclient import TestClient
 from ghostlink.cli import run
 from ghostlink.client import GhostNodeClient, GhostNodeRequestError
 from ghostlink.node import create_app
-from ghostlink.profile import (
-    LocalProfile,
-    decrypt_local_profile,
-)
+from ghostlink.profile import LocalProfile, decrypt_local_profile
 from ghostlink.ratchet_engine import RatchetEngineClient
 from ghostlink.ratchet_message import (
     RatchetMessage,
     RatchetMessageReplayError,
 )
+from nacl import utils
+from nacl.pwhash import argon2id
+from nacl.secret import SecretBox
 
 
 def create_test_requester(
