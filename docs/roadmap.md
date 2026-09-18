@@ -69,7 +69,8 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] sender fetch -> VerifiedContact -> highest-seen -> libsignal session orchestration;
 - [x] owner-authenticated pool status with automatic replenishment and expiration refresh;
 - [x] transactional 15-day delayed-key garbage collection with fail-closed lifecycle ownership checks;
-- [ ] ratcheted relay envelope and CLI cutover;
+- [x] context-bound ratcheted message-v3 envelope and isolated GhostNode v3 relay transport;
+- [ ] user-facing CLI send/inbox cutover to ratcheted v3;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;
 - [ ] reproducible releases;

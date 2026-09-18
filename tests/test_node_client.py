@@ -14,6 +14,7 @@ from ghostlink.config import NodeSettings
 from ghostlink.entity import GhostEntity
 from ghostlink.message import decrypt_message, encrypt_message
 from ghostlink.node import create_app
+from ghostlink.ratchet_message import RatchetMessage
 
 ALICE_DEVICE_ID = "device1:" + ("a" * 52)
 BOB_DEVICE_ID = "device1:" + ("b" * 52)
@@ -289,3 +290,64 @@ def test_node_client_rejects_invalid_message_id_before_delete() -> None:
 
     with pytest.raises(ValueError, match="message_id"):
         client.delete(BOB_DEVICE_ID, "bad-id")
+
+
+def test_node_client_ratchet_v3_round_trip_is_separate_from_static_v2() -> None:
+    api_client = TestClient(create_app())
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=create_test_requester(api_client),
+    )
+    now = int(time.time())
+    message = RatchetMessage(
+        version=3,
+        message_id="3" * 32,
+        sender_device_id=ALICE_DEVICE_ID,
+        recipient_device_id=BOB_DEVICE_ID,
+        created_at=now,
+        expires_at=now + 3_600,
+        ciphertext_type=3,
+        ciphertext=b"opaque-libsignal",
+    )
+
+    assert client.send_ratchet(message) == message.message_id
+    assert client.receive_ratchet(BOB_DEVICE_ID) == [message]
+    assert client.receive(BOB_DEVICE_ID) == []
+
+    client.delete_ratchet(BOB_DEVICE_ID, message.message_id)
+    assert client.receive_ratchet(BOB_DEVICE_ID) == []
+
+
+def test_node_client_rejects_unexpected_ratchet_v3_fields() -> None:
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        del method, url, payload, timeout, headers
+        return 200, [
+            {
+                "version": 3,
+                "message_id": "4" * 32,
+                "sender_device_id": ALICE_DEVICE_ID,
+                "recipient_device_id": BOB_DEVICE_ID,
+                "created_at": 1,
+                "expires_at": 2,
+                "ciphertext_type": 3,
+                "ciphertext": base64.b64encode(b"ciphertext").decode("ascii"),
+                "unexpected": True,
+            }
+        ]
+
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+
+    with pytest.raises(
+        GhostNodeProtocolError,
+        match="ratcheted message fields do not match",
+    ):
+        client.receive_ratchet(BOB_DEVICE_ID)

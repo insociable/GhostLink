@@ -6,31 +6,69 @@ GhostLink is an open-source, self-hostable secure messaging project inspired by 
 
 ## Current milestone
 
-**M3 — Two-client demonstration**
+**M5 — Security hardening / ratcheted transport**
 
-The repository now contains a complete automated M3 path:
+GhostLink is still pre-alpha, but the repository now contains substantially more than the original two-client demonstration:
 
-- self-certifying GhostID identities;
-- separately authorized device identities;
-- signed device certificates;
-- portable verified public contact bundles;
-- local end-to-end message encryption;
-- a ciphertext-only GhostNode relay;
-- optional persistent SQLite relay storage;
-- password-encrypted local client profiles;
-- a command-line client for init, contact exchange, send and inbox;
-- a Docker/Compose deployment path for GhostNode;
-- an integration test where two independent client profiles exchange and decrypt a message through GhostNode.
+- self-certifying GhostID and DeviceID identities;
+- identity-signed device authorization certificates;
+- verified public contact bundles;
+- password-encrypted local profiles;
+- persistent replay protection for authenticated message IDs;
+- ciphertext-only GhostNode relay with optional SQLite persistence;
+- static protocol-v2 messaging used by the current CLI;
+- a local Node/TypeScript ratchet engine using pinned official `@signalapp/libsignal-client`;
+- encrypted persistent libsignal session and pre-key vault state;
+- signed GhostID/DeviceID-to-libsignal pre-key bindings;
+- crash-safe pre-key publication, fetch, highest-seen continuity, replenishment/rotation and 15-day retired-key GC;
+- explicit ratcheted **message protocol v3** on separate `/v3/messages` relay routes;
+- context-bound ratchet decryption that rolls session state back when relay-visible metadata is tampered with;
+- real Python ↔ Node/libsignal ↔ GhostNode end-to-end tests, including restart continuity.
 
-The next protocol priorities are per-device relay authentication, replay protection, timestamps/expiration, metadata reduction and a ratcheting session protocol.
+### Runtime status
+
+The current user-facing CLI still sends and receives **static protocol v2** messages.
+
+The ratcheted protocol-v3 transport is implemented and tested, but the CLI cutover is intentionally a separate milestone. There is no automatic downgrade from failed ratcheted messaging to static v2.
 
 ## Security status
 
 GhostLink is **experimental and not ready for real-world sensitive communications**.
 
-It has not been independently audited and does not yet provide forward secrecy, a ratcheting session protocol, replay protection, per-device relay authentication, robust abuse controls, or a complete human contact-verification UX.
+The ratchet path exercises forward-secrecy/post-compromise behavior through the pinned official libsignal implementation, but GhostLink has **not** undergone an independent cryptographic/protocol audit and does not claim production security.
+
+Important remaining gaps include:
+
+- general per-device authentication for message-relay operations;
+- relay database anti-rollback protection;
+- key transparency;
+- production TLS ingress/deployment hardening;
+- Sybil-resistant abuse controls;
+- complete device revocation/recovery;
+- persisted human contact-verification / QR trust workflow;
+- independent cryptographic/protocol review.
 
 A valid contact bundle proves internal cryptographic consistency. It does not by itself prove that the GhostID belongs to the human the user intended to contact.
+
+See [SECURITY.md](SECURITY.md) and [docs/threat-model.md](docs/threat-model.md) for the current security boundary.
+
+## Protocol status
+
+| Path | Status |
+| --- | --- |
+| Static message protocol v2 | Implemented; current CLI runtime |
+| Ratcheted message protocol v3 | Implemented/tested; CLI cutover pending |
+| Ratchet pre-key lifecycle | Publication, fetch, continuity, maintenance and GC implemented |
+| Protocol v1 | Removed from runtime |
+
+Specifications:
+
+- [Message v2](docs/specifications/message-v2.md)
+- [Ratcheted message v3](docs/specifications/message-v3.md)
+- [Relay v2](docs/specifications/relay-v2.md)
+- [Ratcheted relay v3](docs/specifications/relay-v3.md)
+- [Ratchet pre-key lifecycle](docs/specifications/ratchet-prekey-lifecycle.md)
+- [Local ratchet RPC](docs/specifications/ratchet-local-rpc.md)
 
 ## Principles
 
@@ -40,9 +78,11 @@ A valid contact bundle proves internal cryptographic consistency. It does not by
 - self-hosting;
 - minimal metadata;
 - documented decisions;
-- no custom cryptographic algorithms.
+- fail closed;
+- no custom cryptographic algorithms;
+- no silent ratchet-to-static downgrade.
 
-## M3 quick start
+## Current CLI quick start
 
 Install dependencies:
 
@@ -76,14 +116,17 @@ Check it:
 poetry run ghostlink node-health --node http://127.0.0.1:8000
 ```
 
-See [docs/m3-cli.md](docs/m3-cli.md) for the two-client workflow and [deploy/oracle/README.md](deploy/oracle/README.md) for the container deployment runbook.
+The current `send` / `inbox` CLI commands still exercise static protocol v2 until the explicit v3 cutover.
+
+See [docs/m3-cli.md](docs/m3-cli.md) for the current CLI workflow and [deploy/oracle/README.md](deploy/oracle/README.md) for the container deployment runbook.
 
 ## Repository layout
 
 ```text
-src/ghostlink/       Python package
-tests/               Automated tests
-docs/                Architecture and security documentation
+src/ghostlink/       Python application/protocol code
+ratchet-engine/      Local TypeScript/libsignal engine
+tests/               Automated Python and cross-language tests
+docs/                Architecture, protocol and security documentation
 deploy/              Deployment configuration and runbooks
 .github/workflows/   Continuous integration
 ```
@@ -94,6 +137,7 @@ Requirements:
 
 - Python 3.12+
 - Poetry 1.8+
+- Node.js for ratchet-engine development/tests
 
 ```bash
 poetry install
@@ -102,7 +146,12 @@ poetry run ruff check .
 poetry run mypy src
 ```
 
-The CI also validates the Compose configuration and builds the GhostNode container image.
+CI additionally:
+
+- audits/builds/tests the pinned ratchet-engine dependencies;
+- runs Python-to-libsignal cross-language smoke tests;
+- validates Docker Compose;
+- builds and exercises the GhostNode container.
 
 ## License
 

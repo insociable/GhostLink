@@ -608,6 +608,33 @@ export class PersistentRatchetParty {
     );
   }
 
+  async decryptBytesFromWithContext(
+    remoteName: string,
+    message: WireMessage,
+    expectedContext: Uint8Array
+  ): Promise<Uint8Array> {
+    if (expectedContext.byteLength === 0) {
+      throw new Error('expected ratchet context must not be empty');
+    }
+
+    const remoteAddress = this.remoteAddress(remoteName);
+    return this.transaction(async (party) => {
+      const plaintext = await party.decryptBytes(remoteAddress, message);
+      if (plaintext.byteLength < expectedContext.byteLength) {
+        throw new Error('decrypted ratchet context does not match');
+      }
+
+      const actualContext = Buffer.from(
+        plaintext.subarray(0, expectedContext.byteLength)
+      );
+      if (!actualContext.equals(Buffer.from(expectedContext))) {
+        throw new Error('decrypted ratchet context does not match');
+      }
+
+      return plaintext.subarray(expectedContext.byteLength);
+    });
+  }
+
   async establishSession(
     remote: PersistentRatchetParty,
     publicationSequence: number,

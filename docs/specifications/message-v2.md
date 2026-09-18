@@ -49,10 +49,10 @@ The current experimental v2 core continues to use PyNaCl `Box`, which provides a
 
 GhostLink does not implement a custom cipher, MAC, nonce generator, or key agreement function.
 
-Protocol v2 improves lifecycle authentication and replay-defense foundations. It does **not** provide forward secrecy or post-compromise security. A reviewed ratcheting session protocol remains a later milestone.
+Protocol v2 improves lifecycle authentication and replay-defense foundations. It does **not** provide forward secrecy or post-compromise security. Ratcheted message protocol v3 is now implemented separately using the pinned official libsignal integration.
 
 ## Runtime status
 
-Protocol v2 is the canonical GhostLink message format.
+Protocol v2 remains the current user-facing CLI message format during the explicit ratchet cutover period.
 
-The experimental protocol-v1 runtime path has been removed. GhostNode exposes only versioned `/v2/messages` relay routes, and the reference client uses this format for send, inbox, and smoke tests.
+The experimental protocol-v1 runtime path has been removed. GhostNode exposes static `/v2/messages` and separately isolated ratcheted `/v3/messages` routes. A v3 failure never causes automatic fallback or reinterpretation as v2.
