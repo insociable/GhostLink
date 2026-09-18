@@ -65,3 +65,14 @@ def test_replay_database_path_cannot_be_directory(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="must point to a file"):
         SQLiteReplayCache(directory)
+
+
+def test_replay_cache_can_precheck_already_authenticated_id(
+    tmp_path: Path,
+) -> None:
+    cache = SQLiteReplayCache(tmp_path / "replay.sqlite3")
+
+    assert not cache.has_seen(ALICE_DEVICE_ID, MESSAGE_ID)
+    assert cache.accept(ALICE_DEVICE_ID, MESSAGE_ID, now=1_000_000)
+    assert cache.has_seen(ALICE_DEVICE_ID, MESSAGE_ID)
+    assert not cache.has_seen(BOB_DEVICE_ID, MESSAGE_ID)
