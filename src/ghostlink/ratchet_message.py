@@ -21,7 +21,7 @@ from ghostlink.message_lifecycle import (
     MESSAGE_MAX_LIFETIME_SECONDS,
 )
 from ghostlink.ratchet_engine import RatchetCiphertext, RatchetEngineClient
-from ghostlink.replay import SQLiteReplayCache
+from ghostlink.replay import ReplayCache
 
 RATCHET_MESSAGE_VERSION = 3
 RATCHET_MESSAGE_MAX_CIPHERTEXT_BYTES = 1024 * 1024
@@ -228,7 +228,7 @@ def decrypt_ratchet_message(
     engine: RatchetEngineClient,
     contact: ValidatedContact,
     message: RatchetMessage,
-    replay_cache: SQLiteReplayCache,
+    replay_cache: ReplayCache,
     *,
     now: int | None = None,
 ) -> bytes:

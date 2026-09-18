@@ -211,8 +211,10 @@ ghostlink inbox \
   --state /secure/path/bob-replay.sqlite3
 ```
 
-Replay-cache rollback or deletion can weaken suppression for still-valid captured
-messages and remains a documented local-state limitation.
+The user replay cache is rollback-aware in the current CLI runtime. Legacy replay
+databases require explicit `replay-state-upgrade` migration before use. The development
+SQLite witness still shares the filesystem rollback domain, so whole-snapshot protection
+is not claimed.
 
 ## Local files
 
@@ -221,7 +223,7 @@ For a profile named `alice.ghost`, the development runtime normally uses:
 - `alice.ghost` — password-encrypted profile v4;
 - `alice.ghost.contacts` — authenticated-encrypted, rollback-aware local contact trust store;
 - `alice.ghost.ratchet` — encrypted libsignal ratchet vault;
-- `alice.ghost.state.sqlite3` — replay cache;
+- `alice.ghost.state.sqlite3` — rollback-aware replay cache;
 - `alice.ghost.witness.sqlite3` — development monotonic witness for coordinated local state.
 
 The ratchet-vault, contact-store and state-coordination keys are independent and are
@@ -232,8 +234,8 @@ closed on rollback, divergence or a missing store after witness initialization. 
 contact stores require explicit `contact-store-upgrade` migration.
 
 The SQLite witness is development/reference protection only: a whole-filesystem snapshot
-can roll it back together with the protected state. Replay and ratchet-vault integration
-remain separate phases of issue #79.
+can roll it back together with the protected state. Replay-state integration is implemented. Ratchet-vault/highest-seen integration remains
+the next client-state phase of issue #79.
 
 ## Relay access
 
