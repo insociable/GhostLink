@@ -42,7 +42,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - encrypted per-DeviceID highest-seen remote publication sequence state with atomic rollback rejection before libsignal session establishment;
 - authenticated target-bound pre-key fetch requests with atomic one-time allocation, idempotent requester allocation, fallback semantics and configurable per-target anti-drain rate limiting;
 - sender-side relay fetch orchestration that strictly parses the response, verifies the signed binding against `VerifiedContact`, checks relay metadata consistency and establishes libsignal sessions under persisted highest-seen sequence enforcement;
-- owner-authenticated pre-key pool status plus fail-closed automatic replenishment/expiration refresh with local lifecycle cross-checks and depletion cooldown.
+- owner-authenticated pre-key pool status plus fail-closed automatic replenishment/expiration refresh with local lifecycle cross-checks and depletion cooldown;
+- transactional 15-day retired pre-key garbage collection that removes unprotected EC/Kyber private records and associated Kyber replay metadata while preserving pending/active/recent-retired generations.
 
 ### Security
 
@@ -56,7 +57,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - ratchet pre-key publication requires proof of control of the target self-certifying DeviceID signing key in addition to relay access control;
 - ratchet pre-key fetch requires target-bound proof of control of the requester DeviceID and serializes SQLite allocation so concurrent requests cannot receive the same one-time binding;
 - fetched pre-key material is never trusted from relay metadata alone: the sender verifies the target-signed binding against its existing contact state before any session mutation, with no static-encryption downgrade on failure;
-- pre-key maintenance treats relay remaining-count data as untrusted operational input: sequence/expiration divergence fails closed and depletion-triggered rotation is cooldown-limited.
+- pre-key maintenance treats relay remaining-count data as untrusted operational input: sequence/expiration divergence fails closed and depletion-triggered rotation is cooldown-limited;
+- retired pre-key GC fails closed on ambiguous lifecycle ownership or clock rollback and best-effort zeroizes serialized private-key store buffers before deletion.
 
 ### Known limitations
 
@@ -64,4 +66,5 @@ The format follows Keep a Changelog and Semantic Versioning.
 - the libsignal ratchet engine provides tested forward-secrecy/post-compromise behavior, but the user-facing relay/CLI still uses the static protocol-v2 message path until explicit cutover;
 - traffic metadata remains visible to the relay;
 - replay-cache rollback/deletion can weaken replay suppression for still-valid captured messages;
+- retired-key GC does not guarantee forensic secure erasure from runtime/allocator copies, filesystem snapshots, storage media, backups or restored old vaults;
 - no independent security audit yet.

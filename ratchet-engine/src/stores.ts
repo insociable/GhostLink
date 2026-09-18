@@ -392,7 +392,11 @@ export class MemoryPreKeyStore extends SignalClient.PreKeyStore {
   }
 
   async removePreKey(id: number): Promise<void> {
-    this.records.delete(id);
+    const serialized = this.records.get(id);
+    if (serialized !== undefined) {
+      serialized.fill(0);
+      this.records.delete(id);
+    }
   }
 
   hasPreKey(id: number): boolean {
@@ -434,6 +438,15 @@ export class MemorySignedPreKeyStore extends SignalClient.SignedPreKeyStore {
 
   hasSignedPreKey(id: number): boolean {
     return this.records.has(id);
+  }
+
+  removeSignedPreKey(id: number): boolean {
+    const serialized = this.records.get(id);
+    if (serialized === undefined) {
+      return false;
+    }
+    serialized.fill(0);
+    return this.records.delete(id);
   }
 
   exportState(): Array<[number, string]> {
@@ -500,6 +513,25 @@ export class MemoryKyberPreKeyStore extends SignalClient.KyberPreKeyStore {
 
   hasKyberPreKey(id: number): boolean {
     return this.records.has(id);
+  }
+
+  removeKyberPreKey(id: number): boolean {
+    const serialized = this.records.get(id);
+    let removed = false;
+    if (serialized !== undefined) {
+      serialized.fill(0);
+      removed = this.records.delete(id);
+    }
+    this.used.delete(id);
+
+    const keyId = BigInt(id);
+    for (const compound of [...this.baseKeysSeen.keys()]) {
+      if ((compound >> 32n) === keyId) {
+        this.baseKeysSeen.delete(compound);
+      }
+    }
+
+    return removed;
   }
 
   exportState(): PartyStoresState['kyberPreKey'] {

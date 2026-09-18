@@ -8,7 +8,10 @@ import test from 'node:test';
 import * as SignalClient from '@signalapp/libsignal-client';
 
 import { RatchetParty } from '../src/party.js';
-import { PersistentRatchetParty } from '../src/persistent-party.js';
+import {
+  PersistentRatchetParty,
+  RETIRED_PREKEY_RETENTION_SECONDS,
+} from '../src/persistent-party.js';
 
 async function temporaryDirectory(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'ghostlink-prekey-generation-'));
@@ -274,4 +277,117 @@ test('remote publication rollback leaves ratchet state and vault unchanged', asy
     [[bobDeviceId, 2]]
   );
   reopened.close();
+});
+
+
+test('garbage collection removes only retired generations past retention', async () => {
+  const directory = await temporaryDirectory();
+  const path = join(directory, 'bob-gc.ratchet');
+  const key = randomBytes(32);
+  const bob = await PersistentRatchetParty.open('bob', 1, path, key);
+
+  const first = await bob.preparePreKeyGeneration(2, 1_000, 3_600);
+  await bob.stagePreKeyPublication(first.sequence, '{"sequence":1}');
+  await bob.commitPreKeyPublication(first.sequence, 1_100);
+
+  const second = await bob.preparePreKeyGeneration(2, 1_200, 3_600);
+  await bob.stagePreKeyPublication(second.sequence, '{"sequence":2}');
+  await bob.commitPreKeyPublication(second.sequence, 1_300);
+
+  const beforeState = await bob.exportStateForTesting();
+  const beforeFile = await readFile(path);
+
+  const early = await bob.garbageCollectPreKeys(
+    1_300 + RETIRED_PREKEY_RETENTION_SECONDS - 1
+  );
+  assert.deepEqual(early, {
+    retiredGenerationsRemoved: 0,
+    preKeysRemoved: 0,
+    signedPreKeysRemoved: 0,
+    kyberPreKeysRemoved: 0,
+  });
+  assert.deepEqual(await bob.exportStateForTesting(), beforeState);
+  assert.deepEqual(await readFile(path), beforeFile);
+
+  const collected = await bob.garbageCollectPreKeys(
+    1_300 + RETIRED_PREKEY_RETENTION_SECONDS
+  );
+  assert.deepEqual(collected, {
+    retiredGenerationsRemoved: 1,
+    preKeysRemoved: 2,
+    signedPreKeysRemoved: 1,
+    kyberPreKeysRemoved: 3,
+  });
+
+  const after = await bob.exportStateForTesting();
+  assert.equal(after.lifecycle.retired.length, 0);
+  assert.equal(after.lifecycle.active?.sequence, second.sequence);
+
+  for (const [preKeyId, kyberPreKeyId] of first.oneTimeKeyIds) {
+    assert.equal(after.preKey.some(([id]) => id === preKeyId), false);
+    assert.equal(
+      after.kyberPreKey.records.some(([id]) => id === kyberPreKeyId),
+      false
+    );
+  }
+  assert.equal(
+    after.signedPreKey.some(([id]) => id === first.signedPreKeyId),
+    false
+  );
+  assert.equal(
+    after.kyberPreKey.records.some(
+      ([id]) => id === first.lastResortKyberPreKeyId
+    ),
+    false
+  );
+
+  for (const [preKeyId, kyberPreKeyId] of second.oneTimeKeyIds) {
+    assert.equal(after.preKey.some(([id]) => id === preKeyId), true);
+    assert.equal(
+      after.kyberPreKey.records.some(([id]) => id === kyberPreKeyId),
+      true
+    );
+  }
+  assert.equal(
+    after.signedPreKey.some(([id]) => id === second.signedPreKeyId),
+    true
+  );
+  assert.equal(
+    after.kyberPreKey.records.some(
+      ([id]) => id === second.lastResortKyberPreKeyId
+    ),
+    true
+  );
+
+  bob.close();
+
+  const reopened = await PersistentRatchetParty.open('bob', 1, path, key);
+  assert.deepEqual(await reopened.exportStateForTesting(), after);
+  reopened.close();
+});
+
+test('garbage collection rejects clock rollback without changing the vault', async () => {
+  const directory = await temporaryDirectory();
+  const path = join(directory, 'bob-gc-clock.ratchet');
+  const key = randomBytes(32);
+  const bob = await PersistentRatchetParty.open('bob', 1, path, key);
+
+  const first = await bob.preparePreKeyGeneration(1, 1_000, 3_600);
+  await bob.stagePreKeyPublication(first.sequence, '{"sequence":1}');
+  await bob.commitPreKeyPublication(first.sequence, 1_100);
+  const second = await bob.preparePreKeyGeneration(1, 1_200, 3_600);
+  await bob.stagePreKeyPublication(second.sequence, '{"sequence":2}');
+  await bob.commitPreKeyPublication(second.sequence, 1_300);
+
+  const beforeState = await bob.exportStateForTesting();
+  const beforeFile = await readFile(path);
+
+  await assert.rejects(
+    () => bob.garbageCollectPreKeys(1_299),
+    /current time predates a retired pre-key generation/
+  );
+
+  assert.deepEqual(await bob.exportStateForTesting(), beforeState);
+  assert.deepEqual(await readFile(path), beforeFile);
+  bob.close();
 });

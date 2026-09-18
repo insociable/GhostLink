@@ -10,6 +10,7 @@ from ghostlink.entity import GhostEntity
 from ghostlink.prekey_status import PreKeyStatusResponse
 from ghostlink.ratchet_engine import (
     RatchetEngineClient,
+    RatchetPreKeyGarbageCollectionResult,
     RatchetPreKeyGenerationStatus,
     RatchetPreKeyLifecycleStatus,
 )
@@ -22,6 +23,20 @@ from ghostlink.ratchet_maintenance import (
 class FakeEngine:
     def __init__(self, status: RatchetPreKeyLifecycleStatus) -> None:
         self.status = status
+        self.gc_calls: list[int | None] = []
+
+    def garbage_collect_prekeys(
+        self,
+        *,
+        now: int | None = None,
+    ) -> RatchetPreKeyGarbageCollectionResult:
+        self.gc_calls.append(now)
+        return RatchetPreKeyGarbageCollectionResult(
+            retired_generations_removed=0,
+            pre_keys_removed=0,
+            signed_pre_keys_removed=0,
+            kyber_pre_keys_removed=0,
+        )
 
     def get_prekey_lifecycle_status(self) -> RatchetPreKeyLifecycleStatus:
         return self.status

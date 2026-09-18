@@ -63,7 +63,9 @@ The current codebase includes:
 - no automatic fallback to static protocol-v2 when ratchet bootstrap fails;
 - owner-authenticated relay pool-status reads using a signature domain separate from fetch;
 - fail-closed pre-key maintenance that cross-checks relay sequence/expiration against local encrypted lifecycle state;
-- automatic pool replenishment and expiration refresh with cooldown against relay-induced depletion churn.
+- automatic pool replenishment and expiration refresh with cooldown against relay-induced depletion churn;
+- transactional 15-day retired pre-key garbage collection driven only by encrypted lifecycle ownership metadata;
+- fail-closed retention on ambiguous lifecycle ownership or local clock rollback, with best-effort zeroization of serialized private-key buffers before in-memory removal.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -74,7 +76,6 @@ Before a ratcheted production cutover GhostLink still lacks:
 - relay database anti-rollback protection;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
-- delayed-key garbage collection;
 - complete device revocation and recovery design;
 - general per-device authentication for message-relay operations;
 - production TLS ingress policy and deployment hardening;
@@ -82,6 +83,8 @@ Before a ratcheted production cutover GhostLink still lacks:
 - independent cryptographic/protocol review.
 
 No automatic fallback from a failed ratcheted session to static encryption is permitted.
+
+Garbage collection removes retired key material from the current logical vault state and best-effort zeroizes the store buffers it owns. It does not guarantee forensic secure erasure from runtime copies, allocator memory, filesystem snapshots, storage media, backups or a restored older encrypted vault.
 
 ## Metadata
 
