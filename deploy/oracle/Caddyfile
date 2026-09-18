@@ -1,0 +1,30 @@
+{
+    auto_https disable_redirects
+    admin off
+    email {$GHOSTLINK_ACME_EMAIL}
+
+    log {
+        output stdout
+        format json
+        level WARN
+    }
+
+    servers :443 {
+        protocols h1 h2
+        strict_sni_host on
+    }
+}
+
+{$GHOSTLINK_PUBLIC_HOSTNAME} {
+    tls {
+        issuer acme {
+            disable_http_challenge
+        }
+    }
+
+    reverse_proxy ghostnode:8000 {
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto "https"
+        header_up X-Forwarded-Host {host}
+    }
+}
