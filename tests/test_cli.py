@@ -878,3 +878,95 @@ def test_cli_contact_qr_export_and_import_remain_human_unverified(
     assert len(records) == 1
     assert records[0].state is ContactTrustState.IMPORTED
     assert records[0].pinned_ghost_id is None
+
+
+
+def test_cli_contact_update_qr_quarantines_verified_identity_change(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    unlock_phrase = "qr change password"
+
+    def password_reader(prompt: str) -> str:
+        del prompt
+        return unlock_phrase
+
+    local_profile = tmp_path / "local-qr-change.ghost"
+    assert run(
+        ["init", "--profile", str(local_profile)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    alice = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    alice_payload = export_contact_qr_payload(alice, alice_device)
+
+    assert run(
+        [
+            "contact-import-qr",
+            "--profile",
+            str(local_profile),
+            "--label",
+            "Alice",
+            "--payload",
+            alice_payload,
+        ],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    local = decrypt_local_profile(
+        local_profile.read_text(encoding="utf-8"),
+        unlock_phrase,
+    )
+    assert local.contact_store_key is not None
+    store_path = Path(f"{local_profile}.contacts")
+    store = load_contact_store(store_path, local.contact_store_key)
+    imported = store.list_records()[0]
+    alice_fingerprint = derive_identity_fingerprint(bytes(alice.verify_key))
+
+    assert run(
+        [
+            "contact-trust",
+            "--profile",
+            str(local_profile),
+            "--fingerprint",
+            alice_fingerprint,
+            imported.record_id,
+        ],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    replacement = GhostEntity.generate()
+    replacement_payload = export_contact_qr_payload(
+        replacement,
+        replacement.enroll_device(),
+    )
+    replacement_fingerprint = derive_identity_fingerprint(
+        bytes(replacement.verify_key)
+    )
+
+    assert run(
+        [
+            "contact-update-qr",
+            "--profile",
+            str(local_profile),
+            imported.record_id,
+            "--payload",
+            replacement_payload,
+        ],
+        password_reader=password_reader,
+    ) == 0
+    changed_output = capsys.readouterr()
+    assert "IDENTITY CHANGED" in changed_output.err
+    assert "Trust state: changed" in changed_output.out
+    assert f"Candidate Fingerprint v2: {replacement_fingerprint}" in changed_output.out
+
+    restored = load_contact_store(store_path, local.contact_store_key)
+    changed = restored.get(imported.record_id)
+    assert changed.state is ContactTrustState.CHANGED
+    assert changed.pinned_ghost_id == alice.ghost_id
+    assert changed.candidate_contact is not None
+    assert changed.candidate_contact.ghost_id == replacement.ghost_id
