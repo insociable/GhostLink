@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from ghostlink.config import NodeSettings
 from ghostlink.node import create_app
 from ghostlink.relay_v2 import InMemoryV2MessageStore
+from ghostlink.relay_v3 import InMemoryV3MessageStore
 
 
 def test_health_endpoint() -> None:
@@ -46,6 +47,9 @@ def test_runtime_exposes_v2_routes_and_not_v1_routes() -> None:
     assert "/v2/messages/{recipient_device_id}" in paths
     assert "/v2/messages/{recipient_device_id}/{message_id}" in paths
     assert "/v2/prekeys/{device_id}" in paths
+    assert "/v3/messages" in paths
+    assert "/v3/messages/{recipient_device_id}" in paths
+    assert "/v3/messages/{recipient_device_id}/{message_id}" in paths
     assert all(not path.startswith("/v1/") for path in paths)
 
 
@@ -58,3 +62,19 @@ def test_legacy_v1_route_is_not_available() -> None:
     )
 
     assert response.status_code == 404
+
+
+class UnhealthyRatchetMessageStore(InMemoryV3MessageStore):
+    def is_healthy(self) -> bool:
+        return False
+
+
+def test_health_includes_ratcheted_v3_storage() -> None:
+    client = TestClient(
+        create_app(ratchet_store=UnhealthyRatchetMessageStore())
+    )
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "storage unavailable"}
