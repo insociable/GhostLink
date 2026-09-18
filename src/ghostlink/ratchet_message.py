@@ -138,14 +138,12 @@ def canonical_ratchet_context(
     recipient_device_id: str,
     created_at: int,
     expires_at: int,
-    ciphertext_type: int,
 ) -> bytes:
     """Return the exact context prefix authenticated inside libsignal plaintext."""
     _validate_message_id(message_id)
     _validate_device_id(sender_device_id, "sender_device_id")
     _validate_device_id(recipient_device_id, "recipient_device_id")
     _validate_lifecycle(created_at, expires_at)
-    _validate_ciphertext_type(ciphertext_type)
 
     return b"".join(
         (
@@ -156,7 +154,6 @@ def canonical_ratchet_context(
             _encode_text(recipient_device_id),
             struct.pack(">Q", created_at),
             struct.pack(">Q", expires_at),
-            struct.pack(">B", ciphertext_type),
         )
     )
 
@@ -206,35 +203,14 @@ def encrypt_ratchet_message(
 
     message_id = secrets.token_hex(MESSAGE_ID_BYTES)
 
-    # libsignal chooses the ciphertext type (PreKey or Whisper). The type is part
-    # of the authenticated context, so encrypt once with a provisional context,
-    # then require the resulting type to match the final context. Existing
-    # sessions normally yield Whisper; a freshly established sender session
-    # yields PreKey. We authenticate the selected type by prefixing it in a
-    # second encryption transaction only when necessary.
-    base_context = canonical_ratchet_context(
-        message_id=message_id,
-        sender_device_id=engine.local_device_id,
-        recipient_device_id=contact.device_id,
-        created_at=timestamp,
-        expires_at=expires_at,
-        ciphertext_type=0,
-    )
-    provisional = engine.encrypt(contact, base_context + plaintext)
-
     context = canonical_ratchet_context(
         message_id=message_id,
         sender_device_id=engine.local_device_id,
         recipient_device_id=contact.device_id,
         created_at=timestamp,
         expires_at=expires_at,
-        ciphertext_type=provisional.message_type,
     )
-
-    if provisional.message_type == 0:
-        ciphertext = provisional
-    else:
-        ciphertext = engine.encrypt(contact, context + plaintext)
+    ciphertext = engine.encrypt(contact, context + plaintext)
 
     return RatchetMessage(
         version=RATCHET_MESSAGE_VERSION,
@@ -271,7 +247,6 @@ def decrypt_ratchet_message(
         recipient_device_id=message.recipient_device_id,
         created_at=message.created_at,
         expires_at=message.expires_at,
-        ciphertext_type=message.ciphertext_type,
     )
 
     plaintext = engine.decrypt_context_bound(
