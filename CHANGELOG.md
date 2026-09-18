@@ -24,6 +24,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 - protocol-v2 relay deduplication and expiry handling;
 - persistent sender-scoped SQLite replay cache with atomic acceptance;
 - protocol-v2 CLI send, inbox and live E2EE smoke flow;
+- removal of the experimental protocol-v1 runtime path;
 - automated dependency update monitoring.
 
 ### Security

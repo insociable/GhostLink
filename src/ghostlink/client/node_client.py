@@ -11,23 +11,15 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ghostlink.message import GhostMessage
-from ghostlink.message_v2 import MESSAGE_VERSION as V2_MESSAGE_VERSION
-from ghostlink.message_v2 import GhostMessageV2
+from ghostlink.message import MESSAGE_VERSION, GhostMessage
 
-_MESSAGE_VERSION = 1
 _MAX_CIPHERTEXT_BYTES = 1_048_576
 _DEVICE_ID_PREFIX = "device1:"
 _DEVICE_ID_PAYLOAD_LENGTH = 52
 _BASE32_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz234567")
-_EXPECTED_STORED_FIELDS = {
-    "message_id",
-    "version",
-    "sender_device_id",
-    "recipient_device_id",
-    "ciphertext",
-}
-_EXPECTED_V2_FIELDS = {
+_MESSAGE_ID_LENGTH = 32
+_HEX_ALPHABET = frozenset("0123456789abcdef")
+_EXPECTED_MESSAGE_FIELDS = {
     "version",
     "message_id",
     "sender_device_id",
@@ -36,8 +28,6 @@ _EXPECTED_V2_FIELDS = {
     "expires_at",
     "ciphertext",
 }
-_MESSAGE_ID_LENGTH = 32
-_HEX_ALPHABET = frozenset("0123456789abcdef")
 
 RequestFunction = Callable[
     [str, str, dict[str, object] | None, float, dict[str, str]],
@@ -64,14 +54,6 @@ class GhostNodeRequestError(GhostNodeClientError):
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"GhostNode request failed ({status_code}): {detail}")
-
-
-@dataclass(frozen=True, slots=True)
-class StoredGhostMessage:
-    """One encrypted GhostMessage stored by a GhostNode."""
-
-    message_id: str
-    message: GhostMessage
 
 
 def _decode_response(raw: bytes) -> object | None:
@@ -104,7 +86,6 @@ def _urllib_request(
         ).encode("utf-8")
         headers["Content-Type"] = "application/json"
 
-    # The caller validates that base_url is absolute HTTP(S) before building this URL.
     request = urllib.request.Request(  # noqa: S310
         url,
         data=body,
@@ -132,33 +113,7 @@ def _require_mapping(value: object | None, context: str) -> dict[str, object]:
         if not isinstance(key, str):
             raise GhostNodeProtocolError(f"{context} contains a non-text field name")
         document[key] = item
-
     return document
-
-
-def _require_exact_fields(
-    document: dict[str, object],
-    expected: set[str],
-    context: str,
-) -> None:
-    fields = set(document)
-    if fields != expected:
-        raise GhostNodeProtocolError(f"{context} fields do not match protocol v1")
-
-
-def _validate_device_id(value: str, field: str) -> str:
-    if not value.startswith(_DEVICE_ID_PREFIX):
-        raise GhostNodeProtocolError(f"{field} must use the device1 format")
-
-    payload = value[len(_DEVICE_ID_PREFIX) :]
-    if len(payload) != _DEVICE_ID_PAYLOAD_LENGTH:
-        raise GhostNodeProtocolError(f"{field} payload has an invalid length")
-    if any(character not in _BASE32_ALPHABET for character in payload):
-        raise GhostNodeProtocolError(
-            f"{field} payload is not valid lowercase Base32"
-        )
-
-    return value
 
 
 def _require_text(document: dict[str, object], field: str) -> str:
@@ -172,17 +127,8 @@ def _require_version(document: dict[str, object]) -> int:
     value = document.get("version")
     if not isinstance(value, int) or isinstance(value, bool):
         raise GhostNodeProtocolError("version must be an integer")
-    if value != _MESSAGE_VERSION:
+    if value != MESSAGE_VERSION:
         raise GhostNodeProtocolError("unsupported message version")
-    return value
-
-
-def _require_v2_version(document: dict[str, object]) -> int:
-    value = document.get("version")
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise GhostNodeProtocolError("version must be an integer")
-    if value != V2_MESSAGE_VERSION:
-        raise GhostNodeProtocolError("unsupported protocol-v2 message version")
     return value
 
 
@@ -190,6 +136,20 @@ def _require_timestamp(document: dict[str, object], field: str) -> int:
     value = document.get(field)
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise GhostNodeProtocolError(f"{field} must be a non-negative integer")
+    return value
+
+
+def _validate_device_id(value: str, field: str) -> str:
+    if not value.startswith(_DEVICE_ID_PREFIX):
+        raise GhostNodeProtocolError(f"{field} must use the device1 format")
+
+    payload = value[len(_DEVICE_ID_PREFIX) :]
+    if len(payload) != _DEVICE_ID_PAYLOAD_LENGTH:
+        raise GhostNodeProtocolError(f"{field} payload has an invalid length")
+    if any(character not in _BASE32_ALPHABET for character in payload):
+        raise GhostNodeProtocolError(
+            f"{field} payload is not valid lowercase Base32"
+        )
     return value
 
 
@@ -211,7 +171,6 @@ def _decode_ciphertext(value: str) -> bytes:
         raise GhostNodeProtocolError("ciphertext must not be empty")
     if len(ciphertext) > _MAX_CIPHERTEXT_BYTES:
         raise GhostNodeProtocolError("ciphertext exceeds the 1 MiB relay limit")
-
     return ciphertext
 
 
@@ -223,38 +182,11 @@ def _extract_error_detail(body: object | None) -> str:
     return "unexpected GhostNode response"
 
 
-def _parse_stored_message(value: object) -> StoredGhostMessage:
-    document = _require_mapping(value, "stored message")
-    _require_exact_fields(document, _EXPECTED_STORED_FIELDS, "stored message")
-
-    message_id = _require_text(document, "message_id")
-    sender_device_id = _validate_device_id(
-        _require_text(document, "sender_device_id"),
-        "sender_device_id",
-    )
-    recipient_device_id = _validate_device_id(
-        _require_text(document, "recipient_device_id"),
-        "recipient_device_id",
-    )
-    ciphertext_text = _require_text(document, "ciphertext")
-    version = _require_version(document)
-
-    return StoredGhostMessage(
-        message_id=message_id,
-        message=GhostMessage(
-            version=version,
-            sender_device_id=sender_device_id,
-            recipient_device_id=recipient_device_id,
-            ciphertext=_decode_ciphertext(ciphertext_text),
-        ),
-    )
-
-
-def _parse_v2_message(value: object) -> GhostMessageV2:
-    document = _require_mapping(value, "protocol-v2 message")
-    if set(document) != _EXPECTED_V2_FIELDS:
+def _parse_message(value: object) -> GhostMessage:
+    document = _require_mapping(value, "message")
+    if set(document) != _EXPECTED_MESSAGE_FIELDS:
         raise GhostNodeProtocolError(
-            "protocol-v2 message fields do not match the specification"
+            "message fields do not match the protocol specification"
         )
 
     message_id = _validate_message_id(_require_text(document, "message_id"))
@@ -267,8 +199,8 @@ def _parse_v2_message(value: object) -> GhostMessageV2:
         "recipient_device_id",
     )
 
-    return GhostMessageV2(
-        version=_require_v2_version(document),
+    return GhostMessage(
+        version=_require_version(document),
         message_id=message_id,
         sender_device_id=sender_device_id,
         recipient_device_id=recipient_device_id,
@@ -280,7 +212,7 @@ def _parse_v2_message(value: object) -> GhostMessageV2:
 
 @dataclass(frozen=True, slots=True)
 class GhostNodeClient:
-    """Synchronous client for the minimal GhostNode relay API."""
+    """Synchronous client for the canonical GhostNode protocol-v2 API."""
 
     base_url: str
     timeout: float = 10.0
@@ -333,69 +265,7 @@ class GhostNodeClient:
         return document.get("status") == "ok"
 
     def send(self, message: GhostMessage) -> str:
-        """Submit one already-encrypted GhostMessage and return its relay ID."""
-        payload: dict[str, object] = {
-            "version": message.version,
-            "sender_device_id": message.sender_device_id,
-            "recipient_device_id": message.recipient_device_id,
-            "ciphertext": base64.b64encode(message.ciphertext).decode("ascii"),
-        }
-
-        status_code, body = self._request(
-            "POST",
-            "/v1/messages",
-            payload,
-        )
-
-        if status_code != 201:
-            raise GhostNodeRequestError(
-                status_code,
-                _extract_error_detail(body),
-            )
-
-        stored = _parse_stored_message(body)
-
-        if stored.message != message:
-            raise GhostNodeProtocolError(
-                "GhostNode returned a message different from the submitted envelope"
-            )
-
-        return stored.message_id
-
-    def receive(self, recipient_device_id: str) -> list[StoredGhostMessage]:
-        """Retrieve encrypted envelopes addressed to one device."""
-        if not recipient_device_id:
-            raise ValueError("recipient_device_id must not be empty")
-
-        try:
-            _validate_device_id(recipient_device_id, "recipient_device_id")
-        except GhostNodeProtocolError as exc:
-            raise ValueError(str(exc)) from exc
-
-        encoded_device_id = urllib.parse.quote(
-            recipient_device_id,
-            safe=":",
-        )
-        status_code, body = self._request(
-            "GET",
-            f"/v1/messages/{encoded_device_id}",
-        )
-
-        if status_code != 200:
-            raise GhostNodeRequestError(
-                status_code,
-                _extract_error_detail(body),
-            )
-
-        if not isinstance(body, list):
-            raise GhostNodeProtocolError(
-                "message list response must be a JSON array"
-            )
-
-        return [_parse_stored_message(item) for item in body]
-
-    def send_v2(self, message: GhostMessageV2) -> str:
-        """Submit one protocol-v2 encrypted envelope."""
+        """Submit one encrypted protocol-v2 envelope."""
         payload: dict[str, object] = {
             "version": message.version,
             "message_id": message.message_id,
@@ -413,16 +283,15 @@ class GhostNodeClient:
                 _extract_error_detail(body),
             )
 
-        stored = _parse_v2_message(body)
+        stored = _parse_message(body)
         if stored != message:
             raise GhostNodeProtocolError(
-                "GhostNode returned a protocol-v2 envelope different from the submission"
+                "GhostNode returned an envelope different from the submission"
             )
-
         return stored.message_id
 
-    def receive_v2(self, recipient_device_id: str) -> list[GhostMessageV2]:
-        """Retrieve protocol-v2 encrypted envelopes for one device."""
+    def receive(self, recipient_device_id: str) -> list[GhostMessage]:
+        """Retrieve encrypted protocol-v2 envelopes for one device."""
         try:
             _validate_device_id(recipient_device_id, "recipient_device_id")
         except GhostNodeProtocolError as exc:
@@ -441,12 +310,12 @@ class GhostNodeClient:
             )
         if not isinstance(body, list):
             raise GhostNodeProtocolError(
-                "protocol-v2 message list response must be a JSON array"
+                "message list response must be a JSON array"
             )
 
-        return [_parse_v2_message(item) for item in body]
+        return [_parse_message(item) for item in body]
 
-    def delete_v2(self, recipient_device_id: str, message_id: str) -> None:
+    def delete(self, recipient_device_id: str, message_id: str) -> None:
         """Delete one delivered protocol-v2 envelope."""
         try:
             _validate_device_id(recipient_device_id, "recipient_device_id")
@@ -459,23 +328,6 @@ class GhostNodeClient:
         status_code, body = self._request(
             "DELETE",
             f"/v2/messages/{encoded_device_id}/{encoded_message_id}",
-        )
-
-        if status_code != 204:
-            raise GhostNodeRequestError(
-                status_code,
-                _extract_error_detail(body),
-            )
-
-    def delete(self, message_id: str) -> None:
-        """Delete one relay message after successful local processing."""
-        if not message_id:
-            raise ValueError("message_id must not be empty")
-
-        encoded_message_id = urllib.parse.quote(message_id, safe="")
-        status_code, body = self._request(
-            "DELETE",
-            f"/v1/messages/{encoded_message_id}",
         )
 
         if status_code != 204:

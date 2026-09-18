@@ -1,41 +1,58 @@
-# M3 GhostNode client transport
+# M3 GhostNode client transport — Protocol v2
 
-The M3 client transport connects a local GhostLink client to a GhostNode relay.
+The M3 client transport connects a local GhostLink client to a GhostNode relay using the canonical protocol-v2 envelope.
 
 ## Boundary
 
-The transport layer only receives a `GhostMessage` that has already been encrypted locally. It never receives the plaintext used to create that message and does not perform encryption itself.
+The transport layer receives a `GhostMessage` that has already been encrypted locally. It never receives the plaintext used to create that message and does not perform cryptographic message construction itself.
 
 The relay exchange is:
 
-1. encrypt locally with the sender private device key and recipient public device key;
-2. Base64-encode the ciphertext for JSON transport;
-3. submit the encrypted envelope to `POST /v1/messages`;
-4. retrieve encrypted envelopes using `GET /v1/messages/{device_id}`;
-5. decrypt locally after the sender public device has been verified;
-6. delete the relay copy only after successful local processing.
+1. construct and encrypt the authenticated protocol-v2 message locally;
+2. Base64-encode ciphertext for JSON transport;
+3. submit the envelope to `POST /v2/messages`;
+4. retrieve encrypted envelopes with `GET /v2/messages/{device_id}`;
+5. authenticate/decrypt locally with the verified sender public device;
+6. validate authenticated lifecycle metadata;
+7. record the message ID in persistent replay state before display;
+8. delete the relay copy after successful processing unless development `--keep` is enabled.
 
-## Implementation
+## Client API
 
-`ghostlink.client.GhostNodeClient` intentionally uses Python's standard HTTP stack for M3 so the client transport does not introduce another runtime dependency.
+`ghostlink.client.GhostNodeClient` exposes:
+
+- `health()`;
+- `send(message)`;
+- `receive(recipient_device_id)`;
+- `delete(recipient_device_id, message_id)`.
+
+Version-specific V1 client methods have been removed.
+
+The transport intentionally uses Python's standard HTTP stack so it does not add another runtime HTTP dependency.
+
+## Response validation
 
 The client validates:
 
-- the GhostNode base URL;
+- an absolute HTTP(S) base URL without embedded credentials;
 - expected HTTP status codes;
-- exact protocol-v1 response fields;
-- protocol version `1`;
+- exact protocol-v2 response fields;
+- protocol version `2`;
+- canonical 128-bit lowercase hexadecimal message IDs;
 - canonical `device1:` identifiers;
-- Base64 ciphertext;
+- non-negative integer lifecycle timestamps;
+- valid Base64 ciphertext;
 - a maximum decoded ciphertext size of 1 MiB;
-- that the relay echoes the same encrypted envelope that was submitted.
+- exact equality between a submitted encrypted envelope and the relay response.
 
-GhostNode applies the matching validation to submitted envelopes: unknown fields, unsupported versions, malformed DeviceIDs, invalid Base64, empty ciphertext and ciphertext above 1 MiB are rejected.
-
-Network failures, HTTP failures, and malformed relay responses are represented by separate client exceptions.
+Cryptographic lifecycle validation is performed by the message layer after authenticated decryption, not by trusting the relay response.
 
 ## Security status
 
-The client can send an optional shared Bearer access token to GhostNode. This provides coarse relay access control, not per-device identity authentication. The client still does not authenticate the GhostNode itself without trusted TLS. Per-device relay authentication, replay protection, expiration and explicit delivery acknowledgement remain later milestones.
+The optional shared Bearer token is coarse relay access control, not per-device identity authentication.
 
-GhostLink remains experimental and is not suitable for sensitive real-world communications.
+Persistent recipient-side replay protection is implemented separately from relay deduplication. GhostNode remains outside the end-to-end trust boundary.
+
+Trusted TLS, per-device relay authentication, ratcheting, forward secrecy, traffic-analysis resistance, and independent cryptographic review remain future hardening work.
+
+GhostLink remains experimental and is not suitable for sensitive real-world communications yet.

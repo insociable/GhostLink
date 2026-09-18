@@ -66,14 +66,17 @@ jobs:
       - name: Verify unauthenticated relay access is rejected
         run: |
           DEVICE_ID="device1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}'             "http://127.0.0.1:8000/v1/messages/$DEVICE_ID")"
+          STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}'             "http://127.0.0.1:8000/v2/messages/$DEVICE_ID")"
           test "$STATUS" = "401"
 
       - name: Verify authenticated relay access works
         run: |
           DEVICE_ID="device1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          RESPONSE="$(curl --fail --silent             --header "Authorization: Bearer $GHOSTLINK_NODE_TOKEN"             "http://127.0.0.1:8000/v1/messages/$DEVICE_ID")"
+          RESPONSE="$(curl --fail --silent             --header "Authorization: Bearer $GHOSTLINK_NODE_TOKEN"             "http://127.0.0.1:8000/v2/messages/$DEVICE_ID")"
           test "$RESPONSE" = "[]"
+
+      - name: Run protocol-v2 E2EE smoke test
+        run: docker compose exec -T ghostnode ghostlink node-smoke --node http://127.0.0.1:8000
 
       - name: Show GhostNode status
         run: docker compose ps

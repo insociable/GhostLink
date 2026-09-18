@@ -1,4 +1,5 @@
 import base64
+import time
 import urllib.parse
 from collections.abc import Callable
 
@@ -62,7 +63,7 @@ def test_node_client_reports_health() -> None:
     assert client.health()
 
 
-def test_encrypted_message_can_round_trip_through_node_client() -> None:
+def test_encrypted_message_round_trip_through_node_client() -> None:
     api_client = TestClient(create_app())
     client = GhostNodeClient(
         "http://ghostnode.test",
@@ -73,30 +74,30 @@ def test_encrypted_message_can_round_trip_through_node_client() -> None:
     bob = GhostEntity.generate()
     alice_device = alice.enroll_device()
     bob_device = bob.enroll_device()
+    now = int(time.time())
 
     message = encrypt_message(
-        sender=alice_device,
-        recipient=bob_device.public_device(),
-        plaintext=b"Bonjour depuis Alice",
+        alice_device,
+        bob_device.public_device(),
+        b"Bonjour Bob protocol v2",
+        created_at=now,
     )
 
     message_id = client.send(message)
     received = client.receive(bob_device.device_id)
 
-    assert len(received) == 1
-    assert received[0].message_id == message_id
-    assert received[0].message == message
+    assert message_id == message.message_id
+    assert received == [message]
 
     plaintext = decrypt_message(
-        recipient=bob_device,
-        sender=alice_device.public_device(),
-        message=received[0].message,
+        bob_device,
+        alice_device.public_device(),
+        received[0],
+        now=now,
     )
+    assert plaintext == b"Bonjour Bob protocol v2"
 
-    assert plaintext == b"Bonjour depuis Alice"
-
-    client.delete(message_id)
-
+    client.delete(bob_device.device_id, message.message_id)
     assert client.receive(bob_device.device_id) == []
 
 
@@ -111,7 +112,7 @@ def test_node_client_surfaces_relay_errors() -> None:
         GhostNodeRequestError,
         match="message not found",
     ):
-        client.delete("unknown")
+        client.delete(BOB_DEVICE_ID, "a" * 32)
 
 
 def test_node_client_rejects_invalid_health_payload() -> None:
@@ -150,13 +151,13 @@ def test_node_client_rejects_unsafe_or_invalid_base_urls(base_url: str) -> None:
 
 
 def test_node_client_sends_bearer_access_token() -> None:
-    access_value = "secret-token"
+    token = "test-relay-token"  # noqa: S105
     api_client = TestClient(
-        create_app(settings=NodeSettings(access_token=access_value))
+        create_app(settings=NodeSettings(access_token=token))
     )
     client = GhostNodeClient(
         "http://ghostnode.test",
-        access_token=access_value,
+        access_token=token,
         requester=create_test_requester(api_client),
     )
 
@@ -164,9 +165,9 @@ def test_node_client_sends_bearer_access_token() -> None:
 
 
 def test_node_client_without_required_token_is_rejected() -> None:
-    access_value = "secret-token"
+    token = "test-relay-token"  # noqa: S105
     api_client = TestClient(
-        create_app(settings=NodeSettings(access_token=access_value))
+        create_app(settings=NodeSettings(access_token=token))
     )
     client = GhostNodeClient(
         "http://ghostnode.test",
@@ -179,7 +180,7 @@ def test_node_client_without_required_token_is_rejected() -> None:
     assert error.value.status_code == 401
 
 
-def test_node_client_rejects_unexpected_stored_message_fields() -> None:
+def test_node_client_rejects_unexpected_message_fields() -> None:
     def requester(
         method: str,
         url: str,
@@ -189,10 +190,12 @@ def test_node_client_rejects_unexpected_stored_message_fields() -> None:
     ) -> tuple[int, object | None]:
         return 200, [
             {
-                "message_id": "relay-id",
-                "version": 1,
+                "version": 2,
+                "message_id": "a" * 32,
                 "sender_device_id": ALICE_DEVICE_ID,
                 "recipient_device_id": BOB_DEVICE_ID,
+                "created_at": 1,
+                "expires_at": 2,
                 "ciphertext": base64.b64encode(b"ciphertext").decode("ascii"),
                 "unexpected": "field",
             }
@@ -205,7 +208,7 @@ def test_node_client_rejects_unexpected_stored_message_fields() -> None:
 
     with pytest.raises(
         GhostNodeProtocolError,
-        match="fields do not match protocol v1",
+        match="fields do not match",
     ):
         client.receive(BOB_DEVICE_ID)
 
@@ -220,10 +223,12 @@ def test_node_client_rejects_unsupported_message_version() -> None:
     ) -> tuple[int, object | None]:
         return 200, [
             {
-                "message_id": "relay-id",
-                "version": 2,
+                "version": 99,
+                "message_id": "a" * 32,
                 "sender_device_id": ALICE_DEVICE_ID,
                 "recipient_device_id": BOB_DEVICE_ID,
+                "created_at": 1,
+                "expires_at": 2,
                 "ciphertext": base64.b64encode(b"ciphertext").decode("ascii"),
             }
         ]
@@ -240,8 +245,47 @@ def test_node_client_rejects_unsupported_message_version() -> None:
         client.receive(BOB_DEVICE_ID)
 
 
+def test_node_client_rejects_invalid_ciphertext() -> None:
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        return 200, [
+            {
+                "version": 2,
+                "message_id": "a" * 32,
+                "sender_device_id": ALICE_DEVICE_ID,
+                "recipient_device_id": BOB_DEVICE_ID,
+                "created_at": 1,
+                "expires_at": 2,
+                "ciphertext": "not-base64!",
+            }
+        ]
+
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+
+    with pytest.raises(
+        GhostNodeProtocolError,
+        match="valid Base64",
+    ):
+        client.receive(BOB_DEVICE_ID)
+
+
 def test_node_client_rejects_noncanonical_recipient_device_id() -> None:
     client = GhostNodeClient("http://ghostnode.test")
 
     with pytest.raises(ValueError, match="invalid length"):
         client.receive("device1:bob")
+
+
+def test_node_client_rejects_invalid_message_id_before_delete() -> None:
+    client = GhostNodeClient("http://ghostnode.test")
+
+    with pytest.raises(ValueError, match="message_id"):
+        client.delete(BOB_DEVICE_ID, "bad-id")
