@@ -3,7 +3,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from ghostlink.entity import GhostEntity
 from ghostlink.relay_request_auth import (
     AUTH_CLOCK_SKEW_SECONDS,
