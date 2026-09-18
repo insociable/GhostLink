@@ -271,6 +271,8 @@ class RatchetRpcService {
         return this.getPendingPreKeyGeneration(request.params);
       case 'stage_prekey_publication':
         return this.stagePreKeyPublication(request.params);
+      case 'commit_prekey_publication':
+        return this.commitPreKeyPublication(request.params);
       case 'establish_session':
         return this.establishSession(request.params);
       case 'encrypt':
@@ -389,6 +391,21 @@ class RatchetRpcService {
     await this.requireParty().stagePreKeyPublication(
       requireIntegerField(document, 'publication_sequence', 1),
       publicPayload
+    );
+    return null;
+  }
+
+  private async commitPreKeyPublication(params: unknown): Promise<null> {
+    const document = requireObject(params, 'commit_prekey_publication params');
+    requireExactFields(
+      document,
+      ['publication_sequence', 'published_at'],
+      'commit_prekey_publication params'
+    );
+
+    await this.requireParty().commitPreKeyPublication(
+      requireIntegerField(document, 'publication_sequence', 1),
+      requireIntegerField(document, 'published_at', 0)
     );
     return null;
   }
