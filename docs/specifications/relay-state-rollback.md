@@ -1,6 +1,6 @@
 # Relay-state rollback coordination
 
-Status: design accepted; implementation pending under issue #86.
+Status: design accepted; coordinator core and persistent-store integration implemented; runtime configuration/readiness wiring remains under issue #86.
 
 ## Scope
 

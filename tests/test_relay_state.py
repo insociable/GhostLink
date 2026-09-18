@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
-from ghostlink.prekey_relay import SQLitePreKeyPublicationStore
+from ghostlink.prekey_relay import (
+    RelayPreKeyGeneration,
+    SQLitePreKeyPublicationStore,
+)
 from ghostlink.relay_request_auth import SQLiteRelayRequestReplayStore
 from ghostlink.relay_state import (
     RelayStateCoordinator,
     RelayStateDivergenceError,
+    RelayStateError,
     RelayStateGapError,
     RelayStateLegacyError,
     RelayStateRollbackError,
@@ -18,7 +23,7 @@ from ghostlink.relay_state import (
     SQLiteRelayMonotonicWitness,
     canonical_relay_payload,
 )
-from ghostlink.relay_v3 import SQLiteV3MessageStore
+from ghostlink.relay_v3 import SQLiteV3MessageStore, V3MessageEnvelope
 
 _STATE_ID = "00112233445566778899aabbccddeeff"
 _COORDINATION_KEY = bytes(range(32))
@@ -339,3 +344,117 @@ def test_relay_state_recovers_one_step_after_witness_commit_crash(
     assert checkpoint.revision == 2
     assert delegate.get().revision == 2
     assert recovered.is_healthy()
+
+
+def test_shared_relay_coordinator_advances_across_all_persistent_stores(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "relay.sqlite3"
+    _initialize_protected_schema(path)
+    witness = _witness(tmp_path)
+    coordinator = _coordinator(tmp_path, path, witness=witness)
+    coordinator.migrate_legacy()
+
+    message_store = SQLiteV3MessageStore(path, coordinator=coordinator)
+    prekey_store = SQLitePreKeyPublicationStore(path, coordinator=coordinator)
+    replay_store = SQLiteRelayRequestReplayStore(path, coordinator=coordinator)
+
+    now = int(time.time())
+    envelope = V3MessageEnvelope(
+        version=3,
+        message_id="a" * 32,
+        sender_device_id="device1:" + ("a" * 52),
+        recipient_device_id="device1:" + ("b" * 52),
+        created_at=now,
+        expires_at=now + 3_600,
+        ciphertext_type=3,
+        ciphertext="Y2lwaGVydGV4dA==",
+    )
+    message_store.add(envelope)
+    assert witness.get().revision == 2
+
+    message_store.add(envelope)
+    assert witness.get().revision == 2
+
+    target_device_id = "device1:" + ("c" * 52)
+    requester_device_id = "device1:" + ("d" * 52)
+    prekey_store.publish(
+        RelayPreKeyGeneration(
+            device_id=target_device_id,
+            publication_sequence=1,
+            expires_at=now + 3_600,
+            publication_payload='{"generation":1}',
+            one_time_bindings=("one",),
+            fallback_binding="fallback",
+        )
+    )
+    assert witness.get().revision == 3
+
+    fetched = prekey_store.fetch(
+        target_device_id,
+        requester_device_id,
+        "1" * 32,
+        now=now,
+    )
+    assert fetched.bundle_kind == "one_time"
+    assert witness.get().revision == 4
+
+    assert replay_store.accept(
+        requester_device_id,
+        "2" * 32,
+        expires_at=now + 300,
+        now=now,
+    )
+    assert witness.get().revision == 5
+
+    assert not replay_store.accept(
+        requester_device_id,
+        "2" * 32,
+        expires_at=now + 300,
+        now=now,
+    )
+    assert witness.get().revision == 5
+
+    assert message_store.delete(envelope.recipient_device_id, envelope.message_id)
+    assert witness.get().revision == 6
+    assert message_store.is_healthy()
+    assert prekey_store.is_healthy()
+    assert replay_store.is_healthy()
+
+
+def test_shared_relay_coordinator_latches_all_stores_unsafe_after_witness_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "relay.sqlite3"
+    _initialize_protected_schema(path)
+    delegate = _witness(tmp_path)
+    failing = _FailingWitness(delegate)
+    coordinator = _coordinator(tmp_path, path, witness=failing)
+    coordinator.migrate_legacy()
+
+    message_store = SQLiteV3MessageStore(path, coordinator=coordinator)
+    prekey_store = SQLitePreKeyPublicationStore(path, coordinator=coordinator)
+    replay_store = SQLiteRelayRequestReplayStore(path, coordinator=coordinator)
+
+    failing.fail_compare = True
+    now = int(time.time())
+    envelope = V3MessageEnvelope(
+        version=3,
+        message_id="b" * 32,
+        sender_device_id="device1:" + ("a" * 52),
+        recipient_device_id="device1:" + ("b" * 52),
+        created_at=now,
+        expires_at=now + 3_600,
+        ciphertext_type=3,
+        ciphertext="Y2lwaGVydGV4dA==",
+    )
+
+    with pytest.raises(RelayWitnessError, match="simulated relay witness failure"):
+        message_store.add(envelope)
+
+    assert not message_store.is_healthy()
+    assert not prekey_store.is_healthy()
+    assert not replay_store.is_healthy()
+
+    with pytest.raises(RelayStateError, match="unsafe or not reconciled"):
+        prekey_store.status("device1:" + ("c" * 52))

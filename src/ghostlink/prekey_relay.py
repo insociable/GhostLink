@@ -40,6 +40,7 @@ from ghostlink.ratchet_publication import (
     import_ratchet_prekey_publication,
 )
 from ghostlink.relay_auth import require_relay_access
+from ghostlink.relay_state import RelayStateCoordinator
 
 _PUBLICATION_REQUEST_VERSION = 1
 _DEVICE_SIGNING_PUBLIC_KEY_BYTES = 32
@@ -349,8 +350,14 @@ class SQLitePreKeyPublicationStore:
     path: Path
     fetch_window_seconds: int = 60
     fetch_max_new_allocations: int = 10
+    coordinator: RelayStateCoordinator | None = None
 
     def __post_init__(self) -> None:
+        if (
+            self.coordinator is not None
+            and self.coordinator.path.resolve() != self.path.resolve()
+        ):
+            raise ValueError("relay state coordinator path does not match pre-key store")
         if self.path.exists() and self.path.is_dir():
             raise ValueError("node.database_path must point to a file")
 
@@ -459,94 +466,104 @@ class SQLitePreKeyPublicationStore:
             and row[3] == generation.fallback_binding
         )
 
-    def publish(self, generation: RelayPreKeyGeneration) -> RelayPreKeyGeneration:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """
-                SELECT
-                    publication_sequence,
-                    expires_at,
-                    publication_payload,
-                    fallback_binding
-                FROM prekey_publications
-                WHERE device_id = ?
-                """,
-                (generation.device_id,),
-            ).fetchone()
+    def _publish(
+        self,
+        connection: sqlite3.Connection,
+        generation: RelayPreKeyGeneration,
+    ) -> RelayPreKeyGeneration:
+        row = connection.execute(
+            """
+            SELECT
+                publication_sequence,
+                expires_at,
+                publication_payload,
+                fallback_binding
+            FROM prekey_publications
+            WHERE device_id = ?
+            """,
+            (generation.device_id,),
+        ).fetchone()
 
-            if row is None:
-                if generation.publication_sequence != 1:
-                    raise PreKeyPublicationConflictError(
-                        "initial publication_sequence must equal 1"
-                    )
-            else:
-                existing_sequence = int(row[0])
-                if generation.publication_sequence < existing_sequence:
-                    raise PreKeyPublicationConflictError(
-                        "publication_sequence is older than the active generation"
-                    )
-                if generation.publication_sequence == existing_sequence:
-                    if self._same_generation(row, generation):
-                        return generation
-                    raise PreKeyPublicationConflictError(
-                        "publication_sequence already exists with different payload"
-                    )
-                if generation.publication_sequence != existing_sequence + 1:
-                    raise PreKeyPublicationConflictError(
-                        "publication_sequence must advance by exactly one"
-                    )
+        if row is None:
+            if generation.publication_sequence != 1:
+                raise PreKeyPublicationConflictError(
+                    "initial publication_sequence must equal 1"
+                )
+        else:
+            existing_sequence = int(row[0])
+            if generation.publication_sequence < existing_sequence:
+                raise PreKeyPublicationConflictError(
+                    "publication_sequence is older than the active generation"
+                )
+            if generation.publication_sequence == existing_sequence:
+                if self._same_generation(row, generation):
+                    return generation
+                raise PreKeyPublicationConflictError(
+                    "publication_sequence already exists with different payload"
+                )
+            if generation.publication_sequence != existing_sequence + 1:
+                raise PreKeyPublicationConflictError(
+                    "publication_sequence must advance by exactly one"
+                )
 
-            connection.execute(
-                "DELETE FROM prekey_one_time WHERE device_id = ?",
-                (generation.device_id,),
-            )
-            connection.execute(
-                """
-                INSERT INTO prekey_publications (
-                    device_id,
-                    publication_sequence,
-                    expires_at,
-                    publication_payload,
-                    fallback_binding
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(device_id) DO UPDATE SET
-                    publication_sequence = excluded.publication_sequence,
-                    expires_at = excluded.expires_at,
-                    publication_payload = excluded.publication_payload,
-                    fallback_binding = excluded.fallback_binding
-                """,
+        connection.execute(
+            "DELETE FROM prekey_one_time WHERE device_id = ?",
+            (generation.device_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO prekey_publications (
+                device_id,
+                publication_sequence,
+                expires_at,
+                publication_payload,
+                fallback_binding
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(device_id) DO UPDATE SET
+                publication_sequence = excluded.publication_sequence,
+                expires_at = excluded.expires_at,
+                publication_payload = excluded.publication_payload,
+                fallback_binding = excluded.fallback_binding
+            """,
+            (
+                generation.device_id,
+                generation.publication_sequence,
+                generation.expires_at,
+                generation.publication_payload,
+                generation.fallback_binding,
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO prekey_one_time (
+                device_id,
+                publication_sequence,
+                position,
+                binding
+            ) VALUES (?, ?, ?, ?)
+            """,
+            [
                 (
                     generation.device_id,
                     generation.publication_sequence,
-                    generation.expires_at,
-                    generation.publication_payload,
-                    generation.fallback_binding,
-                ),
-            )
-            connection.executemany(
-                """
-                INSERT INTO prekey_one_time (
-                    device_id,
-                    publication_sequence,
-                    position,
-                    binding
-                ) VALUES (?, ?, ?, ?)
-                """,
-                [
-                    (
-                        generation.device_id,
-                        generation.publication_sequence,
-                        index,
-                        binding,
-                    )
-                    for index, binding in enumerate(
-                        generation.one_time_bindings
-                    )
-                ],
-            )
-
+                    index,
+                    binding,
+                )
+                for index, binding in enumerate(
+                    generation.one_time_bindings
+                )
+            ],
+        )
         return generation
+
+    def publish(self, generation: RelayPreKeyGeneration) -> RelayPreKeyGeneration:
+        if self.coordinator is not None:
+            return self.coordinator.mutate(
+                lambda connection: self._publish(connection, generation)
+            )
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            return self._publish(connection, generation)
 
     @staticmethod
     def _allocation_from_row(
@@ -654,6 +671,168 @@ class SQLitePreKeyPublicationStore:
         retry_after = earliest + self.fetch_window_seconds - now
         raise PreKeyFetchRateLimitError(retry_after)
 
+    def _fetch(
+        self,
+        connection: sqlite3.Connection,
+        target_device_id: str,
+        requester_device_id: str,
+        request_id: str,
+        *,
+        now: int,
+    ) -> PreKeyFetchResponse:
+        connection.execute(
+            """
+            DELETE FROM prekey_allocations
+            WHERE expires_at < ?
+            """,
+            (now - _FETCH_REQUEST_CLOCK_SKEW_SECONDS,),
+        )
+
+        prior_request = self._existing_request_allocation(
+            connection,
+            target_device_id,
+            requester_device_id,
+            request_id,
+        )
+        if prior_request is not None:
+            if prior_request.expires_at <= now:
+                raise PreKeyFetchExpiredError(
+                    "previous pre-key allocation is expired"
+                )
+            return prior_request
+
+        generation = connection.execute(
+            """
+            SELECT
+                publication_sequence,
+                expires_at,
+                fallback_binding
+            FROM prekey_publications
+            WHERE device_id = ?
+            """,
+            (target_device_id,),
+        ).fetchone()
+        if generation is None:
+            raise PreKeyFetchNotFoundError(
+                "target has no active pre-key generation"
+            )
+
+        publication_sequence = int(generation[0])
+        expires_at = int(generation[1])
+        fallback_binding = str(generation[2])
+        if expires_at <= now:
+            raise PreKeyFetchExpiredError(
+                "target pre-key generation is expired"
+            )
+
+        prior = self._existing_generation_allocation(
+            connection,
+            target_device_id,
+            publication_sequence,
+            requester_device_id,
+        )
+        if prior is not None:
+            return prior
+
+        one_time = connection.execute(
+            """
+            SELECT position, binding
+            FROM prekey_one_time
+            WHERE device_id = ? AND publication_sequence = ?
+            ORDER BY position
+            LIMIT 1
+            """,
+            (target_device_id, publication_sequence),
+        ).fetchone()
+
+        bundle_kind: Literal["one_time", "fallback"]
+        if one_time is None:
+            return PreKeyFetchResponse(
+                version=1,
+                target_device_id=target_device_id,
+                requester_device_id=requester_device_id,
+                publication_sequence=publication_sequence,
+                expires_at=expires_at,
+                bundle_kind="fallback",
+                binding=fallback_binding,
+                remaining_one_time_count=0,
+            )
+
+        self._check_rate_limit(connection, target_device_id, now)
+        position = int(one_time[0])
+        binding = str(one_time[1])
+        deleted = connection.execute(
+            """
+            DELETE FROM prekey_one_time
+            WHERE device_id = ?
+              AND publication_sequence = ?
+              AND position = ?
+            """,
+            (target_device_id, publication_sequence, position),
+        )
+        if deleted.rowcount != 1:
+            raise RuntimeError(
+                "pre-key one-time allocation lost atomic ownership"
+            )
+        bundle_kind = "one_time"
+        connection.execute(
+            """
+            INSERT INTO prekey_fetch_events (
+                target_device_id,
+                allocated_at
+            ) VALUES (?, ?)
+            """,
+            (target_device_id, now),
+        )
+
+        remaining_row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM prekey_one_time
+            WHERE device_id = ? AND publication_sequence = ?
+            """,
+            (target_device_id, publication_sequence),
+        ).fetchone()
+        remaining_count = 0 if remaining_row is None else int(remaining_row[0])
+
+        allocation = PreKeyFetchResponse(
+            version=1,
+            target_device_id=target_device_id,
+            requester_device_id=requester_device_id,
+            publication_sequence=publication_sequence,
+            expires_at=expires_at,
+            bundle_kind=bundle_kind,
+            binding=binding,
+            remaining_one_time_count=remaining_count,
+        )
+        connection.execute(
+            """
+            INSERT INTO prekey_allocations (
+                target_device_id,
+                publication_sequence,
+                requester_device_id,
+                request_id,
+                expires_at,
+                bundle_kind,
+                binding,
+                remaining_one_time_count,
+                allocated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                target_device_id,
+                publication_sequence,
+                requester_device_id,
+                request_id,
+                expires_at,
+                bundle_kind,
+                binding,
+                remaining_count,
+                now,
+            ),
+        )
+        return allocation
+
     def fetch(
         self,
         target_device_id: str,
@@ -662,162 +841,29 @@ class SQLitePreKeyPublicationStore:
         *,
         now: int,
     ) -> PreKeyFetchResponse:
+        if self.coordinator is not None:
+            return self.coordinator.mutate(
+                lambda connection: self._fetch(
+                    connection,
+                    target_device_id,
+                    requester_device_id,
+                    request_id,
+                    now=now,
+                )
+            )
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                """
-                DELETE FROM prekey_allocations
-                WHERE expires_at < ?
-                """,
-                (now - _FETCH_REQUEST_CLOCK_SKEW_SECONDS,),
-            )
-
-            prior_request = self._existing_request_allocation(
+            return self._fetch(
                 connection,
                 target_device_id,
                 requester_device_id,
                 request_id,
+                now=now,
             )
-            if prior_request is not None:
-                if prior_request.expires_at <= now:
-                    raise PreKeyFetchExpiredError(
-                        "previous pre-key allocation is expired"
-                    )
-                return prior_request
-
-            generation = connection.execute(
-                """
-                SELECT
-                    publication_sequence,
-                    expires_at,
-                    fallback_binding
-                FROM prekey_publications
-                WHERE device_id = ?
-                """,
-                (target_device_id,),
-            ).fetchone()
-            if generation is None:
-                raise PreKeyFetchNotFoundError(
-                    "target has no active pre-key generation"
-                )
-
-            publication_sequence = int(generation[0])
-            expires_at = int(generation[1])
-            fallback_binding = str(generation[2])
-            if expires_at <= now:
-                raise PreKeyFetchExpiredError(
-                    "target pre-key generation is expired"
-                )
-
-            prior = self._existing_generation_allocation(
-                connection,
-                target_device_id,
-                publication_sequence,
-                requester_device_id,
-            )
-            if prior is not None:
-                return prior
-
-            one_time = connection.execute(
-                """
-                SELECT position, binding
-                FROM prekey_one_time
-                WHERE device_id = ? AND publication_sequence = ?
-                ORDER BY position
-                LIMIT 1
-                """,
-                (target_device_id, publication_sequence),
-            ).fetchone()
-
-            bundle_kind: Literal["one_time", "fallback"]
-            if one_time is None:
-                return PreKeyFetchResponse(
-                    version=1,
-                    target_device_id=target_device_id,
-                    requester_device_id=requester_device_id,
-                    publication_sequence=publication_sequence,
-                    expires_at=expires_at,
-                    bundle_kind="fallback",
-                    binding=fallback_binding,
-                    remaining_one_time_count=0,
-                )
-
-            self._check_rate_limit(connection, target_device_id, now)
-            position = int(one_time[0])
-            binding = str(one_time[1])
-            deleted = connection.execute(
-                """
-                DELETE FROM prekey_one_time
-                WHERE device_id = ?
-                  AND publication_sequence = ?
-                  AND position = ?
-                """,
-                (target_device_id, publication_sequence, position),
-            )
-            if deleted.rowcount != 1:
-                raise RuntimeError(
-                    "pre-key one-time allocation lost atomic ownership"
-                )
-            bundle_kind = "one_time"
-            connection.execute(
-                """
-                INSERT INTO prekey_fetch_events (
-                    target_device_id,
-                    allocated_at
-                ) VALUES (?, ?)
-                """,
-                (target_device_id, now),
-            )
-
-            remaining_row = connection.execute(
-                """
-                SELECT COUNT(*)
-                FROM prekey_one_time
-                WHERE device_id = ? AND publication_sequence = ?
-                """,
-                (target_device_id, publication_sequence),
-            ).fetchone()
-            remaining_count = 0 if remaining_row is None else int(remaining_row[0])
-
-            allocation = PreKeyFetchResponse(
-                version=1,
-                target_device_id=target_device_id,
-                requester_device_id=requester_device_id,
-                publication_sequence=publication_sequence,
-                expires_at=expires_at,
-                bundle_kind=bundle_kind,
-                binding=binding,
-                remaining_one_time_count=remaining_count,
-            )
-            connection.execute(
-                """
-                INSERT INTO prekey_allocations (
-                    target_device_id,
-                    publication_sequence,
-                    requester_device_id,
-                    request_id,
-                    expires_at,
-                    bundle_kind,
-                    binding,
-                    remaining_one_time_count,
-                    allocated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    target_device_id,
-                    publication_sequence,
-                    requester_device_id,
-                    request_id,
-                    expires_at,
-                    bundle_kind,
-                    binding,
-                    remaining_count,
-                    now,
-                ),
-            )
-            return allocation
 
     def status(self, device_id: str) -> PreKeyStatusResponse:
+        if self.coordinator is not None:
+            self.coordinator.require_healthy()
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -854,6 +900,8 @@ class SQLitePreKeyPublicationStore:
         )
 
     def is_healthy(self) -> bool:
+        if self.coordinator is not None and not self.coordinator.is_healthy():
+            return False
         try:
             with self._connect() as connection:
                 connection.execute("SELECT 1").fetchone()
