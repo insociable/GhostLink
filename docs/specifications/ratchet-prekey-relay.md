@@ -33,6 +33,12 @@ Authenticated fetch/allocation:
 POST /v2/prekeys/{device_id}/fetch
 ```
 
+Owner-authenticated pool status:
+
+```text
+POST /v2/prekeys/{device_id}/status
+```
+
 The request contains:
 
 - request version;
@@ -123,6 +129,27 @@ GhostNode verifies:
 5. requester signature over the target-bound canonical request.
 
 The shared Bearer token remains an additional relay access control when configured. Bearer possession alone is not treated as requester identity.
+
+## Owner pool status
+
+The owning DeviceID can query the active relay generation and remaining one-time count without consuming a binding.
+
+The status request uses a separate domain-separated Ed25519 signature profile from fetch and includes:
+
+- route DeviceID;
+- random 128-bit request ID;
+- issuance timestamp.
+
+GhostNode verifies that the supplied public signing key derives the route DeviceID and that the request is fresh. A status proof therefore cannot be replayed as a fetch proof.
+
+The response contains only:
+
+- DeviceID;
+- active publication sequence;
+- expiration;
+- remaining one-time count.
+
+The remaining count is relay-controlled operational metadata, not authenticated target state. Maintenance cross-checks sequence and expiration against the encrypted local lifecycle before acting on the count.
 
 ## Atomic allocation semantics
 
@@ -248,7 +275,8 @@ If the relay returns a malformed or mismatched receipt, the client fails closed 
 - relay database rollback protection is not implemented;
 - requester authentication and target rate limiting reduce drain but are not Sybil-resistant admission control;
 - a malicious relay can replay a still-valid one-time binding from the same generation and cause availability/session-bootstrap failure; this is not key transparency;
-- replenishment, rotation and GC execution are not implemented;
+- a malicious relay can lie about remaining pool count; depletion-triggered maintenance is therefore cooldown-limited and sequence/expiration mismatches fail closed;
+- delayed-key GC is not implemented;
 - the user-facing message relay/CLI has not yet cut over to ratcheted envelopes.
 
 GhostLink remains pre-alpha and has not undergone an independent cryptographic/protocol audit.
