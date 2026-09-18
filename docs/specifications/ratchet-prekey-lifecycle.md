@@ -1,6 +1,6 @@
 # Ratchet pre-key lifecycle
 
-Status: accepted design; prepare/stage/publish/local-commit/fetch/sender session bootstrap implemented; rotation/GC pending
+Status: accepted design; prepare/stage/publish/local-commit/fetch/sender bootstrap/replenishment/refresh implemented; GC pending
 
 ## Purpose
 
@@ -180,13 +180,18 @@ These are operational defaults, not cryptographic protocol constants.
 
 When GhostLink learns that the active relay pool is at or below the threshold, it prepares a complete replacement generation with a fresh pool of 100 one-time bundles.
 
-The replacement generation:
+The operational maintenance path now uses an owner-authenticated relay status request to read the remaining one-time count. The local encrypted lifecycle remains authoritative for the active publication sequence and expiration. A relay sequence or expiration that differs from local active state fails closed and does not trigger rotation.
 
-- increments the publication sequence;
-- generates fresh one-time EC and one-time Kyber key pairs;
-- may reuse the current signed EC and last-resort Kyber keys only if neither is due for rotation;
-- receives fresh binding IDs and timestamps;
-- is persisted locally before publication.
+For depletion-only maintenance the default cooldown is one hour after the active publication timestamp. This limits churn if a malicious relay lies about a low remaining count. Expiration-driven refresh is never blocked by this cooldown.
+
+The current implementation creates a fully fresh generation for every replenishment or refresh:
+
+- publication sequence increments by exactly one;
+- signed EC pre-key is fresh;
+- last-resort Kyber/ML-KEM pre-key is fresh;
+- all one-time EC and Kyber pairs are fresh;
+- binding IDs and timestamps are fresh;
+- prepare/stage/publish/commit keeps the existing crash-safe workflow.
 
 GhostLink does not top up by mixing newly signed entries into an older publication sequence.
 
@@ -219,11 +224,9 @@ Production relay bindings keep the existing maximum lifetime of seven days.
 
 The production publication profile uses the full seven-day lifetime so an offline recipient does not require daily refresh merely to remain contactable.
 
-A connected client should refresh the generation when fewer than 48 hours remain before binding expiration, even when the pool is still above the replenishment threshold.
+A connected client refreshes the generation when fewer than 48 hours remain before binding expiration, even when the pool is still above the replenishment threshold.
 
-Refresh creates a new publication sequence and fresh one-time pool.
-
-If the signed EC or last-resort Kyber key is at least seven days old, refresh also rotates that pair.
+Refresh creates a new publication sequence and, in the current conservative implementation, rotates the signed EC and last-resort Kyber pair together with a fresh one-time pool. This rotates those keys at least as often as the seven-day maximum rather than attempting conditional reuse in the first maintenance implementation.
 
 Expired bindings are rejected. There is no fallback to static GhostLink encryption.
 
@@ -450,9 +453,19 @@ Sender-side fetch/session orchestration is now implemented:
 - highest-seen remote publication continuity and libsignal session creation commit atomically in the encrypted vault;
 - failures never downgrade to static protocol-v2 encryption.
 
+Automatic maintenance is now implemented:
+
+- owner-authenticated relay pool status uses an operation-specific DeviceID signature domain separate from fetch;
+- local sequence/expiration remains authoritative;
+- the default target is 100 and replenish threshold is 30;
+- depletion-only replacement is limited by a one-hour default cooldown;
+- a generation with less than 48 hours remaining is refreshed regardless of cooldown;
+- existing pending publication is resumed before relay status is consulted;
+- each replacement uses the existing durable publication workflow;
+- the bounded retired history fails closed at 32 entries rather than accepting a generation that cannot be committed locally.
+
 The following are still pending:
 
-- replenishment and rotation decisions;
 - delayed-key garbage collection;
 - ratcheted message-envelope and CLI cutover.
 
