@@ -100,7 +100,9 @@ Replacing a `verified` record:
 - different GhostID: preserve the pinned record, stage the replacement as
   `candidate_bundle`, and enter `changed`.
 
-While `changed`, trusted messaging MUST fail closed.
+Only `verified` records are eligible for trusted-contact messaging. `imported` records
+remain cryptographically valid but human-unverified, and `changed` records remain
+quarantined. Both states MUST fail closed on the trusted-contact path.
 
 The user may then:
 
@@ -119,9 +121,24 @@ The trust store is a separate versioned authenticated-encrypted file.
 Its key is an independently random 32-byte `contact_store_key` stored only inside the
 encrypted local profile. The ratchet-vault master key MUST NOT be reused for this purpose.
 
-The store uses the existing SecretBox primitive and strict schema validation. Writes use
-a temporary file plus atomic replace so a crash cannot leave a partially written accepted
-store.
+The store uses the existing SecretBox primitive and strict schema validation. Version 1
+has an outer document containing only `version`, `cipher`, and Base64 ciphertext. The
+authenticated plaintext contains the store version plus a bounded list of local records.
+
+On load, every stored Contact Bundle is parsed again through the normal cryptographic
+Contact Bundle importer and every trust-state invariant is rechecked. A forged local
+`verified` state whose pinned GhostID does not match the authenticated current bundle is
+rejected.
+
+Record IDs are locally generated 128-bit random lowercase hexadecimal values. Labels are
+local-only, bounded text and are encrypted with the rest of the store.
+
+Writes use a private temporary file plus atomic replace. On POSIX, the accepted store file
+is mode `0600`. A crash therefore cannot leave a partially written file accepted as the
+current store.
+
+Rollback of the complete encrypted profile/contact-store pair is not prevented by this
+format. Client-state anti-rollback remains separate hardening work.
 
 A future migration may move the encrypted representation to another local database
 without changing the trust-state semantics.
