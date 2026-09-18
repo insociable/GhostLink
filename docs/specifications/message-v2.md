@@ -53,7 +53,7 @@ Protocol v2 improves lifecycle authentication and replay-defense foundations. It
 
 ## Runtime status
 
-Protocol v2 is retained only as historical/local codec code and as the source of a few shared lifecycle constants pending later cleanup.
+Protocol v2 is retained only as historical/local codec code. Shared lifecycle policy constants now live in a protocol-neutral module, so the current v3 runtime no longer imports the v2 codec.
 
 The reference GhostNode no longer exposes `/v2/messages...`, `GhostNodeClient` no longer provides static-v2 send/receive/delete methods, and the CLI no longer exposes `node-smoke`.
 

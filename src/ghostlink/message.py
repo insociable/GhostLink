@@ -11,12 +11,14 @@ from nacl.exceptions import CryptoError
 from nacl.public import Box
 
 from ghostlink.device import EnrolledGhostDevice, PublicGhostDevice
+from ghostlink.message_lifecycle import (
+    MESSAGE_CLOCK_SKEW_SECONDS,
+    MESSAGE_DEFAULT_TTL_SECONDS,
+    MESSAGE_ID_BYTES,
+    MESSAGE_MAX_LIFETIME_SECONDS,
+)
 
 MESSAGE_VERSION = 2
-MESSAGE_ID_BYTES = 16
-MESSAGE_DEFAULT_TTL_SECONDS = 24 * 60 * 60
-MESSAGE_MAX_LIFETIME_SECONDS = 7 * 24 * 60 * 60
-MESSAGE_CLOCK_SKEW_SECONDS = 5 * 60
 _MAX_UINT64 = (1 << 64) - 1
 
 
