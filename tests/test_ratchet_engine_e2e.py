@@ -22,7 +22,6 @@ from ghostlink.ratchet_engine import RatchetEngineClient, RatchetEngineError
 from ghostlink.ratchet_fetch import establish_session_from_relay
 from ghostlink.ratchet_maintenance import maintain_prekeys
 from ghostlink.ratchet_message import (
-    RatchetMessageError,
     decrypt_ratchet_message,
     encrypt_ratchet_message,
 )
