@@ -2,8 +2,8 @@ const LIFECYCLE_STATE_VERSION = 1;
 const MAX_PUBLICATION_SEQUENCE = Number.MAX_SAFE_INTEGER;
 const MAX_PREKEY_ID = 0x7fff_ffff;
 const MAX_ONE_TIME_BUNDLES = 256;
-const MAX_RETIRED_GENERATIONS = 1024;
-const MAX_PUBLIC_PAYLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_RETIRED_GENERATIONS = 32;
+const MAX_PUBLIC_PAYLOAD_BYTES = 1024 * 1024;
 
 export interface PreKeyGenerationState {
   readonly sequence: number;
@@ -186,6 +186,26 @@ function parseGeneration(
     throw new Error(`${field}.retiredAt precedes publishedAt`);
   }
 
+  const oneTimeKeyIds = parseOneTimeKeyIds(
+    document.oneTimeKeyIds,
+    `${field}.oneTimeKeyIds`
+  );
+  const lastResortKyberPreKeyId = requireInteger(
+    document.lastResortKyberPreKeyId,
+    `${field}.lastResortKyberPreKeyId`,
+    1,
+    MAX_PREKEY_ID
+  );
+  if (
+    oneTimeKeyIds.some(
+      ([, kyberPreKeyId]) => kyberPreKeyId === lastResortKyberPreKeyId
+    )
+  ) {
+    throw new Error(
+      `${field} last-resort Kyber ID must not be a one-time Kyber ID`
+    );
+  }
+
   return {
     sequence,
     createdAt,
@@ -196,16 +216,8 @@ function parseGeneration(
       1,
       MAX_PREKEY_ID
     ),
-    lastResortKyberPreKeyId: requireInteger(
-      document.lastResortKyberPreKeyId,
-      `${field}.lastResortKyberPreKeyId`,
-      1,
-      MAX_PREKEY_ID
-    ),
-    oneTimeKeyIds: parseOneTimeKeyIds(
-      document.oneTimeKeyIds,
-      `${field}.oneTimeKeyIds`
-    ),
+    lastResortKyberPreKeyId,
+    oneTimeKeyIds,
     publicPayload: requirePublicPayload(
       document.publicPayload,
       `${field}.publicPayload`
