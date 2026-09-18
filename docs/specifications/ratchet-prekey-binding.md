@@ -126,7 +126,7 @@ The production pre-key lifecycle defined in `ratchet-prekey-lifecycle.md` uses v
 
 Version 2 adds signed lifecycle semantics including:
 
-- a positive 64-bit `publication_sequence` shared by one atomic publication generation;
+- a positive JSON-safe `publication_sequence` (`1..2^53-1`) shared by one atomic publication generation;
 - a signed `bundle_kind` distinguishing `one_time` from `fallback`.
 
 For a `one_time` binding, the EC one-time pre-key must be present and the Kyber key is treated as one-time lifecycle material.
