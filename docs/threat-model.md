@@ -33,8 +33,8 @@ The initial cryptographic module does not yet provide:
 - forward secrecy;
 - post-compromise security;
 - replay protection;
-- contact-key verification workflow;
-- encrypted private-key storage;
+- a complete persisted contact-trust / QR verification workflow;
+- per-device relay authentication;
 - metadata protection.
 
 No production-security claim may be made while these gaps remain.
