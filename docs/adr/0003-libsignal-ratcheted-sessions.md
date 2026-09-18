@@ -158,6 +158,10 @@ One-time pre-keys are consumed according to libsignal semantics. Retired private
 
 The publication sequence improves rollback detection after a sender has observed a newer generation, but it is not a global transparency mechanism.
 
+The sender persists the highest publication sequence observed for each verified remote DeviceID inside its encrypted ratchet vault. Session establishment supplies the already verified binding sequence to the local engine, which checks and updates this continuity state in the same transaction as libsignal session creation. A lower sequence fails before session mutation; an equal sequence remains valid because multiple one-time bindings share one generation sequence.
+
+Restoring an older valid copy of the entire ratchet vault can still roll this continuity state back. Solving whole-vault rollback requires an external monotonic state or trusted hardware and is not claimed here.
+
 ## Existing protocol-v2 envelope
 
 The current GhostLink protocol-v2 static-box encryption path will remain operational until the libsignal migration is proven end-to-end.
