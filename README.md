@@ -112,8 +112,6 @@ poetry run ghostlink contact-export \
   --output alice.contact
 ```
 
-
-
 Export the same public contact data as a standard SVG QR code:
 
 ```bash
@@ -134,6 +132,10 @@ poetry run ghostlink contact-import-qr \
 
 After comparing the complete Fingerprint v2 through an authenticated out-of-band channel,
 record the explicit human verification with `contact-trust`.
+
+If a later scan for that saved contact carries a different GhostID, use
+`contact-update-qr`; GhostLink moves the record to `changed`, keeps the previous
+identity pinned and blocks trusted messaging until the candidate is verified or rejected.
 
 Start a local development GhostNode:
 
