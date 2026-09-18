@@ -208,9 +208,12 @@ An unstaged pending generation, wrong sequence, invalid timestamp or exhausted r
 Parameters:
 
 - verified remote DeviceID;
+- verified remote publication sequence;
 - public libsignal pre-key material.
 
 The Python `RatchetEngineClient` does not expose an unsafe public-material shortcut: its high-level method first verifies the signed GhostLink ratchet binding against an existing `VerifiedContact`, then passes only the verified material to the engine.
+
+The engine persists the highest publication sequence observed for each remote DeviceID inside the encrypted ratchet vault. Sequence observation and libsignal session establishment occur in one durable transaction: a lower sequence fails closed before session state changes, the same sequence is idempotent, and a higher sequence advances continuity only if session establishment succeeds.
 
 The engine applies libsignal identity trust checks as a second layer.
 
@@ -291,7 +294,8 @@ The engine now implements:
 - recovery of pending public material after restart;
 - Python DeviceID signing of binding-v2 publication members;
 - exact signed publication staging before network use;
-- atomic, idempotent publication acknowledgement commit from pending to active/retired lifecycle state.
+- atomic, idempotent publication acknowledgement commit from pending to active/retired lifecycle state;
+- encrypted per-DeviceID highest-seen remote publication sequence persistence before session establishment.
 
 The detailed formats and lifecycle are specified in:
 
@@ -303,11 +307,9 @@ The detailed formats and lifecycle are specified in:
 Before relay cutover GhostLink still needs:
 
 - atomic one-time pop and anti-drain controls;
-- application HTTP publication orchestration and receipt validation;
 - replenishment threshold execution;
 - seven-day rotation execution;
 - 15-day retired-key garbage collection;
-- sender-side highest-seen publication sequence persistence;
 - relay anti-drain/rate limiting.
 
 ## Error handling
