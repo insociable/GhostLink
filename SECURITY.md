@@ -17,7 +17,11 @@ GhostLink will not:
 - invent cryptographic primitives;
 - silently downgrade algorithms;
 - store private identity keys on the relay;
-- claim production security without an independent audit.
+- claim production security without an independent audit;
+- implement a custom Double Ratchet or post-quantum ratchet when a maintained reviewed implementation is available;
+- silently fall back from a failed ratcheted session to static encryption.
+
+The ratchet engine pins `@signalapp/libsignal-client` exactly. Cryptographic dependency upgrades require a dedicated review PR and test run.
 
 ## Supported versions
 

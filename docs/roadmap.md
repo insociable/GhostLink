@@ -51,8 +51,12 @@ This roadmap distinguishes implemented building blocks from security work that i
 
 ## M5 — Security hardening
 
-- [ ] ratcheting session protocol;
-- [ ] forward secrecy;
+- [x] select maintained ratcheting implementation (official libsignal);
+- [x] PQXDH + ratchet-engine bootstrap integration tests;
+- [x] simulated forward-secrecy / post-compromise recovery behavior at engine level;
+- [ ] encrypted persistent libsignal session/pre-key stores;
+- [ ] GhostID/DeviceID binding to libsignal identities;
+- [ ] ratcheted relay envelope and CLI cutover;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;
 - [ ] reproducible releases;

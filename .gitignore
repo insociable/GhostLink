@@ -21,3 +21,7 @@ build/
 ghostlink.toml
 data/
 backups/
+
+# Node/TypeScript generated state
+node_modules/
+ratchet-engine/dist/

@@ -34,6 +34,30 @@ jobs:
       - name: Tests
         run: poetry run pytest
 
+  ratchet-engine:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ratchet-engine/package-lock.json
+
+      - name: Install pinned ratchet dependencies
+        working-directory: ratchet-engine
+        run: npm ci
+
+      - name: Audit ratchet dependencies
+        working-directory: ratchet-engine
+        run: npm audit --audit-level=high
+
+      - name: Build and test ratchet engine
+        working-directory: ratchet-engine
+        run: npm test
+
   container:
     runs-on: ubuntu-latest
     env:
