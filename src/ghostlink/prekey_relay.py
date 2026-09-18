@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Protocol
+from typing import Annotated, Literal, Protocol, cast
 
 from fastapi import APIRouter, Header, HTTPException, status
 from nacl.exceptions import BadSignatureError
@@ -275,6 +275,7 @@ class InMemoryPreKeyPublicationStore:
             remaining = self._remaining[
                 (target_device_id, generation.publication_sequence)
             ]
+            bundle_kind: Literal["one_time", "fallback"]
             if remaining:
                 self._check_rate_limit(target_device_id, now)
                 binding = remaining.pop(0)
@@ -506,15 +507,20 @@ class SQLitePreKeyPublicationStore:
     def _allocation_from_row(
         row: tuple[object, ...],
     ) -> PreKeyFetchResponse:
+        if not all(isinstance(row[index], int) for index in (2, 3, 6)):
+            raise RuntimeError("stored pre-key allocation integer fields are invalid")
+        raw_kind = str(row[4])
+        if raw_kind not in {"one_time", "fallback"}:
+            raise RuntimeError("stored pre-key allocation bundle kind is invalid")
         return PreKeyFetchResponse(
             version=1,
             target_device_id=str(row[0]),
             requester_device_id=str(row[1]),
-            publication_sequence=int(row[2]),
-            expires_at=int(row[3]),
-            bundle_kind=str(row[4]),  # type: ignore[arg-type]
+            publication_sequence=cast(int, row[2]),
+            expires_at=cast(int, row[3]),
+            bundle_kind=cast(Literal["one_time", "fallback"], raw_kind),
             binding=str(row[5]),
-            remaining_one_time_count=int(row[6]),
+            remaining_one_time_count=cast(int, row[6]),
         )
 
     def _existing_request_allocation(
@@ -678,6 +684,7 @@ class SQLitePreKeyPublicationStore:
                 (target_device_id, publication_sequence),
             ).fetchone()
 
+            bundle_kind: Literal["one_time", "fallback"]
             if one_time is None:
                 bundle_kind = "fallback"
                 binding = fallback_binding
