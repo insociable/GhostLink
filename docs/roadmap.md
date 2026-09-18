@@ -59,7 +59,8 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] local framed Python ↔ libsignal engine RPC + cross-language restart smoke;
 - [x] randomized collision-checked pre-key identifiers with persistent consumption state;
 - [x] pre-key replenishment, rotation and garbage-collection policy specified;\n- [x] encrypted pre-key lifecycle metadata and atomic pending generation preparation;
-- [ ] publication staging/commit, replenishment/rotation/GC and relay-side pool state;
+- [x] signed publication staging and crash-safe pending recovery;
+- [ ] relay publication/commit, replenishment/rotation/GC and relay-side pool state;
 - [ ] ratcheted relay envelope and CLI cutover;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;
