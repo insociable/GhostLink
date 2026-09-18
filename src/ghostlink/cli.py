@@ -208,7 +208,7 @@ def _command_profile_upgrade(
     _replace_private_file_atomic(path, serialized)
 
     print(f"Profile upgraded atomically: {path}")
-    print("Ratcheted protocol-v3 and encrypted contact-store secrets are available.")
+    print("Ratcheted protocol-v3 and contact-store secrets are available.")
     return 0
 
 
