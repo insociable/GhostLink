@@ -1,9 +1,11 @@
 [node]
 # The container listens on all container interfaces.
-# Docker publishes the port only on the host loopback interface by default.
+# The loopback Compose publishes this on host loopback only.
+# The public Caddy Compose does not publish GhostNode's port at all.
 host = "0.0.0.0"
 port = 8000
-log_level = "info"
+log_level = "warning"
+access_log = false
 database_path = "/data/messages.sqlite3"
 
 # Relay access token is intentionally not stored in TOML.
