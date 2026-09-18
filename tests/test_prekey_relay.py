@@ -1,5 +1,6 @@
 import base64
 import json
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -649,3 +650,48 @@ def test_sqlite_same_requester_concurrency_consumes_only_one_bundle(
         results = list(executor.map(allocate, range(4)))
 
     assert set(results) == {("one", 1)}
+
+
+
+def test_sqlite_fallback_fetches_do_not_create_unbounded_allocations(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "relay.sqlite3"
+    target = GhostEntity.generate().enroll_device()
+    store = SQLitePreKeyPublicationStore(database_path)
+    store.publish(
+        RelayPreKeyGeneration(
+            device_id=target.device_id,
+            publication_sequence=1,
+            expires_at=10_000,
+            publication_payload='{"generation":1}',
+            one_time_bindings=("one",),
+            fallback_binding="fallback",
+        )
+    )
+
+    first_requester = GhostEntity.generate().enroll_device()
+    first = store.fetch(
+        target.device_id,
+        first_requester.device_id,
+        "01" * 16,
+        now=1_000,
+    )
+    assert first.bundle_kind == "one_time"
+
+    for index in range(20):
+        requester = GhostEntity.generate().enroll_device()
+        response = store.fetch(
+            target.device_id,
+            requester.device_id,
+            f"{index + 2:032x}",
+            now=1_001,
+        )
+        assert response.bundle_kind == "fallback"
+
+    with sqlite3.connect(database_path) as connection:
+        allocation_count = connection.execute(
+            "SELECT COUNT(*) FROM prekey_allocations"
+        ).fetchone()
+
+    assert allocation_count == (1,)
