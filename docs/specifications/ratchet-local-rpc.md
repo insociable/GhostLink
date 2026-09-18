@@ -149,6 +149,39 @@ The returned value is public libsignal material only.
 
 The Python layer must bind and sign that material with the certified GhostLink device signing key before publication.
 
+### `prepare_prekey_generation`
+
+Parameters:
+
+- one-time bundle count in `1..256`;
+- issuance timestamp;
+- binding lifetime up to seven days.
+
+The engine creates the complete private generation and commits it atomically to the encrypted vault as `lifecycle.pending`.
+
+The result contains only public libsignal material plus publication sequence/timestamps.
+
+### `get_pending_prekey_generation`
+
+Parameters: empty object.
+
+Returns null when no pending generation exists.
+
+Otherwise the engine reconstructs the pending public bundles from persisted libsignal records and returns the exact staged public payload when one already exists.
+
+This permits recovery after a crash both before and after publication staging.
+
+### `stage_prekey_publication`
+
+Parameters:
+
+- pending publication sequence;
+- canonical signed publication JSON, maximum 1 MiB.
+
+The exact payload is persisted inside the encrypted vault before any network operation.
+
+An exact retry is accepted. A different payload for an already staged pending sequence fails closed.
+
 ### `establish_session`
 
 Parameters:
@@ -227,28 +260,34 @@ Unknown fields fail closed.
 
 ## Pre-key lifecycle implemented in this milestone
 
-Each newly published bundle uses new random IDs for all three pre-key classes.
+The engine now implements:
 
-Old private signed/Kyber pre-key records are currently retained so delayed/in-flight pre-key messages can still be processed.
+- bounded pooled generation preparation;
+- one signed EC pre-key shared by a generation;
+- one-time EC + one-time Kyber pairs;
+- a reusable Kyber last-resort fallback;
+- encrypted lifecycle pending state;
+- recovery of pending public material after restart;
+- Python DeviceID signing of binding-v2 publication members;
+- exact signed publication staging before network use.
 
-One-time EC pre-keys are removed when consumed according to libsignal semantics.
+The detailed formats and lifecycle are specified in:
 
-Kyber usage state is persistently recorded.
+- `ratchet-prekey-lifecycle.md`;
+- `ratchet-prekey-publication.md`.
 
 ## Pre-key lifecycle still pending
 
-Before production cutover, GhostLink still needs an explicit policy for:
+Before relay cutover GhostLink still needs:
 
-- desired one-time pre-key stock;
-- replenishment thresholds;
-- signed-pre-key rotation interval;
-- Kyber pre-key rotation interval;
-- safe retention window for old private pre-key records;
-- garbage collection;
-- relay publication replacement semantics;
-- anti-rollback/latest-bundle transparency.
-
-The current implementation deliberately avoids aggressive deletion until those semantics are fixed.
+- GhostNode atomic publication replacement;
+- atomic one-time pop;
+- pending → active acknowledgement transition;
+- replenishment threshold execution;
+- seven-day rotation execution;
+- 15-day retired-key garbage collection;
+- sender-side highest-seen publication sequence persistence;
+- relay anti-drain/rate limiting.
 
 ## Error handling
 
