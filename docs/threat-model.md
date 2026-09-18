@@ -74,7 +74,11 @@ The current codebase includes:
 - encrypted local profile v2 carrying an independently random ratchet-vault master key;
 - explicit atomic profile-v1 -> profile-v2 migration before ratcheted commands are allowed;
 - user-facing CLI send/inbox bound to protocol v3 with no automatic static-v2 downgrade;
-- durable-session detection before first-contact bootstrap, preventing unnecessary pre-key consumption on later sends.
+- durable-session detection before first-contact bootstrap, preventing unnecessary pre-key consumption on later sends;
+- DeviceID-signed protocol-v3 message-relay requests bound to HTTP method, canonical logical path, canonical-body digest, freshness timestamp and random request ID;
+- sender ownership enforcement for v3 submission and recipient ownership enforcement for v3 mailbox list/delete;
+- persistent SQLite request-ID replay rejection across GhostNode restart, with process-local replay protection in in-memory mode;
+- optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -86,7 +90,7 @@ Current security gaps still include:
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
 - complete device revocation and recovery design;
-- general per-device authentication for message-relay operations;
+- legacy static-v2 message relay remains bearer-only and diagnostic rather than per-device authenticated;
 - production TLS ingress policy and deployment hardening;
 - a complete persisted contact-trust / QR verification workflow;
 - independent cryptographic/protocol review.
@@ -100,6 +104,8 @@ Garbage collection removes retired key material from the current logical vault s
 GhostNode necessarily observes relay metadata including DeviceIDs, timing and ciphertext sizes.
 
 For protocol-v3 messages it additionally observes the libsignal ciphertext framing type. V3 routing/lifecycle fields are duplicated as an authenticated context inside the libsignal ciphertext; modifying those external fields causes context-bound decryption to fail and roll the ratchet transaction back.
+
+Protocol-v3 request authentication additionally exposes the public signing key corresponding to the already-visible DeviceID plus a per-request timestamp and random request ID. The proof authorizes the relay operation; it does not hide routing metadata or provide traffic-analysis resistance. Restoring an older relay database can also restore older request-replay state, so request authentication does not solve relay anti-rollback.
 
 The ratchet pre-key publication endpoint additionally exposes:
 
