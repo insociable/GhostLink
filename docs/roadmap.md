@@ -42,7 +42,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 ## M4 — Desktop/mobile client foundations
 
 - [ ] desktop interface;
-- [x] password-encrypted local profile format;
+- [x] password-encrypted local profile format with encrypted ratchet-vault master key and explicit v1 migration;
 - [ ] OS keychain / hardware-backed secret integration;
 - [ ] contact fingerprint / QR verification UX (full fingerprint display implemented; QR/trust state pending);
 - [ ] local conversation history;
@@ -70,7 +70,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] owner-authenticated pool status with automatic replenishment and expiration refresh;
 - [x] transactional 15-day delayed-key garbage collection with fail-closed lifecycle ownership checks;
 - [x] context-bound ratcheted message-v3 envelope and isolated GhostNode v3 relay transport;
-- [ ] user-facing CLI send/inbox cutover to ratcheted v3;
+- [x] user-facing CLI send/inbox cutover to ratcheted v3 with no static fallback;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;
 - [ ] reproducible releases;
