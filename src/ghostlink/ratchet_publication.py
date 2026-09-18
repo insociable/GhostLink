@@ -278,6 +278,17 @@ def verify_local_ratchet_prekey_publication(
     certificate = device.certificate.certificate
     if device.device_id != certificate.device_id:
         raise RatchetBindingError("enrolled device does not match its certificate")
+    if bytes(device.device.signing_verify_key) != certificate.signing_public_key:
+        raise RatchetBindingError(
+            "device signing key does not match its certificate"
+        )
+    if (
+        bytes(device.device.encryption_public_key)
+        != certificate.encryption_public_key
+    ):
+        raise RatchetBindingError(
+            "device encryption key does not match its certificate"
+        )
 
     for signed in (*publication.one_time, publication.fallback):
         binding = signed.binding
