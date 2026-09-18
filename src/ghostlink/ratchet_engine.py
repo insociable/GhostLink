@@ -116,6 +116,16 @@ class RatchetPreKeyLifecycleStatus:
     retired_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class RatchetPreKeyGarbageCollectionResult:
+    """Non-secret counts from one transactional retired pre-key GC pass."""
+
+    retired_generations_removed: int
+    pre_keys_removed: int
+    signed_pre_keys_removed: int
+    kyber_pre_keys_removed: int
+
+
 def _require_mapping(value: object, context: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise RatchetEngineProtocolError(
@@ -641,6 +651,48 @@ def _lifecycle_status_from_wire(value: object) -> RatchetPreKeyLifecycleStatus:
     )
 
 
+def _garbage_collection_result_from_wire(
+    value: object,
+) -> RatchetPreKeyGarbageCollectionResult:
+    document = _require_mapping(value, "pre-key garbage collection result")
+    _require_exact_fields(
+        document,
+        {
+            "retired_generations_removed",
+            "pre_keys_removed",
+            "signed_pre_keys_removed",
+            "kyber_pre_keys_removed",
+        },
+        "pre-key garbage collection result",
+    )
+    return RatchetPreKeyGarbageCollectionResult(
+        retired_generations_removed=_require_integer(
+            document,
+            "retired_generations_removed",
+            minimum=0,
+            maximum=32,
+        ),
+        pre_keys_removed=_require_integer(
+            document,
+            "pre_keys_removed",
+            minimum=0,
+            maximum=32 * _MAX_ONE_TIME_PREKEYS,
+        ),
+        signed_pre_keys_removed=_require_integer(
+            document,
+            "signed_pre_keys_removed",
+            minimum=0,
+            maximum=32,
+        ),
+        kyber_pre_keys_removed=_require_integer(
+            document,
+            "kyber_pre_keys_removed",
+            minimum=0,
+            maximum=32 * (_MAX_ONE_TIME_PREKEYS + 1),
+        ),
+    )
+
+
 def _binding_matches_material(
     binding: RatchetPreKeyBinding,
     material: RatchetPreKeyMaterial,
@@ -936,6 +988,20 @@ class RatchetEngineClient:
         """Return non-secret local lifecycle metadata for maintenance decisions."""
         return _lifecycle_status_from_wire(
             self._request("get_prekey_lifecycle_status", {})
+        )
+
+    def garbage_collect_prekeys(
+        self,
+        *,
+        now: int | None = None,
+    ) -> RatchetPreKeyGarbageCollectionResult:
+        """Remove retired pre-key material only after the retention window."""
+        current_time = int(time.time()) if now is None else now
+        return _garbage_collection_result_from_wire(
+            self._request(
+                "garbage_collect_prekeys",
+                {"now": current_time},
+            )
         )
 
     def stage_prekey_publication(
