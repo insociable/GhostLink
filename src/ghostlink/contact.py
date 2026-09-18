@@ -220,8 +220,8 @@ def export_contact_qr_payload(
     return _QR_V1_PREFIX + encoded
 
 
-def import_contact_qr_payload(payload: str) -> ValidatedContact:
-    """Decode and cryptographically validate a versioned public QR payload."""
+def decode_contact_qr_payload(payload: str) -> str:
+    """Decode a versioned QR payload into a canonical, cryptographically valid bundle."""
     if not isinstance(payload, str):
         raise ContactBundleError("QR payload must be text")
     if not payload.startswith(_QR_SCHEME_PREFIX):
@@ -264,4 +264,10 @@ def import_contact_qr_payload(payload: str) -> ValidatedContact:
     if canonical != serialized:
         raise ContactBundleError("QR contact bundle must use canonical JSON")
 
-    return import_contact_bundle(serialized)
+    import_contact_bundle(serialized)
+    return serialized
+
+
+def import_contact_qr_payload(payload: str) -> ValidatedContact:
+    """Decode and cryptographically validate a versioned public QR payload."""
+    return import_contact_bundle(decode_contact_qr_payload(payload))
