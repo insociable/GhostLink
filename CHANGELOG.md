@@ -51,7 +51,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - durable ratchet-session lookup before bootstrap;
 - `prekey-sync` plus user-facing `send` / `inbox` cutover to protocol v3 across persistent ratchet-engine restarts;
 - DeviceID-signed protocol-v3 message-relay requests bound to method, canonical path, canonical-body digest, timestamp and random request ID;
-- persistent SQLite protocol-v3 request-replay state that survives GhostNode restart.
+- persistent SQLite protocol-v3 request-replay state that survives GhostNode restart;
+- Oracle public HTTPS reference stack with Caddy, TCP/443-only exposure, internal GhostNode networking and automatic TLS certificate lifecycle.
 
 ### Security
 
@@ -72,7 +73,9 @@ The format follows Keep a Changelog and Semantic Versioning.
 - user-facing send/inbox fail closed on ratchet bootstrap/decrypt errors instead of retrying via static v2;
 - the ratchet-vault master key is kept inside encrypted profile v2 and is not passed in argv or environment;
 - protocol-v3 submission requires sender DeviceID control, while mailbox list/delete require recipient DeviceID control;
-- stale, replayed, tampered or ownership-mismatched v3 request proofs fail with generic authentication errors; optional Bearer access control remains additive.
+- stale, replayed, tampered or ownership-mismatched v3 request proofs fail with generic authentication errors; optional Bearer access control remains additive;
+- relay Bearer tokens are loaded from mounted/local secret files instead of token values in argv or environment;
+- Oracle public ingress disables GhostNode access logs, leaves Caddy HTTP access logging off and explicitly disables Uvicorn proxy-header trust.
 
 ### Known limitations
 
