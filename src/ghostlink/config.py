@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG_ENV = "GHOSTLINK_CONFIG"
-NODE_TOKEN_ENV = "GHOSTLINK_NODE_TOKEN"  # noqa: S105 -- env var name, not a secret
+NODE_TOKEN_FILE_ENV = "GHOSTLINK_NODE_TOKEN_FILE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,17 +75,25 @@ def _database_path(
     return path
 
 
-def _access_token_from_environment() -> str | None:
-    value = os.environ.get(NODE_TOKEN_ENV)
-    if value is None or not value.strip():
-        return None
-    return value
+def load_access_token_from_file(path: str | Path | None = None) -> str | None:
+    """Load the relay access token from a file, never from argv or environment."""
+    resolved = path
+    if resolved is None:
+        configured = os.environ.get(NODE_TOKEN_FILE_ENV)
+        if configured is None or not configured.strip():
+            return None
+        resolved = configured
+
+    token = Path(resolved).read_text(encoding="utf-8").strip()
+    if not token:
+        raise ValueError("node access token file must not be empty")
+    return token
 
 
 def load_settings(path: str | Path | None = None) -> NodeSettings:
-    """Load node settings from TOML and secret values from the environment."""
+    """Load node settings from TOML and secret-file references."""
     resolved_path = Path(path or os.environ.get(DEFAULT_CONFIG_ENV, "ghostlink.toml"))
-    access_token = _access_token_from_environment()
+    access_token = load_access_token_from_file()
 
     if not resolved_path.exists():
         return NodeSettings(access_token=access_token)
