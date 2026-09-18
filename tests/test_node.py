@@ -138,3 +138,51 @@ def test_database_path_cannot_be_a_directory(tmp_path: Path) -> None:
         assert "must point to a file" in str(exc)
     else:
         raise AssertionError("directory database path should be rejected")
+
+
+def test_relay_operations_require_configured_access_token() -> None:
+    settings = NodeSettings(access_token="relay-secret")
+    client = TestClient(create_app(settings=settings))
+    payload = create_message_payload()
+
+    missing = client.post("/v1/messages", json=payload)
+    wrong = client.post(
+        "/v1/messages",
+        json=payload,
+        headers={"Authorization": "Bearer wrong-secret"},
+    )
+    accepted = client.post(
+        "/v1/messages",
+        json=payload,
+        headers={"Authorization": "Bearer relay-secret"},
+    )
+
+    assert missing.status_code == 401
+    assert missing.headers["www-authenticate"] == "Bearer"
+    assert wrong.status_code == 401
+    assert accepted.status_code == 201
+
+    message_id = accepted.json()["message_id"]
+
+    inbox = client.get(
+        "/v1/messages/device1:bob",
+        headers={"Authorization": "Bearer relay-secret"},
+    )
+    deleted = client.delete(
+        f"/v1/messages/{message_id}",
+        headers={"Authorization": "Bearer relay-secret"},
+    )
+
+    assert inbox.status_code == 200
+    assert len(inbox.json()) == 1
+    assert deleted.status_code == 204
+
+
+def test_health_remains_public_when_relay_authentication_is_enabled() -> None:
+    settings = NodeSettings(access_token="relay-secret")
+    client = TestClient(create_app(settings=settings))
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
