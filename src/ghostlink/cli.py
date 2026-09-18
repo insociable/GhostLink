@@ -26,8 +26,9 @@ from ghostlink.contact_store import (
     ContactTrustRecord,
     ContactTrustState,
     ContactTrustStore,
-    load_contact_store,
-    save_contact_store,
+    load_contact_store_witnessed,
+    migrate_contact_store_to_witness,
+    save_contact_store_witnessed,
 )
 from ghostlink.identity import derive_identity_fingerprint
 from ghostlink.profile import (
@@ -48,6 +49,7 @@ from ghostlink.ratchet_message import (
     encrypt_ratchet_message,
 )
 from ghostlink.replay import ReplayCacheError, SQLiteReplayCache
+from ghostlink.state_witness import SQLiteMonotonicWitness
 
 PasswordReader = Callable[[str], str]
 NodeClientFactory = Callable[[str], GhostNodeClient]
@@ -84,6 +86,34 @@ def _contact_store_path(profile_path: Path, explicit_path: str | None) -> Path:
     if explicit_path is not None:
         return Path(explicit_path)
     return Path(f"{profile_path}.contacts")
+
+
+def _state_witness_path(profile_path: Path) -> Path:
+    return Path(f"{profile_path}.witness.sqlite3")
+
+
+def _require_state_coordination(profile: LocalProfile) -> tuple[str, bytes]:
+    state_id = profile.client_state_id
+    key = profile.state_coordination_key
+    if state_id is None or key is None:
+        raise CLIError(
+            "profile has no rollback-state identity; run profile-upgrade first"
+        )
+    if len(state_id) != 32 or len(key) != 32:
+        raise CLIError("profile rollback-state identity is invalid")
+    return state_id, key
+
+
+def _profile_witness(
+    profile_path: Path,
+    profile: LocalProfile,
+) -> SQLiteMonotonicWitness:
+    state_id, coordination_key = _require_state_coordination(profile)
+    return SQLiteMonotonicWitness(
+        _state_witness_path(profile_path),
+        state_id,
+        coordination_key,
+    )
 
 
 def _require_ratchet_key(profile: LocalProfile) -> bytes:
@@ -244,6 +274,25 @@ def _command_profile_upgrade(
     return 0
 
 
+def _command_contact_store_upgrade(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    state_id, coordination_key = _require_state_coordination(profile)
+    store = migrate_contact_store_to_witness(
+        _contact_store_path(profile_path, args.contacts),
+        _require_contact_store_key(profile),
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=_profile_witness(profile_path, profile),
+    )
+    print("Contact store enrolled in rollback-state witness.")
+    print(f"Revision: {store.revision}")
+    return 0
+
+
 def _command_whoami(args: argparse.Namespace, password_reader: PasswordReader) -> int:
     profile = _load_profile(Path(args.profile), password_reader)
     print(f"GhostID: {profile.entity.ghost_id}")
@@ -320,9 +369,13 @@ def _load_profile_contact_store(
     profile: LocalProfile,
     explicit_path: str | None,
 ) -> ContactTrustStore:
-    return load_contact_store(
+    state_id, coordination_key = _require_state_coordination(profile)
+    return load_contact_store_witnessed(
         _contact_store_path(profile_path, explicit_path),
         _require_contact_store_key(profile),
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=_profile_witness(profile_path, profile),
     )
 
 
@@ -332,10 +385,14 @@ def _save_profile_contact_store(
     explicit_path: str | None,
     store: ContactTrustStore,
 ) -> None:
-    save_contact_store(
+    state_id, coordination_key = _require_state_coordination(profile)
+    save_contact_store_witnessed(
         _contact_store_path(profile_path, explicit_path),
         _require_contact_store_key(profile),
         store,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=_profile_witness(profile_path, profile),
     )
 
 
@@ -667,6 +724,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument("--profile", required=True)
 
+    contact_store_upgrade_parser = subparsers.add_parser(
+        "contact-store-upgrade",
+        help="enroll a legacy contact store in rollback-state coordination",
+    )
+    contact_store_upgrade_parser.add_argument("--profile", required=True)
+    contact_store_upgrade_parser.add_argument("--contacts")
+
     whoami_parser = subparsers.add_parser(
         "whoami",
         help="show the local GhostID and DeviceID",
@@ -838,6 +902,8 @@ def run(
             return _command_init(args, password_reader)
         if args.command == "profile-upgrade":
             return _command_profile_upgrade(args, password_reader)
+        if args.command == "contact-store-upgrade":
+            return _command_contact_store_upgrade(args, password_reader)
         if args.command == "whoami":
             return _command_whoami(args, password_reader)
         if args.command == "contact-export":

@@ -54,7 +54,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - persistent SQLite protocol-v3 request-replay state that survives GhostNode restart;
 - Oracle public HTTPS reference stack with Caddy, TCP/443-only exposure, internal GhostNode networking and automatic TLS certificate lifecycle.
 - rollback-aware client-state checkpoint primitives plus an authenticated SQLite monotonic-witness reference backend with crash-safe one-step witness recovery;
-- local profile v4 with a random 128-bit client-state ID and independent 32-byte state-coordination key, plus explicit atomic v1/v2/v3 migration.
+- local profile v4 with a random 128-bit client-state ID and independent 32-byte state-coordination key, plus explicit atomic v1/v2/v3 migration;
+- rollback-aware contact-store v2 with explicit legacy migration, monotonic witness reconciliation, rollback/divergence rejection and one-step crash recovery.
 
 ### Removed
 

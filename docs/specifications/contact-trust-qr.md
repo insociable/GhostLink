@@ -153,11 +153,23 @@ Writes use a private temporary file plus atomic replace. On POSIX, the accepted 
 is mode `0600`. A crash therefore cannot leave a partially written file accepted as the
 current store.
 
-Rollback of the complete encrypted profile/contact-store pair is not prevented by this
-format. Client-state anti-rollback remains separate hardening work.
+Contact-store format v2 additionally carries the profile-v4 `client_state_id`, a positive
+component revision and the previous checkpoint digest inside the authenticated ciphertext.
+The exact canonical v2 payload is bound to the `contacts` checkpoint defined by ADR-0008.
 
-A future migration may move the encrypted representation to another local database
-without changing the trust-state semantics.
+Normal CLI opens reconcile that checkpoint against the monotonic witness. Older revisions,
+same-revision divergence, wrong client-state identity, missing witnessed stores and invalid
+lineage fail closed. A crash after durable store replacement but before witness CAS may
+roll the witness forward by exactly one valid linked revision.
+
+Legacy v1 stores are never silently enrolled. The explicit command is:
+
+```bash
+ghostlink contact-store-upgrade --profile alice.ghost
+```
+
+The reference SQLite witness is development-only and does not protect against a snapshot
+that rolls back the witness file together with the contact store.
 
 ## User-facing language
 

@@ -222,6 +222,33 @@ class MonotonicWitness(Protocol):
         """Atomically replace exactly the expected record with its successor."""
 
 
+def derive_checkpoint(
+    key: bytes,
+    *,
+    state_id: str,
+    component: StateComponent,
+    revision: int,
+    previous_digest: str | None,
+    payload: bytes,
+) -> ComponentCheckpoint:
+    """Derive one authenticated checkpoint from persisted component metadata."""
+    digest = _checkpoint_digest(
+        key,
+        state_id=state_id,
+        component=component,
+        revision=revision,
+        previous_digest=previous_digest,
+        payload=payload,
+    )
+    return ComponentCheckpoint(
+        state_id=state_id,
+        component=component,
+        revision=revision,
+        previous_digest=previous_digest,
+        digest=digest,
+    )
+
+
 def create_initial_checkpoint(
     key: bytes,
     state_id: str,
@@ -229,20 +256,13 @@ def create_initial_checkpoint(
     payload: bytes,
 ) -> ComponentCheckpoint:
     """Create authenticated checkpoint revision 1 for explicit migration/init."""
-    digest = _checkpoint_digest(
+    return derive_checkpoint(
         key,
         state_id=state_id,
         component=component,
         revision=1,
         previous_digest=None,
         payload=payload,
-    )
-    return ComponentCheckpoint(
-        state_id=state_id,
-        component=component,
-        revision=1,
-        previous_digest=None,
-        digest=digest,
     )
 
 

@@ -12,10 +12,18 @@ from ghostlink.contact_store import (
     decrypt_contact_store,
     encrypt_contact_store,
     load_contact_store,
+    load_contact_store_witnessed,
+    migrate_contact_store_to_witness,
+    new_witnessed_contact_store,
     save_contact_store,
+    save_contact_store_witnessed,
 )
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import derive_identity_fingerprint
+from ghostlink.state_witness import (
+    SQLiteMonotonicWitness,
+    StateWitnessError,
+)
 from nacl import utils
 from nacl.secret import SecretBox
 
@@ -285,3 +293,240 @@ def test_store_file_is_private_on_posix(tmp_path) -> None:
 
     if os.name == "posix":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+_STATE_ID = "00112233445566778899aabbccddeeff"
+_COORDINATION_KEY = bytes(range(32))
+
+
+def _contact_witness(tmp_path):
+    return SQLiteMonotonicWitness(
+        tmp_path / "contact-witness.sqlite3",
+        _STATE_ID,
+        _COORDINATION_KEY,
+    )
+
+
+def test_witnessed_contact_store_detects_rollback(tmp_path) -> None:
+    path = tmp_path / "contacts.sec"
+    key = utils.random(SecretBox.KEY_SIZE)
+    witness = _contact_witness(tmp_path)
+    _alice, bundle = _identity_bundle()
+
+    store = new_witnessed_contact_store(_STATE_ID)
+    store.add_contact("Alice", bundle)
+    save_contact_store_witnessed(
+        path,
+        key,
+        store,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    revision_one = path.read_bytes()
+
+    loaded = load_contact_store_witnessed(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    loaded.verify_identity(
+        loaded.list_records()[0].record_id,
+        _fingerprint(bundle),
+    )
+    save_contact_store_witnessed(
+        path,
+        key,
+        loaded,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+
+    path.write_bytes(revision_one)
+    with pytest.raises(ContactTrustError, match="older than monotonic witness"):
+        load_contact_store_witnessed(
+            path,
+            key,
+            state_id=_STATE_ID,
+            coordination_key=_COORDINATION_KEY,
+            witness=witness,
+        )
+
+
+def test_witnessed_contact_store_detects_same_revision_divergence(tmp_path) -> None:
+    path = tmp_path / "contacts.sec"
+    key = utils.random(SecretBox.KEY_SIZE)
+    witness = _contact_witness(tmp_path)
+    _alice, bundle = _identity_bundle()
+
+    store = new_witnessed_contact_store(_STATE_ID)
+    store.add_contact("Alice", bundle)
+    save_contact_store_witnessed(
+        path,
+        key,
+        store,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+
+    loaded = load_contact_store_witnessed(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    loaded.add_contact("Alice second device", _identity_bundle()[1])
+    save_contact_store(path, key, loaded)
+
+    with pytest.raises(ContactTrustError, match="digest diverges"):
+        load_contact_store_witnessed(
+            path,
+            key,
+            state_id=_STATE_ID,
+            coordination_key=_COORDINATION_KEY,
+            witness=witness,
+        )
+
+
+def test_missing_contact_store_fails_when_witness_exists(tmp_path) -> None:
+    path = tmp_path / "contacts.sec"
+    key = utils.random(SecretBox.KEY_SIZE)
+    witness = _contact_witness(tmp_path)
+
+    store = new_witnessed_contact_store(_STATE_ID)
+    save_contact_store_witnessed(
+        path,
+        key,
+        store,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    path.unlink()
+
+    with pytest.raises(
+        ContactTrustError,
+        match="missing while its witness is initialized",
+    ):
+        load_contact_store_witnessed(
+            path,
+            key,
+            state_id=_STATE_ID,
+            coordination_key=_COORDINATION_KEY,
+            witness=witness,
+        )
+
+
+def test_legacy_contact_store_requires_explicit_witness_migration(tmp_path) -> None:
+    path = tmp_path / "contacts.sec"
+    key = utils.random(SecretBox.KEY_SIZE)
+    witness = _contact_witness(tmp_path)
+    _alice, bundle = _identity_bundle()
+
+    legacy = ContactTrustStore()
+    legacy.add_contact("Alice", bundle)
+    save_contact_store(path, key, legacy)
+
+    with pytest.raises(
+        ContactTrustError,
+        match="requires explicit rollback-state migration",
+    ):
+        load_contact_store_witnessed(
+            path,
+            key,
+            state_id=_STATE_ID,
+            coordination_key=_COORDINATION_KEY,
+            witness=witness,
+        )
+
+    migrated = migrate_contact_store_to_witness(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    assert migrated.revision == 1
+    assert migrated.state_id == _STATE_ID
+    assert migrated.checkpoint_digest is not None
+    assert len(migrated.records) == 1
+
+    reopened = load_contact_store_witnessed(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    assert reopened.list_records()[0].label == "Alice"
+
+
+class _FailingCompareAndSetWitness:
+    def __init__(self, delegate: SQLiteMonotonicWitness) -> None:
+        self.delegate = delegate
+
+    def get(self, component):
+        return self.delegate.get(component)
+
+    def initialize(self, record) -> None:
+        self.delegate.initialize(record)
+
+    def compare_and_set(self, expected, next_record) -> None:
+        raise StateWitnessError("simulated witness commit failure")
+
+
+def test_contact_store_recovers_one_step_after_witness_commit_crash(tmp_path) -> None:
+    path = tmp_path / "contacts.sec"
+    key = utils.random(SecretBox.KEY_SIZE)
+    witness = _contact_witness(tmp_path)
+    _alice, bundle = _identity_bundle()
+
+    store = new_witnessed_contact_store(_STATE_ID)
+    store.add_contact("Alice", bundle)
+    save_contact_store_witnessed(
+        path,
+        key,
+        store,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+
+    loaded = load_contact_store_witnessed(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    loaded.verify_identity(
+        loaded.list_records()[0].record_id,
+        _fingerprint(bundle),
+    )
+
+    with pytest.raises(ContactTrustError, match="simulated witness commit failure"):
+        save_contact_store_witnessed(
+            path,
+            key,
+            loaded,
+            state_id=_STATE_ID,
+            coordination_key=_COORDINATION_KEY,
+            witness=_FailingCompareAndSetWitness(witness),
+        )
+
+    assert witness.get("contacts").revision == 1
+    recovered = load_contact_store_witnessed(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    assert recovered.revision == 2
+    assert recovered.list_records()[0].state is ContactTrustState.VERIFIED
+    assert witness.get("contacts").revision == 2

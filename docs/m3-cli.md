@@ -219,15 +219,21 @@ messages and remains a documented local-state limitation.
 For a profile named `alice.ghost`, the development runtime normally uses:
 
 - `alice.ghost` — password-encrypted profile v4;
-- `alice.ghost.contacts` — authenticated-encrypted local contact trust store;
+- `alice.ghost.contacts` — authenticated-encrypted, rollback-aware local contact trust store;
 - `alice.ghost.ratchet` — encrypted libsignal ratchet vault;
-- `alice.ghost.state.sqlite3` — replay cache.
+- `alice.ghost.state.sqlite3` — replay cache;
+- `alice.ghost.witness.sqlite3` — development monotonic witness for coordinated local state.
 
-The ratchet-vault and contact-store keys are independent and are stored only inside the
-encrypted profile.
+The ratchet-vault, contact-store and state-coordination keys are independent and are
+stored only inside the encrypted profile.
 
-Rollback of the complete profile/contact-store pair is not prevented by the current
-format and remains separate client-state hardening work.
+Current contact-store opens verify revision/digest freshness against the witness and fail
+closed on rollback, divergence or a missing store after witness initialization. Legacy
+contact stores require explicit `contact-store-upgrade` migration.
+
+The SQLite witness is development/reference protection only: a whole-filesystem snapshot
+can roll it back together with the protected state. Replay and ratchet-vault integration
+remain separate phases of issue #79.
 
 ## Relay access
 
