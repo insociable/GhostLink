@@ -114,11 +114,11 @@ GhostNode continues to see only relay-visible metadata and opaque ciphertext.
 
 GhostLink GhostID/DeviceID remains the user-facing identity layer.
 
-Libsignal protocol addresses are internal session identifiers and must be deterministically bound to an already verified GhostLink device.
+Libsignal protocol addresses are internal session identifiers and are deterministically bound to an already verified GhostLink device.
 
-A future migration PR must define and test that binding before ratcheted traffic becomes the default user-facing protocol.
+The canonical mapping is `ProtocolAddress(name=DeviceID, deviceId=1)`. Public PQXDH/pre-key material is signed by the already certified GhostLink device signing key before publication. The detailed format is defined in `docs/specifications/ratchet-prekey-binding.md`.
 
-A libsignal identity-key change for an existing verified GhostLink device must fail closed until explicitly re-verified.
+A libsignal identity-key change for an existing verified GhostLink device fails closed until explicitly re-verified.
 
 ## Persistent storage
 

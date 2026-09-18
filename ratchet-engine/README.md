@@ -18,6 +18,8 @@ It proves:
 
 Persistent state is encrypted with AES-256-GCM, written atomically, and restored transactionally after restart.
 
+The engine also exposes strict public `PreKeyBundle` material for GhostLink device-signature binding. The canonical production mapping is one libsignal address per GhostLink DeviceID with signal device ID `1`.
+
 The engine is **not yet wired into GhostNode or the GhostLink CLI**.
 
 ## Dependency
