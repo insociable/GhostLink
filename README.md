@@ -25,7 +25,8 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 - explicit ratcheted **message protocol v3** on separate `/v3/messages` relay routes;
 - DeviceID-signed protocol-v3 relay requests with timestamp/request-ID replay protection;
 - context-bound ratchet decryption that rolls session state back when relay-visible metadata is tampered with;
-- real Python ↔ Node/libsignal ↔ GhostNode end-to-end tests, including restart continuity.
+- real Python ↔ Node/libsignal ↔ GhostNode end-to-end tests, including restart continuity;
+- reviewed Oracle public HTTPS stack with Caddy, 443-only exposure and file-backed relay-token secrets.
 
 ### Runtime status
 
@@ -44,7 +45,7 @@ Important remaining gaps include:
 - legacy static-v2 relay operations remain bearer-only and diagnostic;
 - relay database anti-rollback protection;
 - key transparency;
-- production TLS ingress/deployment hardening;
+- public Caddy/TLS reference deployment implemented, but live external certificate/closed-port verification is still required;
 - Sybil-resistant abuse controls;
 - complete device revocation/recovery;
 - persisted human contact-verification / QR trust workflow;
