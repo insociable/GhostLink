@@ -22,6 +22,7 @@ from ghostlink.contact import (
 from ghostlink.contact_store import (
     ContactTrustRecord,
     ContactTrustState,
+    ContactTrustStore,
     load_contact_store,
     save_contact_store,
 )
@@ -292,7 +293,7 @@ def _load_profile_contact_store(
     profile_path: Path,
     profile: LocalProfile,
     explicit_path: str | None,
-):
+) -> ContactTrustStore:
     return load_contact_store(
         _contact_store_path(profile_path, explicit_path),
         _require_contact_store_key(profile),
@@ -303,7 +304,7 @@ def _save_profile_contact_store(
     profile_path: Path,
     profile: LocalProfile,
     explicit_path: str | None,
-    store,
+    store: ContactTrustStore,
 ) -> None:
     save_contact_store(
         _contact_store_path(profile_path, explicit_path),
