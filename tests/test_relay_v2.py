@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from ghostlink.config import NodeSettings
+from ghostlink.message import MESSAGE_CLOCK_SKEW_SECONDS
 from ghostlink.node import create_app
 
 ALICE_DEVICE_ID = "device1:" + ("a" * 52)
@@ -91,8 +92,8 @@ def test_v2_far_future_message_is_rejected_by_relay() -> None:
     client = TestClient(create_app())
     payload = create_v2_payload()
     now = int(time.time())
-    payload["created_at"] = now + 301
-    payload["expires_at"] = now + 3600
+    payload["created_at"] = now + MESSAGE_CLOCK_SKEW_SECONDS + 60
+    payload["expires_at"] = payload["created_at"] + 3600
 
     response = client.post("/v2/messages", json=payload)
 
@@ -114,7 +115,7 @@ def test_v2_sqlite_store_survives_app_recreation(tmp_path: Path) -> None:
     assert inbox.json() == [payload]
 
 
-def test_v2_relay_authentication_matches_v1_policy() -> None:
+def test_v2_relay_authentication_uses_shared_bearer_policy() -> None:
     token = "relay-v2-secret"  # noqa: S105
     client = TestClient(
         create_app(settings=NodeSettings(access_token=token))
