@@ -13,18 +13,49 @@ from pathlib import Path
 from typing import Annotated, Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Response, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from ghostlink.config import NodeSettings, load_settings
+
+_MESSAGE_VERSION = 1
+_MAX_CIPHERTEXT_BYTES = 1_048_576
+_DEVICE_ID_PREFIX = "device1:"
+_DEVICE_ID_PAYLOAD_LENGTH = 52
+_BASE32_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz234567")
 
 
 class MessageEnvelope(BaseModel):
     """Encrypted message envelope accepted by GhostNode."""
 
+    model_config = ConfigDict(extra="forbid")
+
     version: int
     sender_device_id: str
     recipient_device_id: str
     ciphertext: str
+
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, value: int) -> int:
+        """Accept only the protocol version implemented by this relay."""
+        if value != _MESSAGE_VERSION:
+            raise ValueError("unsupported message version")
+        return value
+
+    @field_validator("sender_device_id", "recipient_device_id")
+    @classmethod
+    def validate_device_id(cls, value: str) -> str:
+        """Require the canonical syntactic DeviceID representation."""
+        if not value.startswith(_DEVICE_ID_PREFIX):
+            raise ValueError("device ID must use the device1 format")
+
+        payload = value[len(_DEVICE_ID_PREFIX) :]
+        if len(payload) != _DEVICE_ID_PAYLOAD_LENGTH:
+            raise ValueError("device ID payload has an invalid length")
+        if any(character not in _BASE32_ALPHABET for character in payload):
+            raise ValueError("device ID payload is not valid lowercase Base32")
+
+        return value
 
     @field_validator("ciphertext")
     @classmethod
@@ -37,6 +68,8 @@ class MessageEnvelope(BaseModel):
 
         if not decoded:
             raise ValueError("ciphertext must not be empty")
+        if len(decoded) > _MAX_CIPHERTEXT_BYTES:
+            raise ValueError("ciphertext exceeds the 1 MiB relay limit")
 
         return value
 
