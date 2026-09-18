@@ -819,11 +819,11 @@ def test_cli_contact_qr_export_and_import_remain_human_unverified(
     tmp_path: Path,
     capsys,
 ) -> None:
-    secret = "qr integration password"
+    unlock_phrase = "qr integration password"
 
     def password_reader(prompt: str) -> str:
         del prompt
-        return secret
+        return unlock_phrase
 
     alice_path = tmp_path / "alice-qr.ghost"
     bob_path = tmp_path / "bob-qr.ghost"
@@ -849,7 +849,7 @@ def test_cli_contact_qr_export_and_import_remain_human_unverified(
     assert "Public contact QR created:" in exported.out
     assert qr_path.read_text(encoding="utf-8").startswith("<svg")
 
-    alice = decrypt_local_profile(alice_path.read_text(encoding="utf-8"), secret)
+    alice = decrypt_local_profile(alice_path.read_text(encoding="utf-8"), unlock_phrase)
     payload = export_contact_qr_payload(alice.entity, alice.device)
 
     assert run(
@@ -868,7 +868,7 @@ def test_cli_contact_qr_export_and_import_remain_human_unverified(
     assert "cryptographically valid; human verification pending" in imported.out
     assert "Trust state: imported" in imported.out
 
-    bob = decrypt_local_profile(bob_path.read_text(encoding="utf-8"), secret)
+    bob = decrypt_local_profile(bob_path.read_text(encoding="utf-8"), unlock_phrase)
     assert bob.contact_store_key is not None
     store = load_contact_store(
         Path(f"{bob_path}.contacts"),
