@@ -10,6 +10,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from ghostlink.client import GhostNodeClient, GhostNodeClientError
+from ghostlink.config import NODE_TOKEN_ENV
 from ghostlink.contact import (
     ContactBundleError,
     export_contact_bundle,
@@ -27,6 +28,14 @@ from ghostlink.profile import (
 
 PasswordReader = Callable[[str], str]
 NodeClientFactory = Callable[[str], GhostNodeClient]
+
+
+def _default_node_client_factory(base_url: str) -> GhostNodeClient:
+    token = os.environ.get(NODE_TOKEN_ENV)
+    return GhostNodeClient(
+        base_url,
+        access_token=token if token and token.strip() else None,
+    )
 
 
 class CLIError(RuntimeError):
@@ -258,7 +267,7 @@ def run(
     argv: Sequence[str] | None = None,
     *,
     password_reader: PasswordReader = getpass.getpass,
-    node_client_factory: NodeClientFactory = GhostNodeClient,
+    node_client_factory: NodeClientFactory = _default_node_client_factory,
 ) -> int:
     """Run one GhostLink CLI command and return its process exit code."""
     parser = build_parser()
