@@ -56,7 +56,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - rollback-aware client-state checkpoint primitives plus an authenticated SQLite monotonic-witness reference backend with crash-safe one-step witness recovery;
 - local profile v4 with a random 128-bit client-state ID and independent 32-byte state-coordination key, plus explicit atomic v1/v2/v3 migration;
 - rollback-aware contact-store v2 with explicit legacy migration, monotonic witness reconciliation, rollback/divergence rejection and one-step crash recovery;
-- rollback-aware replay-state SQLite coordination with explicit legacy migration, atomic prune/accept + revision commits and one-step witness recovery.
+- rollback-aware replay-state SQLite coordination with explicit legacy migration, atomic prune/accept + revision commits and one-step witness recovery;
+- rollback-aware ratchet-vault payload v2 with explicit legacy migration, Python-verified checkpoints, witness-gated mutations, highest-seen rollback detection and one-step crash recovery.
 
 ### Removed
 

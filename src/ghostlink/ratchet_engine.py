@@ -30,6 +30,15 @@ from ghostlink.ratchet_publication import (
     import_ratchet_prekey_publication,
     verify_local_ratchet_prekey_publication,
 )
+from ghostlink.state_witness import (
+    ComponentCheckpoint,
+    MonotonicWitness,
+    StateCheckpointError,
+    StateWitnessError,
+    derive_checkpoint,
+    initialize_witness,
+    reconcile_checkpoint,
+)
 
 _RPC_VERSION = 1
 _MAX_FRAME_BYTES = 2 * 1024 * 1024
@@ -224,6 +233,26 @@ def _decode_base64(
 
 def _encode_base64(value: bytes) -> str:
     return base64.b64encode(value).decode("ascii")
+
+
+def _require_lower_hex(
+    value: object,
+    field: str,
+    *,
+    byte_length: int,
+) -> str:
+    expected_length = byte_length * 2
+    if (
+        not isinstance(value, str)
+        or len(value) != expected_length
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            f"{field} must be {byte_length}-byte lowercase hexadecimal",
+        )
+    return value
 
 
 def _material_to_wire(binding: RatchetPreKeyBinding) -> dict[str, object]:
@@ -761,16 +790,57 @@ class RatchetEngineClient:
         local_device: EnrolledGhostDevice,
         vault_path: str | Path,
         master_key: bytes,
+        *,
+        state_id: str | None = None,
+        coordination_key: bytes | None = None,
+        witness: MonotonicWitness | None = None,
+        allow_legacy_migration: bool = False,
     ) -> None:
         if not command or any(not part for part in command):
             raise ValueError("command must contain non-empty arguments")
         if len(master_key) != 32:
             raise ValueError("master_key must contain exactly 32 bytes")
 
+        state_values = (state_id, coordination_key, witness)
+        configured_count = sum(value is not None for value in state_values)
+        if configured_count not in {0, 3}:
+            raise ValueError(
+                "state_id, coordination_key and witness must be configured together"
+            )
+        if state_id is not None:
+            _require_lower_hex(state_id, "state_id", byte_length=16)
+            if coordination_key is None or len(coordination_key) != 32:
+                raise ValueError(
+                    "coordination_key must contain exactly 32 bytes"
+                )
+        if allow_legacy_migration and state_id is None:
+            raise ValueError(
+                "legacy vault migration requires rollback-state coordination"
+            )
+
         self._lock = threading.Lock()
         self._next_request_id = 1
         self._local_device = local_device
         self._closed = False
+        self._vault_path = Path(vault_path)
+        self._state_id = state_id
+        self._coordination_key = coordination_key
+        self._witness = witness
+        self._vault_checkpoint: ComponentCheckpoint | None = None
+        self._witness_pending = False
+
+        if allow_legacy_migration and witness is not None:
+            try:
+                if witness.get("ratchet") is not None:
+                    raise RatchetEngineError(
+                        "STATE_WITNESS",
+                        "ratchet witness already exists; legacy migration refused",
+                    )
+            except StateWitnessError as exc:
+                raise RatchetEngineError(
+                    "STATE_WITNESS",
+                    f"unable to read ratchet witness: {exc}",
+                ) from exc
 
         try:
             process = subprocess.Popen(  # noqa: S603
@@ -803,15 +873,46 @@ class RatchetEngineClient:
             pong = self._request("ping", {})
             self._require_rpc_version(pong, "ping response")
 
-            opened = self._request(
-                "open",
-                {
-                    "device_id": local_device.device_id,
-                    "vault_path": str(vault_path),
-                    "master_key": _encode_base64(bytes(key_copy)),
-                },
-            )
-            self._require_rpc_version(opened, "open response")
+            open_params: dict[str, object] = {
+                "device_id": local_device.device_id,
+                "vault_path": str(self._vault_path),
+                "master_key": _encode_base64(bytes(key_copy)),
+            }
+            if state_id is not None:
+                open_params["state_id"] = state_id
+                open_params["allow_legacy_migration"] = allow_legacy_migration
+
+            opened = self._request("open", open_params)
+            if state_id is None:
+                self._require_rpc_version(opened, "open response")
+            else:
+                open_document = _require_mapping(opened, "open response")
+                _require_exact_fields(
+                    open_document,
+                    {"rpc_version", "state_origin"},
+                    "open response",
+                )
+                if (
+                    _require_integer(
+                        open_document,
+                        "rpc_version",
+                        minimum=1,
+                    )
+                    != _RPC_VERSION
+                ):
+                    raise RatchetEngineProtocolError(
+                        "PROTOCOL_ERROR",
+                        "unsupported ratchet RPC version",
+                    )
+                state_origin = open_document.get("state_origin")
+                if state_origin not in {"created", "migrated", "existing"}:
+                    raise RatchetEngineProtocolError(
+                        "PROTOCOL_ERROR",
+                        "ratchet open response has invalid state_origin",
+                    )
+                self._sync_vault_witness(
+                    allow_initialize=state_origin in {"created", "migrated"},
+                )
         except Exception:
             self._terminate()
             raise
@@ -836,6 +937,160 @@ class RatchetEngineClient:
                 "PROTOCOL_ERROR",
                 "unsupported ratchet RPC version",
             )
+
+    def _checkpoint_from_rpc(
+        self,
+        value: object,
+    ) -> tuple[ComponentCheckpoint, bytes]:
+        if self._state_id is None or self._coordination_key is None:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "ratchet state checkpoint is not configured",
+            )
+
+        document = _require_mapping(value, "state_checkpoint result")
+        _require_exact_fields(
+            document,
+            {"state_id", "revision", "previous_digest"},
+            "state_checkpoint result",
+        )
+        state_id = _require_lower_hex(
+            document.get("state_id"),
+            "state_id",
+            byte_length=16,
+        )
+        if state_id != self._state_id:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "ratchet state checkpoint belongs to another client state",
+            )
+        revision = _require_integer(
+            document,
+            "revision",
+            minimum=1,
+            maximum=_MAX_PUBLICATION_SEQUENCE,
+        )
+        previous_value = document.get("previous_digest")
+        if revision == 1:
+            if previous_value is not None:
+                raise RatchetEngineProtocolError(
+                    "PROTOCOL_ERROR",
+                    "initial ratchet checkpoint must not have a previous digest",
+                )
+            previous_digest = None
+        else:
+            previous_digest = _require_lower_hex(
+                previous_value,
+                "previous_digest",
+                byte_length=32,
+            )
+
+        try:
+            payload = self._vault_path.read_bytes()
+        except OSError as exc:
+            raise RatchetEngineError(
+                "STATE_WITNESS",
+                "unable to read ratchet vault for checkpoint verification",
+            ) from exc
+
+        try:
+            checkpoint = derive_checkpoint(
+                self._coordination_key,
+                state_id=state_id,
+                component="ratchet",
+                revision=revision,
+                previous_digest=previous_digest,
+                payload=payload,
+            )
+        except StateCheckpointError as exc:
+            raise RatchetEngineError(
+                "STATE_WITNESS",
+                f"unable to derive ratchet checkpoint: {exc}",
+            ) from exc
+        return checkpoint, payload
+
+    def _sync_vault_witness(self, *, allow_initialize: bool) -> None:
+        if self._state_id is None:
+            return
+        if self._coordination_key is None or self._witness is None:
+            raise RatchetEngineError(
+                "STATE_WITNESS",
+                "ratchet witness coordination is incomplete",
+            )
+
+        checkpoint_value = self._request("state_checkpoint", {})
+        checkpoint, payload = self._checkpoint_from_rpc(checkpoint_value)
+
+        try:
+            current = self._witness.get("ratchet")
+            if current is None:
+                if not allow_initialize:
+                    raise RatchetEngineError(
+                        "STATE_WITNESS",
+                        "ratchet witness is missing for an existing rollback-aware vault",
+                    )
+                if checkpoint.revision != 1 or checkpoint.previous_digest is not None:
+                    raise RatchetEngineError(
+                        "STATE_WITNESS",
+                        "ratchet witness initialization requires revision 1",
+                    )
+                initialize_witness(
+                    self._witness,
+                    checkpoint,
+                    coordination_key=self._coordination_key,
+                    payload=payload,
+                )
+            else:
+                reconcile_checkpoint(
+                    self._witness,
+                    checkpoint,
+                    coordination_key=self._coordination_key,
+                    payload=payload,
+                )
+        except (StateCheckpointError, StateWitnessError) as exc:
+            self._witness_pending = True
+            raise RatchetEngineError(
+                "STATE_WITNESS",
+                f"ratchet rollback verification failed: {exc}",
+            ) from exc
+
+        acknowledged = _require_mapping(
+            self._request(
+                "acknowledge_checkpoint",
+                {"digest": checkpoint.digest},
+            ),
+            "acknowledge_checkpoint result",
+        )
+        _require_exact_fields(
+            acknowledged,
+            {"acknowledged"},
+            "acknowledge_checkpoint result",
+        )
+        if acknowledged.get("acknowledged") is not True:
+            self._witness_pending = True
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "ratchet checkpoint acknowledgement failed",
+            )
+
+        self._vault_checkpoint = checkpoint
+        self._witness_pending = False
+
+    def _mutating_request(self, method: str, params: object) -> object:
+        if self._state_id is not None and self._witness_pending:
+            raise RatchetEngineError(
+                "STATE_WITNESS",
+                "ratchet witness synchronization is pending; restart required",
+            )
+
+        result = self._request(method, params)
+        if self._state_id is not None:
+            try:
+                self._sync_vault_witness(allow_initialize=False)
+            except Exception:
+                self._witness_pending = True
+                raise
+        return result
 
     def _read_exact(self, size: int) -> bytes:
         chunks: list[bytes] = []
@@ -955,7 +1210,7 @@ class RatchetEngineClient:
     def create_prekey_material(self) -> RatchetPreKeyMaterial:
         """Generate and persist fresh public pre-key material."""
         return _material_from_wire(
-            self._request("create_prekey_material", {}),
+            self._mutating_request("create_prekey_material", {}),
         )
 
     def prepare_prekey_generation(
@@ -968,7 +1223,7 @@ class RatchetEngineClient:
         """Atomically prepare and persist one pending pre-key generation."""
         now = int(time.time()) if issued_at is None else issued_at
         return _prekey_generation_from_wire(
-            self._request(
+            self._mutating_request(
                 "prepare_prekey_generation",
                 {
                     "one_time_count": one_time_count,
@@ -1003,7 +1258,7 @@ class RatchetEngineClient:
         """Remove retired pre-key material only after the retention window."""
         current_time = int(time.time()) if now is None else now
         return _garbage_collection_result_from_wire(
-            self._request(
+            self._mutating_request(
                 "garbage_collect_prekeys",
                 {"now": current_time},
             )
@@ -1019,7 +1274,7 @@ class RatchetEngineClient:
             raise ValueError("public_payload must not be empty")
         if len(public_payload.encode("utf-8")) > _MAX_PUBLICATION_BYTES:
             raise ValueError("public_payload exceeds the 1 MiB limit")
-        self._request(
+        self._mutating_request(
             "stage_prekey_publication",
             {
                 "publication_sequence": publication_sequence,
@@ -1077,7 +1332,7 @@ class RatchetEngineClient:
     ) -> None:
         """Commit a relay-acknowledged pending generation as active."""
         acknowledged_at = int(time.time()) if published_at is None else published_at
-        self._request(
+        self._mutating_request(
             "commit_prekey_publication",
             {
                 "publication_sequence": publication_sequence,
@@ -1116,7 +1371,7 @@ class RatchetEngineClient:
             contact,
             now=now,
         )
-        self._request(
+        self._mutating_request(
             "establish_session",
             {
                 "remote_device_id": contact.device_id,
@@ -1135,7 +1390,7 @@ class RatchetEngineClient:
             raise ValueError("plaintext exceeds the 1 MiB engine limit")
 
         result = _require_mapping(
-            self._request(
+            self._mutating_request(
                 "encrypt",
                 {
                     "remote_device_id": contact.device_id,
@@ -1169,7 +1424,7 @@ class RatchetEngineClient:
     ) -> bytes:
         """Decrypt one libsignal ciphertext from a verified contact device."""
         result = _require_mapping(
-            self._request(
+            self._mutating_request(
                 "decrypt",
                 {
                     "remote_device_id": contact.device_id,
@@ -1200,7 +1455,7 @@ class RatchetEngineClient:
             raise ValueError("expected_context exceeds the 4096-byte limit")
 
         result = _require_mapping(
-            self._request(
+            self._mutating_request(
                 "decrypt_context_bound",
                 {
                     "remote_device_id": contact.device_id,

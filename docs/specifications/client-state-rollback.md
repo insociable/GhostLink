@@ -1,16 +1,19 @@
 # Client-state rollback checkpoints and witness
 
-Status: checkpoint/witness primitives, profile-v4 state identity, contact-store integration and replay-state integration implemented; ratchet-vault integration remains under issue #79.
+Status: checkpoint/witness primitives, profile-v4 state identity, contact-store, replay-state, and ratchet-vault/highest-seen integration implemented. The reference SQLite witness remains development-only.
 
 ## Scope
 
 This specification defines the common checkpoint format and monotonic-witness contract used
 by ADR-0008.
 
-It does not by itself make the complete GhostLink client rollback-proof. Profile v4
-provides the root state identity, and both contact-trust and replay state now adopt this
-format; ratchet-vault/highest-seen state remains to be integrated. Complete whole-snapshot
-protection additionally requires a witness backend outside the restored state domain.
+Profile v4 provides the root state identity and authenticated profile checkpoint metadata.
+Contact trust, replay state, and the ratchet/highest-seen vault now adopt this checkpoint
+format and reconcile against the monotonic witness before ordinary use.
+
+GhostLink still does not claim complete whole-device rollback protection with the reference
+SQLite witness, because that witness normally shares the same filesystem snapshot domain.
+A production claim requires a witness backend outside the restored state domain.
 
 ## Root material
 
@@ -212,7 +215,59 @@ Replay state is now integrated: pruning, acceptance and replay checkpoint metada
 inside one SQLite transaction, followed by witness compare-and-set. A crash after the
 SQLite commit may roll the witness forward by exactly one linked revision on restart.
 
-Ratchet-vault/highest-seen state is not yet integrated.
+Ratchet-vault/highest-seen state is integrated through the Python/Node RPC boundary.
+The Node engine stores ratchet revision and previous-digest lineage inside authenticated
+vault ciphertext, while Python independently computes the checkpoint over the exact
+serialized encrypted vault bytes and advances the witness. The engine refuses another
+state-changing vault operation until Python acknowledges the current checkpoint digest.
+
+Profile v4 currently has no routine security-relevant mutation after creation/migration.
+Its stable state identity binds all integrated components; any future password/key/profile
+mutation that changes security state must also advance the reserved `profile` witness
+component before being enabled.
 
 A future production backend must keep witness state outside the rollback domain being
 claimed as protected.
+
+
+## Backup and restore procedure
+
+Treat the following files for one profile as one coordinated security state set:
+
+- the encrypted profile itself;
+- the encrypted contact store;
+- the encrypted ratchet vault;
+- the replay database;
+- the monotonic witness backend used for that client-state ID.
+
+For the default development layout these are typically:
+
+```text
+alice.ghost
+alice.ghost.contacts
+alice.ghost.ratchet
+alice.ghost.state.sqlite3
+alice.ghost.witness.sqlite3
+```
+
+A backup may copy application-state files, but ordinary restore MUST NOT silently replace
+or recreate a monotonic witness record.
+
+If an older contact, replay, or ratchet component is restored while the witness remains
+current, normal open must fail closed with rollback/divergence rather than resetting the
+component or witness.
+
+If a whole-filesystem snapshot restores the SQLite witness together with all protected
+files, the reference development backend cannot detect that whole-snapshot rollback. This
+is why it is not a production whole-device anti-rollback primitive.
+
+Moving state to another machine, deliberately replacing a witness backend, or recovering
+after confirmed witness loss is an explicit recovery operation and is not implemented by
+ordinary CLI open/migration commands. The operator must first establish that the selected
+backup is the intended latest state and then use a separately reviewed recovery/rebinding
+procedure. Deleting `*.witness.sqlite3` and rerunning ordinary commands is not a valid
+recovery procedure.
+
+Legacy migration commands are only for components that genuinely predate rollback-aware
+metadata. They must not be used as a generic way to rebind an already rollback-aware
+component whose witness record disappeared.

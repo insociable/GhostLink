@@ -222,7 +222,7 @@ For a profile named `alice.ghost`, the development runtime normally uses:
 
 - `alice.ghost` — password-encrypted profile v4;
 - `alice.ghost.contacts` — authenticated-encrypted, rollback-aware local contact trust store;
-- `alice.ghost.ratchet` — encrypted libsignal ratchet vault;
+- `alice.ghost.ratchet` — encrypted, rollback-aware libsignal ratchet/highest-seen vault;
 - `alice.ghost.state.sqlite3` — rollback-aware replay cache;
 - `alice.ghost.witness.sqlite3` — development monotonic witness for coordinated local state.
 
@@ -233,9 +233,20 @@ Current contact-store opens verify revision/digest freshness against the witness
 closed on rollback, divergence or a missing store after witness initialization. Legacy
 contact stores require explicit `contact-store-upgrade` migration.
 
+Legacy state enrollment is explicit:
+
+```bash
+ghostlink contact-store-upgrade --profile alice.ghost
+ghostlink replay-state-upgrade --profile alice.ghost
+ghostlink ratchet-vault-upgrade --profile alice.ghost
+```
+
+Normal ratcheted commands refuse a legacy ratchet vault rather than silently migrating it.
+
 The SQLite witness is development/reference protection only: a whole-filesystem snapshot
-can roll it back together with the protected state. Replay-state integration is implemented. Ratchet-vault/highest-seen integration remains
-the next client-state phase of issue #79.
+can roll it back together with the protected state. Contact, replay, and
+ratchet/highest-seen component rollback detection is implemented when that witness remains
+current.
 
 ## Relay access
 

@@ -253,3 +253,77 @@ test('concurrent sends are serialized through one ratchet state', async () => {
   assert.equal(await pair.bob.decrypt(pair.alice, one), 'one');
   assert.equal(await pair.bob.decrypt(pair.alice, two), 'two');
 });
+
+test('rollback-aware vault requires checkpoint acknowledgement before mutation', async () => {
+  const directory = await temporaryDirectory();
+  const key = randomBytes(32);
+  const path = join(directory, 'rollback-aware.ratchet');
+  const stateId = '00112233445566778899aabbccddeeff';
+
+  const party = await PersistentRatchetParty.open(
+    DEVICE_A,
+    1,
+    path,
+    key,
+    stateId
+  );
+
+  assert.equal(party.getStateOrigin(), 'created');
+  assert.deepEqual(party.getCheckpointMetadata(), {
+    stateId,
+    revision: 1,
+    previousDigest: null,
+  });
+
+  await assert.rejects(
+    () => party.createPreKeyBundle(),
+    /checkpoint must be acknowledged/
+  );
+
+  const previousDigest = 'a'.repeat(64);
+  party.acknowledgeCheckpoint(previousDigest);
+  await party.createPreKeyBundle();
+
+  assert.deepEqual(party.getCheckpointMetadata(), {
+    stateId,
+    revision: 2,
+    previousDigest,
+  });
+
+  const raw = await readFile(path, 'utf8');
+  assert.equal(raw.includes(stateId), false);
+  assert.equal(raw.includes(previousDigest), false);
+  party.close();
+});
+
+test('legacy vault needs explicit rollback-state migration', async () => {
+  const directory = await temporaryDirectory();
+  const key = randomBytes(32);
+  const path = join(directory, 'legacy-upgrade.ratchet');
+  const stateId = 'ffeeddccbbaa99887766554433221100';
+
+  const legacy = await PersistentRatchetParty.open(DEVICE_A, 1, path, key);
+  await legacy.createPreKeyBundle();
+  legacy.close();
+
+  await assert.rejects(
+    () => PersistentRatchetParty.open(DEVICE_A, 1, path, key, stateId),
+    /requires explicit rollback-state migration/
+  );
+
+  const migrated = await PersistentRatchetParty.open(
+    DEVICE_A,
+    1,
+    path,
+    key,
+    stateId,
+    true
+  );
+  assert.equal(migrated.getStateOrigin(), 'migrated');
+  assert.deepEqual(migrated.getCheckpointMetadata(), {
+    stateId,
+    revision: 1,
+    previousDigest: null,
+  });
+  migrated.close();
+});

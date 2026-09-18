@@ -142,9 +142,11 @@ def _require_contact_store_key(profile: LocalProfile) -> bytes:
     return key
 
 
-def _default_ratchet_engine_factory(
+def _create_ratchet_engine(
     profile: LocalProfile,
     profile_path: Path,
+    *,
+    allow_legacy_migration: bool = False,
 ) -> RatchetEngineClient:
     node = shutil.which("node")
     if node is None:
@@ -154,12 +156,24 @@ def _default_ratchet_engine_factory(
             "built ratchet-engine is unavailable; "
             "build ratchet-engine before using ratcheted CLI commands"
         )
+    state_id, coordination_key = _require_state_coordination(profile)
     return RatchetEngineClient(
         [node, str(_RATCHET_ENGINE_PATH)],
         profile.device,
         _ratchet_vault_path(profile_path),
         _require_ratchet_key(profile),
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=_profile_witness(profile_path, profile),
+        allow_legacy_migration=allow_legacy_migration,
     )
+
+
+def _default_ratchet_engine_factory(
+    profile: LocalProfile,
+    profile_path: Path,
+) -> RatchetEngineClient:
+    return _create_ratchet_engine(profile, profile_path)
 
 
 def _write_new_private_file(path: Path, content: str) -> None:
@@ -311,6 +325,25 @@ def _command_replay_state_upgrade(
         witness=_profile_witness(profile_path, profile),
     )
     print("Replay state enrolled in rollback-state witness.")
+    return 0
+
+
+def _command_ratchet_vault_upgrade(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    vault_path = _ratchet_vault_path(profile_path)
+    if not vault_path.is_file():
+        raise CLIError("legacy ratchet vault does not exist")
+    with _create_ratchet_engine(
+        profile,
+        profile_path,
+        allow_legacy_migration=True,
+    ):
+        pass
+    print("Ratchet vault enrolled in rollback-state witness.")
     return 0
 
 
@@ -763,6 +796,12 @@ def build_parser() -> argparse.ArgumentParser:
     replay_upgrade_parser.add_argument("--profile", required=True)
     replay_upgrade_parser.add_argument("--state")
 
+    ratchet_upgrade_parser = subparsers.add_parser(
+        "ratchet-vault-upgrade",
+        help="enroll a legacy ratchet vault in rollback-state coordination",
+    )
+    ratchet_upgrade_parser.add_argument("--profile", required=True)
+
     whoami_parser = subparsers.add_parser(
         "whoami",
         help="show the local GhostID and DeviceID",
@@ -938,6 +977,8 @@ def run(
             return _command_contact_store_upgrade(args, password_reader)
         if args.command == "replay-state-upgrade":
             return _command_replay_state_upgrade(args, password_reader)
+        if args.command == "ratchet-vault-upgrade":
+            return _command_ratchet_vault_upgrade(args, password_reader)
         if args.command == "whoami":
             return _command_whoami(args, password_reader)
         if args.command == "contact-export":
