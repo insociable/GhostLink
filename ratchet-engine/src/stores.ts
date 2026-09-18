@@ -591,5 +591,9 @@ export function restorePartyStores(state: PartyStoresState): PartyStores {
     signedPreKey: MemorySignedPreKeyStore.fromState(state.signedPreKey),
     kyberPreKey: MemoryKyberPreKeyStore.fromState(state.kyberPreKey),
     lifecycle: MemoryPreKeyLifecycleStore.fromState(state.lifecycle),
+    remotePublicationSequences:
+      MemoryRemotePublicationSequenceStore.fromState(
+        state.remotePublicationSequences
+      ),
   };
 }
