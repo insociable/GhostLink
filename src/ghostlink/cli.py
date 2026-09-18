@@ -16,9 +16,12 @@ from ghostlink.config import load_access_token_from_file
 from ghostlink.contact import (
     ContactBundleError,
     ValidatedContact,
+    decode_contact_qr_payload,
     export_contact_bundle,
+    export_contact_qr_payload,
     import_contact_bundle,
 )
+from ghostlink.contact_qr import render_contact_qr_svg
 from ghostlink.contact_store import (
     ContactTrustRecord,
     ContactTrustState,
@@ -260,6 +263,25 @@ def _command_contact_export(
     return 0
 
 
+def _command_contact_export_qr(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile = _load_profile(Path(args.profile), password_reader)
+    payload = export_contact_qr_payload(profile.entity, profile.device)
+    svg = render_contact_qr_svg(payload)
+    output = Path(args.output)
+    _write_new_public_file(output, svg)
+
+    print(f"Public contact QR created: {output}")
+    print(f"GhostID: {profile.entity.ghost_id}")
+    print(
+        f"Fingerprint v2: "
+        f"{derive_identity_fingerprint(bytes(profile.entity.verify_key))}"
+    )
+    return 0
+
+
 def _command_contact_verify(args: argparse.Namespace) -> int:
     contact = import_contact_bundle(_read_text(Path(args.bundle)))
     print("Contact bundle cryptographically valid")
@@ -324,6 +346,22 @@ def _command_contact_import(
     _save_profile_contact_store(profile_path, profile, args.contacts, store)
 
     print("Contact bundle cryptographically valid; human verification pending.")
+    _print_contact_record(record)
+    return 0
+
+
+def _command_contact_import_qr(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    store = _load_profile_contact_store(profile_path, profile, args.contacts)
+    bundle = decode_contact_qr_payload(args.payload)
+    record = store.add_contact(args.label, bundle)
+    _save_profile_contact_store(profile_path, profile, args.contacts, store)
+
+    print("QR contact cryptographically valid; human verification pending.")
     _print_contact_record(record)
     return 0
 
@@ -666,6 +704,13 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--profile", required=True)
     export_parser.add_argument("--output", required=True)
 
+    export_qr_parser = subparsers.add_parser(
+        "contact-export-qr",
+        help="export the public contact as a standard SVG QR code",
+    )
+    export_qr_parser.add_argument("--profile", required=True)
+    export_qr_parser.add_argument("--output", required=True)
+
     verify_parser = subparsers.add_parser(
         "contact-verify",
         help="verify a public contact bundle",
@@ -680,6 +725,15 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser.add_argument("--contacts")
     import_parser.add_argument("--label", required=True)
     import_parser.add_argument("bundle")
+
+    import_qr_parser = subparsers.add_parser(
+        "contact-import-qr",
+        help="save a scanned public QR payload as human-unverified",
+    )
+    import_qr_parser.add_argument("--profile", required=True)
+    import_qr_parser.add_argument("--contacts")
+    import_qr_parser.add_argument("--label", required=True)
+    import_qr_parser.add_argument("--payload", required=True)
 
     list_parser = subparsers.add_parser(
         "contact-list",
@@ -809,10 +863,14 @@ def run(
             return _command_whoami(args, password_reader)
         if args.command == "contact-export":
             return _command_contact_export(args, password_reader)
+        if args.command == "contact-export-qr":
+            return _command_contact_export_qr(args, password_reader)
         if args.command == "contact-verify":
             return _command_contact_verify(args)
         if args.command == "contact-import":
             return _command_contact_import(args, password_reader)
+        if args.command == "contact-import-qr":
+            return _command_contact_import_qr(args, password_reader)
         if args.command == "contact-list":
             return _command_contact_list(args, password_reader)
         if args.command == "contact-show":
