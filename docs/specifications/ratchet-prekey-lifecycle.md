@@ -415,6 +415,17 @@ Application HTTP publication orchestration is now implemented:
 - malformed/mismatched receipts do not commit lifecycle state;
 - connection loss after relay acceptance leaves the generation pending for exact idempotent retry.
 
+Sender-side publication continuity is now implemented before fetch/pop exposure:
+
+- the encrypted ratchet vault persists the highest publication sequence observed per remote DeviceID;
+- session establishment requires the verified binding publication sequence;
+- sequence observation and libsignal session creation are one atomic durable transaction;
+- equal sequence reuse is idempotent because multiple one-time bundles legitimately share one generation sequence;
+- lower sequences fail closed before session state mutation;
+- higher sequences become durable only if session establishment succeeds.
+
+A rollback of the entire encrypted vault can still restore older continuity state. Preventing that requires external monotonic state or trusted hardware and remains a separate threat-model limitation.
+
 The following are still pending:
 
 - atomic relay fetch/pop and anti-drain controls;
