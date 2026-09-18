@@ -24,7 +24,6 @@ from ghostlink.ratchet_binding import (
     export_ratchet_prekey_binding,
 )
 from ghostlink.ratchet_publication import (
-    RatchetPreKeyPublication,
     export_ratchet_prekey_publication,
     import_ratchet_prekey_publication,
 )
