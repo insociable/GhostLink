@@ -192,6 +192,16 @@ def test_prekey_publication_staging_survives_restart_exactly(tmp_path: Path) -> 
         )
         assert exact_retry == payload
 
+        reopened_bob.commit_prekey_publication(
+            publication.publication_sequence,
+            published_at=1_200,
+        )
+        assert reopened_bob.get_pending_prekey_generation() is None
+        reopened_bob.commit_prekey_publication(
+            publication.publication_sequence,
+            published_at=1_300,
+        )
+
         with RatchetEngineClient(
             command,
             alice_device,
