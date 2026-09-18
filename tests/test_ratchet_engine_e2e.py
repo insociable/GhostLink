@@ -1,11 +1,16 @@
 import base64
 import os
 import shutil
+import time
+import urllib.parse
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+from ghostlink.client.node_client import GhostNodeClient
 from ghostlink.contact import export_contact_bundle, import_contact_bundle
 from ghostlink.entity import GhostEntity
+from ghostlink.node import create_app
 from ghostlink.ratchet_binding import (
     RatchetBindingError,
     SignedRatchetPreKeyBinding,
@@ -17,6 +22,7 @@ from ghostlink.ratchet_publication import (
     import_ratchet_prekey_publication,
     verify_local_ratchet_prekey_publication,
 )
+from ghostlink.ratchet_publish import publish_prekey_generation
 
 _ROOT = Path(__file__).resolve().parents[1]
 _ENGINE = _ROOT / "ratchet-engine" / "dist" / "src" / "rpc-server.js"
@@ -221,3 +227,76 @@ def test_prekey_publication_staging_survives_restart_exactly(tmp_path: Path) -> 
                 reopened_bob.decrypt(alice_contact, encrypted)
                 == b"publication-backed session"
             )
+
+
+
+def test_full_prekey_publication_flow_survives_engine_restart(
+    tmp_path: Path,
+) -> None:
+    bob = GhostEntity.generate()
+    bob_device = bob.enroll_device()
+    bob_key = os.urandom(32)
+    bob_vault = tmp_path / "bob-full-publication.ratchet"
+    command = [_NODE or "node", str(_ENGINE)]
+    api_client = TestClient(create_app())
+
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        assert timeout > 0
+        parsed = urllib.parse.urlparse(url)
+        response = api_client.request(
+            method,
+            parsed.path,
+            json=payload,
+            headers=headers,
+        )
+        return (
+            response.status_code,
+            response.json() if response.content else None,
+        )
+
+    node = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+    now = int(time.time())
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as engine:
+        receipt = publish_prekey_generation(
+            engine,
+            node,
+            bob_device,
+            one_time_count=3,
+            issued_at=now,
+            lifetime_seconds=3_600,
+            acknowledged_at=now + 1,
+        )
+        assert receipt.device_id == bob_device.device_id
+        assert receipt.publication_sequence == 1
+        assert receipt.expires_at == now + 3_600
+        assert receipt.one_time_count == 3
+        assert engine.get_pending_prekey_generation() is None
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as reopened:
+        assert reopened.get_pending_prekey_generation() is None
+        second = reopened.prepare_prekey_generation(
+            one_time_count=2,
+            issued_at=now + 2,
+            lifetime_seconds=3_600,
+        )
+        assert second.publication_sequence == 2
