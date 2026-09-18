@@ -11,13 +11,13 @@ from typing import cast
 
 import ghostlink.cli as cli_module
 from fastapi.testclient import TestClient
+from ghostlink.client import GhostNodeClient, GhostNodeRequestError
 from ghostlink.cli import run
 from ghostlink.contact import export_contact_bundle, import_contact_bundle
 from ghostlink.contact_store import ContactTrustState, load_contact_store
-from ghostlink.client import GhostNodeClient, GhostNodeRequestError
-from ghostlink.node import create_app
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import derive_identity_fingerprint
+from ghostlink.node import create_app
 from ghostlink.profile import LocalProfile, decrypt_local_profile
 from ghostlink.ratchet_engine import RatchetEngineClient
 from ghostlink.ratchet_message import (
