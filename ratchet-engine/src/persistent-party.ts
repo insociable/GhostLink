@@ -12,6 +12,7 @@ import {
   MIN_REGISTRATION_ID,
   SIGNAL_DEVICE_ID,
 } from './protocol-profile.js';
+import { MAX_RETIRED_GENERATIONS } from './prekey-lifecycle-state.js';
 import {
   createPartyStores,
   exportPartyStores,
@@ -279,6 +280,81 @@ export class PersistentRatchetParty {
           ...pending,
           publicPayload,
         },
+      });
+    });
+  }
+
+  async commitPreKeyPublication(
+    sequence: number,
+    publishedAt = Math.floor(Date.now() / 1000)
+  ): Promise<void> {
+    if (
+      !Number.isSafeInteger(sequence) ||
+      sequence <= 0 ||
+      sequence > MAX_PUBLICATION_SEQUENCE
+    ) {
+      throw new Error('publication sequence is outside the supported range');
+    }
+    if (
+      !Number.isSafeInteger(publishedAt) ||
+      publishedAt < 0 ||
+      publishedAt > Number.MAX_SAFE_INTEGER
+    ) {
+      throw new Error('publishedAt is outside the supported range');
+    }
+
+    await this.transaction(async (party) => {
+      const lifecycle = party.stores.lifecycle.snapshot();
+      const pending = lifecycle.pending;
+
+      if (pending === null) {
+        if (lifecycle.active?.sequence === sequence) {
+          return;
+        }
+        throw new Error('no matching pending pre-key generation exists');
+      }
+      if (pending.sequence !== sequence) {
+        throw new Error('pending pre-key generation sequence does not match');
+      }
+      if (pending.publicPayload === null) {
+        throw new Error('pending pre-key publication has not been staged');
+      }
+      if (publishedAt < pending.createdAt || publishedAt >= pending.expiresAt) {
+        throw new Error(
+          'publication acknowledgement timestamp is outside generation lifetime'
+        );
+      }
+
+      const retired = [...lifecycle.retired];
+      if (lifecycle.active !== null) {
+        if (
+          lifecycle.active.publishedAt !== null &&
+          publishedAt < lifecycle.active.publishedAt
+        ) {
+          throw new Error(
+            'publication acknowledgement predates the active generation'
+          );
+        }
+        if (retired.length >= MAX_RETIRED_GENERATIONS) {
+          throw new Error(
+            'retired generation limit reached before garbage collection'
+          );
+        }
+        retired.push({
+          ...lifecycle.active,
+          retiredAt: publishedAt,
+        });
+      }
+
+      party.stores.lifecycle.replace({
+        ...lifecycle,
+        pending: null,
+        active: {
+          ...pending,
+          publishedAt,
+          retiredAt: null,
+        },
+        retired,
       });
     });
   }
