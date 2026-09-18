@@ -6,7 +6,10 @@ import {
   MAX_PREKEY_ID,
   validateRegistrationId,
 } from './protocol-profile.js';
-import { MemoryPreKeyLifecycleStore } from './prekey-lifecycle-state.js';
+import {
+  MemoryPreKeyLifecycleStore,
+  type PreKeyGenerationState,
+} from './prekey-lifecycle-state.js';
 import {
   createPartyStores,
   MemoryKyberPreKeyStore,
@@ -256,6 +259,86 @@ export class RatchetParty {
       signedPreKeyId,
       lastResortKyberPreKeyId,
       oneTimeKeyIds,
+    };
+  }
+
+  async loadPreKeyGeneration(
+    state: PreKeyGenerationState
+  ): Promise<PreKeyGenerationMaterial> {
+    const identityKey = await this.stores.identity.getIdentityKey();
+    const registrationId =
+      await this.stores.identity.getLocalRegistrationId();
+
+    const signedPreKey = await this.stores.signedPreKey.getSignedPreKey(
+      state.signedPreKeyId
+    );
+    if (signedPreKey.id() !== state.signedPreKeyId) {
+      throw new Error('signed pre-key record ID does not match lifecycle state');
+    }
+
+    const lastResortKyber = await this.stores.kyberPreKey.getKyberPreKey(
+      state.lastResortKyberPreKeyId
+    );
+    if (lastResortKyber.id() !== state.lastResortKyberPreKeyId) {
+      throw new Error(
+        'last-resort Kyber record ID does not match lifecycle state'
+      );
+    }
+
+    const oneTimeBundles: SignalClient.PreKeyBundle[] = [];
+
+    for (const [preKeyId, kyberPreKeyId] of state.oneTimeKeyIds) {
+      const preKey = await this.stores.preKey.getPreKey(preKeyId);
+      if (preKey.id() !== preKeyId) {
+        throw new Error('EC pre-key record ID does not match lifecycle state');
+      }
+
+      const kyberPreKey = await this.stores.kyberPreKey.getKyberPreKey(
+        kyberPreKeyId
+      );
+      if (kyberPreKey.id() !== kyberPreKeyId) {
+        throw new Error(
+          'one-time Kyber record ID does not match lifecycle state'
+        );
+      }
+
+      oneTimeBundles.push(
+        SignalClient.PreKeyBundle.new(
+          registrationId,
+          this.address.deviceId(),
+          preKeyId,
+          preKey.publicKey(),
+          signedPreKey.id(),
+          signedPreKey.publicKey(),
+          signedPreKey.signature(),
+          identityKey.getPublicKey(),
+          kyberPreKey.id(),
+          kyberPreKey.publicKey(),
+          kyberPreKey.signature()
+        )
+      );
+    }
+
+    const fallbackBundle = SignalClient.PreKeyBundle.new(
+      registrationId,
+      this.address.deviceId(),
+      null,
+      null,
+      signedPreKey.id(),
+      signedPreKey.publicKey(),
+      signedPreKey.signature(),
+      identityKey.getPublicKey(),
+      lastResortKyber.id(),
+      lastResortKyber.publicKey(),
+      lastResortKyber.signature()
+    );
+
+    return {
+      oneTimeBundles,
+      fallbackBundle,
+      signedPreKeyId: signedPreKey.id(),
+      lastResortKyberPreKeyId: lastResortKyber.id(),
+      oneTimeKeyIds: state.oneTimeKeyIds,
     };
   }
 

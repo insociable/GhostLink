@@ -3,12 +3,16 @@ import { once } from 'node:events';
 import * as SignalClient from '@signalapp/libsignal-client';
 
 import { exportPreKeyMaterial, importPreKeyMaterial } from './prekey-material.js';
-import { PersistentRatchetParty } from './persistent-party.js';
+import {
+  PersistentRatchetParty,
+  type PreparedPreKeyGeneration,
+} from './persistent-party.js';
 
 const RPC_VERSION = 1;
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES = 1024 * 1024;
 const DEVICE_ID_PATTERN = /^device1:[a-z2-7]{52}$/;
+const MAX_PUBLICATION_PAYLOAD_BYTES = 1024 * 1024;
 
 interface RpcRequest {
   readonly id: number;
@@ -146,6 +150,44 @@ function decodeBase64(
   return Uint8Array.from(decoded);
 }
 
+function requireIntegerField(
+  document: Record<string, unknown>,
+  field: string,
+  minimum: number,
+  maximum = Number.MAX_SAFE_INTEGER
+): number {
+  const value = document[field];
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < minimum ||
+    (value as number) > maximum
+  ) {
+    throw new RpcError(
+      'INVALID_REQUEST',
+      `${field} is outside the supported integer range`
+    );
+  }
+  return value as number;
+}
+
+function exportPreparedGeneration(
+  generation: PreparedPreKeyGeneration & {
+    readonly publicPayload?: string | null;
+  }
+): Record<string, unknown> {
+  return {
+    version: 1,
+    publication_sequence: generation.sequence,
+    issued_at: generation.createdAt,
+    expires_at: generation.expiresAt,
+    one_time: generation.oneTimeBundles.map((bundle) =>
+      exportPreKeyMaterial(bundle)
+    ),
+    fallback: exportPreKeyMaterial(generation.fallbackBundle),
+    public_payload: generation.publicPayload ?? null,
+  };
+}
+
 function requireMessageType(value: unknown): SignalClient.CiphertextMessageType {
   if (
     value !== SignalClient.CiphertextMessageType.PreKey &&
@@ -223,6 +265,12 @@ class RatchetRpcService {
         return this.open(request.params);
       case 'create_prekey_material':
         return this.createPreKeyMaterial(request.params);
+      case 'prepare_prekey_generation':
+        return this.preparePreKeyGeneration(request.params);
+      case 'get_pending_prekey_generation':
+        return this.getPendingPreKeyGeneration(request.params);
+      case 'stage_prekey_publication':
+        return this.stagePreKeyPublication(request.params);
       case 'establish_session':
         return this.establishSession(request.params);
       case 'encrypt':
@@ -281,6 +329,68 @@ class RatchetRpcService {
 
     const bundle = await this.requireParty().createPreKeyBundle();
     return exportPreKeyMaterial(bundle);
+  }
+
+  private async preparePreKeyGeneration(params: unknown): Promise<unknown> {
+    const document = requireObject(params, 'prepare_prekey_generation params');
+    requireExactFields(
+      document,
+      ['one_time_count', 'issued_at', 'lifetime_seconds'],
+      'prepare_prekey_generation params'
+    );
+
+    const generation = await this.requireParty().preparePreKeyGeneration(
+      requireIntegerField(document, 'one_time_count', 1, 256),
+      requireIntegerField(document, 'issued_at', 0),
+      requireIntegerField(
+        document,
+        'lifetime_seconds',
+        1,
+        7 * 24 * 60 * 60
+      )
+    );
+    return exportPreparedGeneration(generation);
+  }
+
+  private async getPendingPreKeyGeneration(
+    params: unknown
+  ): Promise<unknown> {
+    const document = requireObject(
+      params,
+      'get_pending_prekey_generation params'
+    );
+    requireExactFields(document, [], 'get_pending_prekey_generation params');
+
+    const generation =
+      await this.requireParty().getPendingPreKeyGeneration();
+    return generation === null ? null : exportPreparedGeneration(generation);
+  }
+
+  private async stagePreKeyPublication(params: unknown): Promise<null> {
+    const document = requireObject(params, 'stage_prekey_publication params');
+    requireExactFields(
+      document,
+      ['publication_sequence', 'public_payload'],
+      'stage_prekey_publication params'
+    );
+
+    const publicPayload = requireText(
+      document,
+      'public_payload',
+      MAX_PUBLICATION_PAYLOAD_BYTES
+    );
+    if (Buffer.byteLength(publicPayload, 'utf8') > MAX_PUBLICATION_PAYLOAD_BYTES) {
+      throw new RpcError(
+        'INVALID_REQUEST',
+        'public_payload exceeds the size limit'
+      );
+    }
+
+    await this.requireParty().stagePreKeyPublication(
+      requireIntegerField(document, 'publication_sequence', 1),
+      publicPayload
+    );
+    return null;
   }
 
   private async establishSession(params: unknown): Promise<null> {

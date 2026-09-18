@@ -13,6 +13,10 @@ from ghostlink.ratchet_binding import (
     sign_ratchet_prekey_binding,
 )
 from ghostlink.ratchet_engine import RatchetEngineClient
+from ghostlink.ratchet_publication import (
+    import_ratchet_prekey_publication,
+    verify_local_ratchet_prekey_publication,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 _ENGINE = _ROOT / "ratchet-engine" / "dist" / "src" / "rpc-server.js"
@@ -132,4 +136,78 @@ def test_python_to_node_ratchet_round_trip_survives_restart(tmp_path: Path) -> N
             assert (
                 reopened_bob.decrypt(alice_contact, ciphertext)
                 == after_restart
+            )
+
+
+def test_prekey_publication_staging_survives_restart_exactly(tmp_path: Path) -> None:
+    alice = GhostEntity.generate()
+    bob = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    bob_device = bob.enroll_device()
+
+    alice_contact = import_contact_bundle(
+        export_contact_bundle(alice, alice_device),
+    )
+    bob_contact = import_contact_bundle(
+        export_contact_bundle(bob, bob_device),
+    )
+
+    alice_key = os.urandom(32)
+    bob_key = os.urandom(32)
+    alice_vault = tmp_path / "alice-publication.ratchet"
+    bob_vault = tmp_path / "bob-publication.ratchet"
+    command = [_NODE or "node", str(_ENGINE)]
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as bob_engine:
+        payload = bob_engine.prepare_prekey_publication(
+            one_time_count=3,
+            issued_at=1_000,
+            lifetime_seconds=3_600,
+        )
+        pending = bob_engine.get_pending_prekey_generation()
+        assert pending is not None
+        assert pending.public_payload == payload
+
+        publication = import_ratchet_prekey_publication(payload)
+        verify_local_ratchet_prekey_publication(publication, bob_device)
+        assert publication.publication_sequence == 1
+        assert len(publication.one_time) == 3
+        assert publication.fallback.binding.bundle_kind == "fallback"
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as reopened_bob:
+        exact_retry = reopened_bob.prepare_prekey_publication(
+            one_time_count=99,
+            issued_at=9_999,
+            lifetime_seconds=1,
+        )
+        assert exact_retry == payload
+
+        with RatchetEngineClient(
+            command,
+            alice_device,
+            alice_vault,
+            alice_key,
+        ) as alice_engine:
+            alice_engine.establish_session(
+                publication.one_time[0],
+                bob_contact,
+                now=1_100,
+            )
+            encrypted = alice_engine.encrypt(
+                bob_contact,
+                b"publication-backed session",
+            )
+            assert (
+                reopened_bob.decrypt(alice_contact, encrypted)
+                == b"publication-backed session"
             )

@@ -1,6 +1,6 @@
 # Ratchet pre-key lifecycle
 
-Status: accepted design; lifecycle vault state and pending-generation preparation implemented, publication/rotation/GC pending
+Status: accepted design; pending generation and signed publication staging implemented, relay publication/rotation/GC pending
 
 ## Purpose
 
@@ -382,9 +382,15 @@ The ratchet engine now implements the local preparation half of the lifecycle:
 
 The production default pool target is 100. The generator is bounded to 256 one-time bundles.
 
+Signed publication staging is now implemented:
+
+- Python signs complete binding-v2 one-time/fallback publications with the enrolled DeviceID key;
+- the exact canonical public payload is persisted before network use;
+- pending public bundles are reconstructable from persisted libsignal records after restart;
+- staged payloads are locally reverified and compared to the pending records before reuse.
+
 The following are still pending:
 
-- reconstructing/staging the exact signed public publication payload after restart;
 - relay publication acknowledgement and active/retired transitions;
 - replenishment and rotation decisions;
 - delayed-key garbage collection;

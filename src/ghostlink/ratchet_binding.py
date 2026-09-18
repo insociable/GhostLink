@@ -486,7 +486,7 @@ def import_ratchet_prekey_binding(serialized: str) -> SignedRatchetPreKeyBinding
         document[key] = value
 
     if set(document) != _SIGNED_FIELDS:
-        raise RatchetBindingError("ratchet binding fields do not match version 1")
+        raise RatchetBindingError("ratchet binding fields do not match version 2")
     if _require_integer(document, "version") != _BINDING_VERSION:
         raise RatchetBindingError("unsupported ratchet binding version")
     if _require_text(document, "suite") != _RATCHET_SUITE:
