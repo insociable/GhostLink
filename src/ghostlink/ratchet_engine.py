@@ -6,8 +6,8 @@ import base64
 import json
 import struct
 import subprocess
-import time
 import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
