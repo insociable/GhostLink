@@ -228,38 +228,38 @@ No Certbot cron job is required.
 
 ## 12. External validation gate
 
-Run these checks from a machine **outside** the Oracle VM/network.
+Run the transport checks from a machine **outside** the Oracle VM/network.
 
-Resolve the hostname:
+The repository includes a fail-closed validator that checks every A/AAAA address returned
+for the hostname:
 
-```bash
-getent ahosts node.example.net
-```
+- DNS resolution succeeds;
+- TCP/443 is reachable on every published address;
+- the certificate chain and hostname validate through the system trust store;
+- TCP/80 and TCP/8000 are unreachable on every published address;
+- `HTTPS /health` returns HTTP 200 and exactly `{"status":"ok"}`.
 
-Verify HTTPS and certificate validation:
-
-```bash
-curl --fail --show-error --silent https://node.example.net/health
-```
-
-Expected body:
-
-```json
-{"status":"ok"}
-```
-
-Inspect certificate validation if needed:
+Run:
 
 ```bash
-openssl s_client \
-  -connect node.example.net:443 \
-  -servername node.example.net \
-  -verify_return_error </dev/null
+python3 deploy/oracle/validate_external.py node.example.net
 ```
 
-From the same external machine, verify that TCP/80 and TCP/8000 are not reachable. Use an external port-testing tool appropriate for that workstation/network.
+When the intended public address is known, pin it in the validation command so an
+unexpected/stale DNS target also fails the gate:
 
-Then configure the client with its local Bearer-token file path:
+```bash
+python3 deploy/oracle/validate_external.py \
+  node.example.net \
+  --expect-address 203.0.113.10
+```
+
+Repeat `--expect-address` for every intentionally published A/AAAA address. If an AAAA
+record exists, the validator requires its TCP/443 and TLS path to work and also verifies
+that its TCP/80 and TCP/8000 are closed.
+
+The validator contains no relay secret and does not exercise application identity. After
+the transport gate passes, configure the external client's local Bearer-token file path:
 
 ```bash
 export GHOSTLINK_NODE_TOKEN_FILE="$HOME/.config/ghostlink/node-token"
@@ -274,11 +274,12 @@ https://node.example.net
 At minimum:
 
 1. `prekey-sync` for the destination device;
-2. `send` from a verified contact/device;
-3. `inbox` on the destination;
-4. confirm no static-v2 fallback occurred.
+2. `send --contact-id ...` from a persisted human-verified contact;
+3. `inbox --contact-id ...` on the destination;
+4. confirm no raw-contact trust bypass or static-v2 fallback was used.
 
-Only after the certificate, closed-port and v3 tests pass should issue #21 be closed.
+Only after the DNS/address, certificate, closed-port, HTTPS health and real v3 tests pass
+should issue #21 be closed.
 
 ## 13. Rotate the relay Bearer token
 
