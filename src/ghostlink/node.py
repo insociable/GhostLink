@@ -106,6 +106,8 @@ def main() -> None:
         host=settings.host,
         port=settings.port,
         log_level=settings.log_level,
+        access_log=settings.access_log,
+        proxy_headers=False,
     )
 
 
