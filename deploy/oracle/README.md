@@ -118,9 +118,23 @@ Check the node:
 ghostlink node-health --node http://127.0.0.1:8000
 ```
 
+Run a complete ephemeral E2EE round trip:
+
+```bash
+ghostlink node-smoke --node http://127.0.0.1:8000
+```
+
+Expected result:
+
+```text
+GhostNode E2EE smoke test passed
+```
+
+The smoke command creates two temporary identities in memory, encrypts a test message locally, sends only ciphertext through GhostNode, retrieves and decrypts it locally, verifies the plaintext, then deletes the relay copy. No profile or contact file is written.
+
 Then `ghostlink send` and `ghostlink inbox` automatically send the token in the HTTP Authorization header.
 
-The same SSH tunnel can be used for the first Alice/Bob M3 test.
+The same SSH tunnel can be used for the first persistent Alice/Bob M3 test.
 
 ## 7. Rotate the access token
 
