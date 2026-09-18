@@ -169,3 +169,28 @@ test('lifecycle metadata and pending public payload are encrypted at rest', asyn
   assert.notEqual(loaded, null);
   assert.deepEqual(loaded?.lifecycle, lifecycle);
 });
+
+
+test('lifecycle state separates last-resort and one-time Kyber IDs', () => {
+  assert.throws(
+    () =>
+      parsePreKeyLifecycleState({
+        version: 1,
+        publicationSequence: 1,
+        pending: {
+          sequence: 1,
+          createdAt: 1_000,
+          expiresAt: 2_000,
+          signedPreKeyId: 2001,
+          lastResortKyberPreKeyId: 4001,
+          oneTimeKeyIds: [[1001, 4001]],
+          publicPayload: null,
+          publishedAt: null,
+          retiredAt: null,
+        },
+        active: null,
+        retired: [],
+      }),
+    /last-resort Kyber ID/
+  );
+});
