@@ -38,7 +38,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - crash-safe DeviceID-signed pre-key publication staging with exact payload recovery and local re-verification after restart;
 - GhostNode cryptographically authenticated pre-key publication with strict per-DeviceID sequencing and atomic SQLite replacement;
 - atomic idempotent local publication acknowledgement that promotes staged generations and retains the previous active generation for delayed messages;
-- strict GhostNode publication orchestration that validates the complete relay receipt before committing local ratchet lifecycle state.
+- strict GhostNode publication orchestration that validates the complete relay receipt before committing local ratchet lifecycle state;
+- encrypted per-DeviceID highest-seen remote publication sequence state with atomic rollback rejection before libsignal session establishment.
 
 ### Security
 
