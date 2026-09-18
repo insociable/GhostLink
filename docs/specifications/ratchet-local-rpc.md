@@ -171,6 +171,19 @@ Otherwise the engine reconstructs the pending public bundles from persisted libs
 
 This permits recovery after a crash both before and after publication staging.
 
+### `get_prekey_lifecycle_status`
+
+Parameters: empty object.
+
+Returns non-secret lifecycle metadata only:
+
+- current publication sequence;
+- pending generation sequence/issuance/expiration/staged state when present;
+- active generation sequence/issuance/expiration/publication timestamp/staged state when present;
+- retired-generation count.
+
+It does not return private pre-key material or private key identifiers. The Python layer strictly validates lifecycle role invariants before using this status for maintenance decisions.
+
 ### `stage_prekey_publication`
 
 Parameters:
@@ -295,7 +308,8 @@ The engine now implements:
 - Python DeviceID signing of binding-v2 publication members;
 - exact signed publication staging before network use;
 - atomic, idempotent publication acknowledgement commit from pending to active/retired lifecycle state;
-- encrypted per-DeviceID highest-seen remote publication sequence persistence before session establishment.
+- encrypted per-DeviceID highest-seen remote publication sequence persistence before session establishment;
+- non-secret lifecycle status for deterministic replenishment/refresh decisions.
 
 The detailed formats and lifecycle are specified in:
 
@@ -306,10 +320,8 @@ The detailed formats and lifecycle are specified in:
 
 Before relay cutover GhostLink still needs:
 
-- sender HTTP fetch -> VerifiedContact verification -> session establishment orchestration;
-- replenishment threshold execution;
-- seven-day rotation execution;
-- 15-day retired-key garbage collection.
+- 15-day retired-key garbage collection;
+- the explicit ratcheted message-envelope/CLI cutover.
 
 ## Error handling
 
