@@ -71,6 +71,8 @@ def test_python_to_node_ratchet_round_trip_survives_restart(tmp_path: Path) -> N
         bob_binding = create_ratchet_prekey_binding(
             bob_device,
             bob_material,
+            publication_sequence=1,
+            bundle_kind="one_time",
         )
         signed_bob_binding = sign_ratchet_prekey_binding(
             bob_binding,

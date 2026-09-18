@@ -15,7 +15,7 @@ from nacl.exceptions import BadSignatureError
 from ghostlink.contact import VerifiedContact
 from ghostlink.device import EnrolledGhostDevice
 
-_BINDING_VERSION = 1
+_BINDING_VERSION = 2
 _BINDING_DOMAIN = b"ghostlink-ratchet-prekey-binding"
 _RATCHET_SUITE = "libsignal-v4-pqxdh-triple-ratchet"
 _SIGNAL_DEVICE_ID = 1
@@ -27,6 +27,8 @@ _BUNDLE_ID_BYTES = 16
 _EC_PUBLIC_KEY_BYTES = 33
 _SIGNATURE_BYTES = 64
 _MAX_KYBER_PUBLIC_KEY_BYTES = 4_096
+_MAX_PUBLICATION_SEQUENCE = (1 << 53) - 1
+_BUNDLE_KINDS = {"one_time", "fallback"}
 
 _UNSIGNED_FIELDS = {
     "version",
@@ -36,6 +38,8 @@ _UNSIGNED_FIELDS = {
     "signal_address_name",
     "signal_device_id",
     "registration_id",
+    "publication_sequence",
+    "bundle_kind",
     "bundle_id",
     "issued_at",
     "expires_at",
@@ -81,6 +85,8 @@ class RatchetPreKeyBinding:
     signal_address_name: str
     signal_device_id: int
     registration_id: int
+    publication_sequence: int
+    bundle_kind: str
     bundle_id: bytes
     issued_at: int
     expires_at: int
@@ -106,7 +112,18 @@ class RatchetPreKeyBinding:
             )
         if self.signal_device_id != _SIGNAL_DEVICE_ID:
             raise RatchetBindingError("signal_device_id must equal 1")
-        _validate_identifier(self.registration_id, "registration_id", _MAX_REGISTRATION_ID)
+        _validate_identifier(
+            self.registration_id,
+            "registration_id",
+            _MAX_REGISTRATION_ID,
+        )
+        _validate_identifier(
+            self.publication_sequence,
+            "publication_sequence",
+            _MAX_PUBLICATION_SEQUENCE,
+        )
+        if self.bundle_kind not in _BUNDLE_KINDS:
+            raise RatchetBindingError("bundle_kind must be one_time or fallback")
         _validate_identifier(self.signed_pre_key_id, "signed_pre_key_id")
         _validate_identifier(self.kyber_pre_key_id, "kyber_pre_key_id")
 
@@ -132,6 +149,15 @@ class RatchetPreKeyBinding:
                     "pre_key_id and pre_key must either both be present or both be null"
                 )
             _validate_exact_bytes(self.pre_key, "pre_key", _EC_PUBLIC_KEY_BYTES)
+
+        if self.bundle_kind == "one_time" and self.pre_key_id is None:
+            raise RatchetBindingError(
+                "one_time binding requires an EC one-time pre-key"
+            )
+        if self.bundle_kind == "fallback" and self.pre_key_id is not None:
+            raise RatchetBindingError(
+                "fallback binding must not contain an EC one-time pre-key"
+            )
 
         _validate_exact_bytes(
             self.signed_pre_key,
@@ -173,6 +199,8 @@ class RatchetPreKeyBinding:
                 _encode_text(self.signal_address_name),
                 struct.pack(">I", self.signal_device_id),
                 struct.pack(">I", self.registration_id),
+                struct.pack(">Q", self.publication_sequence),
+                _encode_text(self.bundle_kind),
                 _encode_bytes(self.bundle_id),
                 struct.pack(">Q", self.issued_at),
                 struct.pack(">Q", self.expires_at),
@@ -311,6 +339,8 @@ def create_ratchet_prekey_binding(
     device: EnrolledGhostDevice,
     material: RatchetPreKeyMaterial,
     *,
+    publication_sequence: int,
+    bundle_kind: str,
     issued_at: int | None = None,
     lifetime_seconds: int = 24 * 60 * 60,
     bundle_id: bytes | None = None,
@@ -330,6 +360,8 @@ def create_ratchet_prekey_binding(
         signal_address_name=certificate.device_id,
         signal_device_id=_SIGNAL_DEVICE_ID,
         registration_id=material.registration_id,
+        publication_sequence=publication_sequence,
+        bundle_kind=bundle_kind,
         bundle_id=secrets.token_bytes(_BUNDLE_ID_BYTES) if bundle_id is None else bundle_id,
         issued_at=now,
         expires_at=now + lifetime_seconds,
@@ -412,6 +444,8 @@ def export_ratchet_prekey_binding(
         "signal_address_name": binding.signal_address_name,
         "signal_device_id": binding.signal_device_id,
         "registration_id": binding.registration_id,
+        "publication_sequence": binding.publication_sequence,
+        "bundle_kind": binding.bundle_kind,
         "bundle_id": binding.bundle_id.hex(),
         "issued_at": binding.issued_at,
         "expires_at": binding.expires_at,
@@ -478,6 +512,8 @@ def import_ratchet_prekey_binding(serialized: str) -> SignedRatchetPreKeyBinding
         signal_address_name=_require_text(document, "signal_address_name"),
         signal_device_id=_require_integer(document, "signal_device_id"),
         registration_id=_require_integer(document, "registration_id"),
+        publication_sequence=_require_integer(document, "publication_sequence"),
+        bundle_kind=_require_text(document, "bundle_kind"),
         bundle_id=bundle_id,
         issued_at=_require_integer(document, "issued_at"),
         expires_at=_require_integer(document, "expires_at"),

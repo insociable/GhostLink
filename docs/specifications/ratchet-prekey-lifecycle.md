@@ -109,7 +109,7 @@ The lifecycle implementation will introduce binding version 2.
 
 Version 2 adds at least:
 
-- `publication_sequence`: positive unsigned 64-bit generation sequence;
+- `publication_sequence`: positive JSON-safe integer generation sequence (`1..2^53-1`);
 - `bundle_kind`: `one_time` or `fallback`.
 
 Both fields are covered by the existing GhostLink device Ed25519 signature.
@@ -137,7 +137,7 @@ There is no silent acceptance of binding version 1 by the production ratchet rel
 
 ## Publication sequence
 
-Each DeviceID maintains its own strictly increasing publication sequence.
+Each DeviceID maintains its own strictly increasing publication sequence. The wire/profile range is `1..2^53-1` so Python, TypeScript and JSON relays preserve the value exactly.
 
 The first production generation uses sequence 1.
 
