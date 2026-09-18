@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
@@ -87,13 +88,15 @@ def install_fake_ratchet_operations(monkeypatch) -> None:
         return None
 
     def encrypt(engine, contact, plaintext):
+        del plaintext
+        now = int(time.time())
         return RatchetMessage(
             version=3,
             message_id="a" * 32,
             sender_device_id=cast(FakeRatchetEngine, engine).local_device_id,
             recipient_device_id=contact.device_id,
-            created_at=1_000,
-            expires_at=2_000,
+            created_at=now,
+            expires_at=now + 3_600,
             ciphertext_type=3,
             ciphertext=b"fake-libsignal-ciphertext",
         )
