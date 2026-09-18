@@ -54,7 +54,7 @@ class ValidatedContact:
 
     @property
     def device_id(self) -> str:
-        """Return the verified remote DeviceID."""
+        """Return the cryptographically validated remote DeviceID."""
         return self.device.device_id
 
 
