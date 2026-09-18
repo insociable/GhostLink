@@ -323,6 +323,8 @@ class RatchetRpcService {
         return this.encrypt(request.params);
       case 'decrypt':
         return this.decrypt(request.params);
+      case 'decrypt_context_bound':
+        return this.decryptContextBound(request.params);
       case 'close':
         return this.close(request.params);
       default:
@@ -552,6 +554,52 @@ class RatchetRpcService {
         type: messageType,
         body: ciphertext,
       }
+    );
+
+    if (plaintext.byteLength > MAX_PAYLOAD_BYTES) {
+      throw new RpcError(
+        'ENGINE_ERROR',
+        'decrypted plaintext exceeds the size limit'
+      );
+    }
+
+    return {
+      plaintext: Buffer.from(plaintext).toString('base64'),
+    };
+  }
+
+  private async decryptContextBound(
+    params: unknown
+  ): Promise<Record<string, string>> {
+    const document = requireObject(params, 'decrypt_context_bound params');
+    requireExactFields(
+      document,
+      ['remote_device_id', 'message_type', 'ciphertext', 'expected_context'],
+      'decrypt_context_bound params'
+    );
+
+    const remoteDeviceId = requireDeviceId(document, 'remote_device_id');
+    const messageType = requireMessageType(document.message_type);
+    const ciphertext = decodeBase64(document, 'ciphertext', {
+      maxBytes: MAX_FRAME_BYTES,
+    });
+    const expectedContext = decodeBase64(document, 'expected_context', {
+      maxBytes: 4096,
+    });
+    if (expectedContext.byteLength === 0) {
+      throw new RpcError(
+        'INVALID_REQUEST',
+        'expected_context must not be empty'
+      );
+    }
+
+    const plaintext = await this.requireParty().decryptBytesFromWithContext(
+      remoteDeviceId,
+      {
+        type: messageType,
+        body: ciphertext,
+      },
+      expectedContext
     );
 
     if (plaintext.byteLength > MAX_PAYLOAD_BYTES) {
