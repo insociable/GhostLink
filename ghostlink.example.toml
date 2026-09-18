@@ -4,3 +4,7 @@
 host = "127.0.0.1"
 port = 8000
 log_level = "info"
+
+# Optional persistent ciphertext store.
+# Relative paths are resolved from the directory containing this config file.
+database_path = "data/messages.sqlite3"
