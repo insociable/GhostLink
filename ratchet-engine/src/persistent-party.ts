@@ -19,7 +19,11 @@ import {
   restorePartyStores,
   type PartyStoresState,
 } from './stores.js';
-import { RatchetStateVault } from './vault.js';
+import {
+  RatchetStateVault,
+  type VaultCheckpointMetadata,
+  type VaultStateOrigin,
+} from './vault.js';
 
 interface Owner {
   readonly name: string;
@@ -79,7 +83,9 @@ export class PersistentRatchetParty {
     name: string,
     deviceId: number,
     vaultPath: string,
-    masterKey: Uint8Array
+    masterKey: Uint8Array,
+    stateId?: string,
+    allowLegacyMigration = false
   ): Promise<PersistentRatchetParty> {
     if (!name) {
       throw new Error('ratchet party name must not be empty');
@@ -89,7 +95,12 @@ export class PersistentRatchetParty {
     }
 
     const owner = { name, deviceId };
-    const vault = new RatchetStateVault(vaultPath, masterKey);
+    const vault = new RatchetStateVault(
+      vaultPath,
+      masterKey,
+      stateId,
+      allowLegacyMigration
+    );
     const persisted = await vault.load(owner);
 
     let stores;
@@ -100,6 +111,9 @@ export class PersistentRatchetParty {
       await vault.save(owner, exportPartyStores(stores));
     } else {
       stores = restorePartyStores(persisted);
+      if (vault.needsStateInitialization()) {
+        await vault.save(owner, exportPartyStores(stores));
+      }
     }
 
     const registrationId = await stores.identity.getLocalRegistrationId();
@@ -110,6 +124,18 @@ export class PersistentRatchetParty {
 
   get address(): SignalClient.ProtocolAddress {
     return this.inner.address;
+  }
+
+  getStateOrigin(): VaultStateOrigin | null {
+    return this.vault.getStateOrigin();
+  }
+
+  getCheckpointMetadata(): VaultCheckpointMetadata {
+    return this.vault.getCheckpointMetadata();
+  }
+
+  acknowledgeCheckpoint(digest: string): void {
+    this.vault.acknowledgeCheckpoint(digest);
   }
 
   private rebuild(state: PartyStoresState): RatchetParty {

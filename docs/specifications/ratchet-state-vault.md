@@ -10,7 +10,7 @@ GhostNode never receives or stores this vault.
 
 ## Cryptographic format
 
-Version 1 uses:
+The outer vault envelope remains version 1 and uses:
 
 - AES-256-GCM;
 - a 256-bit master key supplied by the caller;
@@ -20,6 +20,15 @@ Version 1 uses:
   `ghostlink-ratchet-state-v1`.
 
 The master key is not stored in the vault.
+
+The encrypted payload now has two versions:
+
+- payload v1: historical vault without rollback metadata;
+- payload v2: current rollback-aware vault with authenticated
+  `stateId`, component `revision`, and `previousDigest`.
+
+Normal CLI runtime requires payload v2. Payload v1 is accepted as a migration input only
+through the explicit `ratchet-vault-upgrade` path.
 
 The serialized outer envelope contains only:
 
@@ -48,7 +57,9 @@ The encrypted payload contains:
 - consumed Kyber pre-key identifiers;
 - base-key reuse tracking required by libsignal;
 - pre-key lifecycle metadata: monotonic publication sequence, pending/active/retired generations, generation key ownership and the exact staged public publication payload needed for crash-safe retry;
-- highest-seen remote publication sequence per canonical DeviceID.
+- highest-seen remote publication sequence per canonical DeviceID;
+- rollback coordination metadata: stable client-state ID, positive ratchet component
+  revision, and the previous ratchet checkpoint digest.
 
 The encrypted store snapshot is now version 3. Version-1 and version-2 store snapshots are accepted as migration inputs and are normalized to version 3. Version 1 receives an empty lifecycle state and both legacy versions receive an empty remote-publication continuity map. The outer AES-GCM vault envelope remains version 1, so existing encrypted vaults can be opened and migrated without changing their key or AAD.
 
@@ -101,6 +112,22 @@ fsync parent directory (POSIX)
 
 The implementation does not persist individual stores independently.
 
+For rollback-aware payload v2, Python independently computes the `ratchet` checkpoint over
+the exact serialized encrypted vault bytes using the profile-held state-coordination key.
+The coordination key is never placed in argv, the environment, or the Node RPC request.
+
+After each durable Node-side mutation:
+
+1. the vault is atomically replaced with revision `N+1` and the acknowledged checkpoint
+   digest for revision `N` as `previousDigest`;
+2. Python reads the exact durable vault bytes and recomputes the authenticated checkpoint;
+3. the monotonic witness compare-and-set advances from revision `N` to `N+1`;
+4. Python acknowledges that new checkpoint digest to the Node engine;
+5. the engine refuses another state-changing operation until that acknowledgement occurs.
+
+A crash after step 1 and before step 3 is recovered only through ADR-0008's single-revision
+linked catch-up rule.
+
 This is important because one libsignal operation can modify several stores, for example:
 
 - create/update a session;
@@ -118,7 +145,7 @@ Concurrent calls such as three simultaneous sends therefore consume one ratchet 
 
 ## Process ownership
 
-Version 1 assumes one ratchet-engine process owns a vault at a time.
+The current implementation assumes one ratchet-engine process owns a vault at a time.
 
 Two independent processes must not open the same writable vault concurrently.
 
@@ -184,9 +211,13 @@ It does not protect against:
 - memory extraction while the vault is unlocked;
 - compromise of the master key;
 - malicious code executing inside the ratchet-engine process;
-- filesystem rollback to an older valid vault snapshot.
+- rollback of both the vault and its monotonic witness in the same restored snapshot.
 
-Rollback protection requires an external monotonic state or trusted hardware and is a separate design problem.
+With a current witness record, rollback of an older authenticated vault snapshot is
+detected before the engine is allowed to perform another state mutation. Because the
+reference SQLite witness normally lives on the same filesystem, whole-filesystem rollback
+is still outside the protection claim. A production whole-device claim requires a witness
+outside that rollback domain.
 
 ## Validation
 
@@ -206,6 +237,11 @@ Integration tests cover:
 - version-1 and version-2 store-state migration to version 3;
 - encrypted-at-rest lifecycle metadata, staged public publication payload and remote publication continuity state;
 - lifecycle role/sequence/identifier invariant rejection;
-- durable highest-seen remote sequence persistence and rollback rejection.
+- durable highest-seen remote sequence persistence and rollback rejection;
+- explicit v1 -> rollback-aware v2 vault migration;
+- ratchet checkpoint revision/lineage persistence inside authenticated ciphertext;
+- refusal to mutate before checkpoint acknowledgement;
+- ratchet/highest-seen rollback detection against a current monotonic witness;
+- one-step witness catch-up after a simulated crash between vault commit and witness commit.
 
 GhostLink remains pre-alpha and has not undergone an independent cryptographic audit.

@@ -646,6 +646,55 @@ def test_cli_requires_explicit_replay_state_rollback_migration(
     assert "Replay state enrolled in rollback-state witness." in migrated.out
 
 
+def test_cli_ratchet_vault_upgrade_uses_explicit_migration_mode(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    password = "ratchet vault migration password"  # noqa: S105
+    profile_path = tmp_path / "alice.ghost"
+    vault_path = Path(f"{profile_path}.ratchet")
+
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 0
+    capsys.readouterr()
+    vault_path.write_bytes(b"legacy-vault-placeholder")
+
+    calls: dict[str, object] = {}
+
+    class MigrationEngine:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+    def create_engine(
+        profile: LocalProfile,
+        path: Path,
+        *,
+        allow_legacy_migration: bool = False,
+    ):
+        calls["ghost_id"] = profile.entity.ghost_id
+        calls["path"] = path
+        calls["allow"] = allow_legacy_migration
+        return MigrationEngine()
+
+    monkeypatch.setattr(cli_module, "_create_ratchet_engine", create_engine)
+
+    assert run(
+        ["ratchet-vault-upgrade", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 0
+
+    output = capsys.readouterr()
+    assert calls["path"] == profile_path
+    assert calls["allow"] is True
+    assert "Ratchet vault enrolled in rollback-state witness." in output.out
+
+
 def test_cli_refuses_to_overwrite_existing_profile(tmp_path: Path, capsys) -> None:
     profile_path = tmp_path / "existing.ghost"
     profile_path.write_text("already here", encoding="utf-8")

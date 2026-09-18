@@ -19,25 +19,45 @@ import {
   type PartyStoresState,
 } from './stores.js';
 
-const VAULT_VERSION = 1;
+const VAULT_ENVELOPE_VERSION = 1;
+const LEGACY_VAULT_PAYLOAD_VERSION = 1;
+const VAULT_PAYLOAD_VERSION = 2;
 const VAULT_CIPHER = 'aes-256-gcm';
 const MASTER_KEY_BYTES = 32;
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const MAX_VAULT_BYTES = 16 * 1024 * 1024;
 const MAX_PLAINTEXT_BYTES = 12 * 1024 * 1024;
+const MAX_REVISION = Number.MAX_SAFE_INTEGER;
 const AAD = Buffer.from('ghostlink-ratchet-state-v1', 'utf8');
+const STATE_ID_PATTERN = /^[0-9a-f]{32}$/;
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
 interface VaultOwner {
   readonly name: string;
   readonly deviceId: number;
 }
 
-interface VaultPayload {
+interface VaultStateMetadata {
+  readonly stateId: string;
+  readonly revision: number;
+  readonly previousDigest: string | null;
+}
+
+interface LegacyVaultPayload {
   readonly version: 1;
   readonly owner: VaultOwner;
   readonly stores: PartyStoresState;
 }
+
+interface RollbackAwareVaultPayload {
+  readonly version: 2;
+  readonly owner: VaultOwner;
+  readonly state: VaultStateMetadata;
+  readonly stores: PartyStoresState;
+}
+
+type VaultPayload = LegacyVaultPayload | RollbackAwareVaultPayload;
 
 interface VaultEnvelope {
   readonly version: 1;
@@ -45,6 +65,14 @@ interface VaultEnvelope {
   readonly nonce: string;
   readonly ciphertext: string;
   readonly tag: string;
+}
+
+export type VaultStateOrigin = 'created' | 'migrated' | 'existing';
+
+export interface VaultCheckpointMetadata {
+  readonly stateId: string;
+  readonly revision: number;
+  readonly previousDigest: string | null;
 }
 
 export class RatchetVaultError extends Error {
@@ -69,7 +97,9 @@ function assertExactFields(
   const actual = Object.keys(document).sort();
   const wanted = [...expected].sort();
   if (actual.join(',') !== wanted.join(',')) {
-    throw new RatchetVaultError(`${context} fields do not match version 1`);
+    throw new RatchetVaultError(
+      `${context} fields do not match the expected format`
+    );
   }
 }
 
@@ -95,6 +125,57 @@ function requireDeviceId(value: unknown): number {
     throw new RatchetVaultError('owner.deviceId must be a positive safe integer');
   }
   return value as number;
+}
+
+function requireStateId(value: unknown): string {
+  if (typeof value !== 'string' || !STATE_ID_PATTERN.test(value)) {
+    throw new RatchetVaultError(
+      'vault stateId must be 128-bit lowercase hexadecimal'
+    );
+  }
+  return value;
+}
+
+function requireRevision(value: unknown): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < 1 ||
+    (value as number) > MAX_REVISION
+  ) {
+    throw new RatchetVaultError(
+      'vault revision must be a positive safe integer'
+    );
+  }
+  return value as number;
+}
+
+function requirePreviousDigest(
+  value: unknown,
+  revision: number
+): string | null {
+  if (revision === 1) {
+    if (value !== null) {
+      throw new RatchetVaultError(
+        'initial rollback-aware vault must not have a previous digest'
+      );
+    }
+    return null;
+  }
+  if (typeof value !== 'string' || !DIGEST_PATTERN.test(value)) {
+    throw new RatchetVaultError(
+      'vault previousDigest must be 32-byte lowercase hexadecimal'
+    );
+  }
+  return value;
+}
+
+function requireCheckpointDigest(value: string): string {
+  if (!DIGEST_PATTERN.test(value)) {
+    throw new RatchetVaultError(
+      'checkpoint digest must be 32-byte lowercase hexadecimal'
+    );
+  }
+  return value;
 }
 
 function decodeCanonicalBase64(
@@ -124,8 +205,8 @@ function parseEnvelope(value: unknown): VaultEnvelope {
     'vault'
   );
 
-  if (document.version !== VAULT_VERSION) {
-    throw new RatchetVaultError('unsupported vault version');
+  if (document.version !== VAULT_ENVELOPE_VERSION) {
+    throw new RatchetVaultError('unsupported vault envelope version');
   }
   if (document.cipher !== VAULT_CIPHER) {
     throw new RatchetVaultError('unsupported vault cipher');
@@ -151,25 +232,64 @@ function parseEnvelope(value: unknown): VaultEnvelope {
   };
 }
 
+function parseOwner(value: unknown): VaultOwner {
+  const document = requireObject(value, 'vault owner');
+  assertExactFields(document, ['name', 'deviceId'], 'vault owner');
+  return {
+    name: requireText(document.name, 'owner.name'),
+    deviceId: requireDeviceId(document.deviceId),
+  };
+}
+
+function parseState(value: unknown): VaultStateMetadata {
+  const document = requireObject(value, 'vault state');
+  assertExactFields(
+    document,
+    ['stateId', 'revision', 'previousDigest'],
+    'vault state'
+  );
+  const revision = requireRevision(document.revision);
+  return {
+    stateId: requireStateId(document.stateId),
+    revision,
+    previousDigest: requirePreviousDigest(
+      document.previousDigest,
+      revision
+    ),
+  };
+}
+
 function parsePayload(value: unknown): VaultPayload {
   const document = requireObject(value, 'decrypted vault');
-  assertExactFields(document, ['version', 'owner', 'stores'], 'decrypted vault');
 
-  if (document.version !== VAULT_VERSION) {
-    throw new RatchetVaultError('unsupported decrypted vault version');
+  if (document.version === LEGACY_VAULT_PAYLOAD_VERSION) {
+    assertExactFields(
+      document,
+      ['version', 'owner', 'stores'],
+      'decrypted vault'
+    );
+    return {
+      version: 1,
+      owner: parseOwner(document.owner),
+      stores: parsePartyStoresState(document.stores),
+    };
   }
 
-  const ownerDocument = requireObject(document.owner, 'vault owner');
-  assertExactFields(ownerDocument, ['name', 'deviceId'], 'vault owner');
+  if (document.version === VAULT_PAYLOAD_VERSION) {
+    assertExactFields(
+      document,
+      ['version', 'owner', 'state', 'stores'],
+      'decrypted vault'
+    );
+    return {
+      version: 2,
+      owner: parseOwner(document.owner),
+      state: parseState(document.state),
+      stores: parsePartyStoresState(document.stores),
+    };
+  }
 
-  return {
-    version: 1,
-    owner: {
-      name: requireText(ownerDocument.name, 'owner.name'),
-      deviceId: requireDeviceId(ownerDocument.deviceId),
-    },
-    stores: parsePartyStoresState(document.stores),
-  };
+  throw new RatchetVaultError('unsupported decrypted vault version');
 }
 
 function parseJson(raw: Buffer, context: string): unknown {
@@ -206,15 +326,24 @@ async function fsyncDirectory(path: string): Promise<void> {
 
 export class RatchetStateVault {
   private readonly masterKey: Buffer;
+  private readonly stateId: string | null;
+  private readonly allowLegacyMigration: boolean;
+  private checkpoint: VaultCheckpointMetadata | null = null;
+  private acknowledgedDigest: string | null = null;
+  private stateOrigin: VaultStateOrigin | null = null;
 
   constructor(
     readonly path: string,
-    masterKey: Uint8Array
+    masterKey: Uint8Array,
+    stateId?: string,
+    allowLegacyMigration = false
   ) {
     if (!path) {
       throw new RatchetVaultError('vault path must not be empty');
     }
     this.masterKey = validateMasterKey(masterKey);
+    this.stateId = stateId === undefined ? null : requireStateId(stateId);
+    this.allowLegacyMigration = allowLegacyMigration;
   }
 
   async exists(): Promise<boolean> {
@@ -233,8 +362,33 @@ export class RatchetStateVault {
     }
   }
 
+  needsStateInitialization(): boolean {
+    return this.stateId !== null && this.checkpoint === null;
+  }
+
+  getStateOrigin(): VaultStateOrigin | null {
+    return this.stateOrigin;
+  }
+
+  getCheckpointMetadata(): VaultCheckpointMetadata {
+    if (this.stateId === null || this.checkpoint === null) {
+      throw new RatchetVaultError('ratchet vault is not rollback-aware');
+    }
+    return { ...this.checkpoint };
+  }
+
+  acknowledgeCheckpoint(digest: string): void {
+    if (this.stateId === null || this.checkpoint === null) {
+      throw new RatchetVaultError('ratchet vault is not rollback-aware');
+    }
+    this.acknowledgedDigest = requireCheckpointDigest(digest);
+  }
+
   async load(expectedOwner: VaultOwner): Promise<PartyStoresState | null> {
     if (!(await this.exists())) {
+      if (this.stateId !== null) {
+        this.stateOrigin = 'created';
+      }
       return null;
     }
 
@@ -283,18 +437,87 @@ export class RatchetStateVault {
       throw new RatchetVaultError('vault owner does not match requested device');
     }
 
+    if (payload.version === 1) {
+      if (this.stateId !== null) {
+        if (!this.allowLegacyMigration) {
+          throw new RatchetVaultError(
+            'legacy ratchet vault requires explicit rollback-state migration'
+          );
+        }
+        this.stateOrigin = 'migrated';
+        this.checkpoint = null;
+        this.acknowledgedDigest = null;
+      }
+      return payload.stores;
+    }
+
+    if (this.stateId === null) {
+      throw new RatchetVaultError(
+        'rollback-aware ratchet vault requires state coordination'
+      );
+    }
+    if (payload.state.stateId !== this.stateId) {
+      throw new RatchetVaultError(
+        'ratchet vault belongs to a different client state'
+      );
+    }
+
+    this.checkpoint = {
+      stateId: payload.state.stateId,
+      revision: payload.state.revision,
+      previousDigest: payload.state.previousDigest,
+    };
+    this.acknowledgedDigest = null;
+    this.stateOrigin = 'existing';
     return payload.stores;
   }
 
   async save(owner: VaultOwner, stores: PartyStoresState): Promise<void> {
-    const payload: VaultPayload = {
-      version: 1,
-      owner: {
-        name: requireText(owner.name, 'owner.name'),
-        deviceId: requireDeviceId(owner.deviceId),
-      },
-      stores,
-    };
+    let payload: VaultPayload;
+
+    if (this.stateId === null) {
+      payload = {
+        version: 1,
+        owner: {
+          name: requireText(owner.name, 'owner.name'),
+          deviceId: requireDeviceId(owner.deviceId),
+        },
+        stores,
+      };
+    } else {
+      let revision: number;
+      let previousDigest: string | null;
+
+      if (this.checkpoint === null) {
+        revision = 1;
+        previousDigest = null;
+      } else {
+        if (this.acknowledgedDigest === null) {
+          throw new RatchetVaultError(
+            'ratchet vault checkpoint must be acknowledged before mutation'
+          );
+        }
+        if (this.checkpoint.revision >= MAX_REVISION) {
+          throw new RatchetVaultError('ratchet vault revision is exhausted');
+        }
+        revision = this.checkpoint.revision + 1;
+        previousDigest = this.acknowledgedDigest;
+      }
+
+      payload = {
+        version: 2,
+        owner: {
+          name: requireText(owner.name, 'owner.name'),
+          deviceId: requireDeviceId(owner.deviceId),
+        },
+        state: {
+          stateId: this.stateId,
+          revision,
+          previousDigest,
+        },
+        stores,
+      };
+    }
 
     const plaintext = Buffer.from(JSON.stringify(payload), 'utf8');
     if (plaintext.length > MAX_PLAINTEXT_BYTES) {
@@ -334,7 +557,12 @@ export class RatchetStateVault {
 
     const temporary = join(
       directory,
-      `.${basename(this.path)}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`
+      '.' +
+        basename(this.path) +
+        '.tmp-' +
+        process.pid +
+        '-' +
+        randomBytes(8).toString('hex')
     );
 
     let handle;
@@ -358,6 +586,15 @@ export class RatchetStateVault {
       throw new RatchetVaultError('unable to persist ratchet vault atomically', {
         cause: error,
       });
+    }
+
+    if (payload.version === 2) {
+      this.checkpoint = {
+        stateId: payload.state.stateId,
+        revision: payload.state.revision,
+        previousDigest: payload.state.previousDigest,
+      };
+      this.acknowledgedDigest = null;
     }
   }
 

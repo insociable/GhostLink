@@ -33,6 +33,10 @@ from ghostlink.ratchet_publication import (
 )
 from ghostlink.ratchet_publish import publish_prekey_generation
 from ghostlink.replay import SQLiteReplayCache
+from ghostlink.state_witness import (
+    SQLiteMonotonicWitness,
+    StateWitnessError,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 _ENGINE = _ROOT / "ratchet-engine" / "dist" / "src" / "rpc-server.js"
@@ -386,6 +390,228 @@ def test_remote_publication_sequence_rollback_rejected_after_restart(
                     now=1_100,
                 )
 
+
+
+class _FailingRatchetWitness:
+    def __init__(self, delegate: SQLiteMonotonicWitness) -> None:
+        self.delegate = delegate
+        self.fail_compare = False
+
+    def get(self, component):
+        return self.delegate.get(component)
+
+    def initialize(self, record) -> None:
+        self.delegate.initialize(record)
+
+    def compare_and_set(self, expected, next_record) -> None:
+        if self.fail_compare:
+            raise StateWitnessError("simulated ratchet witness failure")
+        self.delegate.compare_and_set(expected, next_record)
+
+
+def test_rollback_aware_ratchet_vault_detects_highest_seen_rollback(
+    tmp_path: Path,
+) -> None:
+    alice = GhostEntity.generate()
+    bob = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    bob_device = bob.enroll_device()
+    bob_contact = import_contact_bundle(
+        export_contact_bundle(bob, bob_device),
+    )
+
+    command = [_NODE or "node", str(_ENGINE)]
+    alice_key = os.urandom(32)
+    bob_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    alice_vault = tmp_path / "alice-witnessed.ratchet"
+    bob_vault = tmp_path / "bob-witnessed-peer.ratchet"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "ratchet-witness.sqlite3",
+        state_id,
+        coordination_key,
+    )
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as bob_engine:
+        first_material = bob_engine.create_prekey_material()
+        sequence_two = sign_ratchet_prekey_binding(
+            create_ratchet_prekey_binding(
+                bob_device,
+                first_material,
+                publication_sequence=2,
+                bundle_kind="one_time",
+                issued_at=1_000,
+            ),
+            bob_device,
+        )
+
+        with RatchetEngineClient(
+            command,
+            alice_device,
+            alice_vault,
+            alice_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=witness,
+        ) as alice_engine:
+            assert witness.get("ratchet").revision == 1
+            alice_engine.establish_session(
+                sequence_two,
+                bob_contact,
+                now=1_100,
+            )
+            assert witness.get("ratchet").revision == 2
+
+        rollback_snapshot = alice_vault.read_bytes()
+
+        second_material = bob_engine.create_prekey_material()
+        sequence_three = sign_ratchet_prekey_binding(
+            create_ratchet_prekey_binding(
+                bob_device,
+                second_material,
+                publication_sequence=3,
+                bundle_kind="one_time",
+                issued_at=1_000,
+            ),
+            bob_device,
+        )
+
+        with RatchetEngineClient(
+            command,
+            alice_device,
+            alice_vault,
+            alice_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=witness,
+        ) as alice_engine:
+            alice_engine.establish_session(
+                sequence_three,
+                bob_contact,
+                now=1_100,
+            )
+            assert witness.get("ratchet").revision == 3
+
+    alice_vault.write_bytes(rollback_snapshot)
+
+    with pytest.raises(
+        RatchetEngineError,
+        match="older than monotonic witness",
+    ):
+        RatchetEngineClient(
+            command,
+            alice_device,
+            alice_vault,
+            alice_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=witness,
+        )
+
+
+def test_ratchet_vault_recovers_one_step_after_witness_commit_crash(
+    tmp_path: Path,
+) -> None:
+    local = GhostEntity.generate().enroll_device()
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "crash-recovery.ratchet"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "crash-recovery-witness.sqlite3",
+        state_id,
+        coordination_key,
+    )
+    failing = _FailingRatchetWitness(witness)
+
+    engine = RatchetEngineClient(
+        command,
+        local,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=failing,
+    )
+    assert witness.get("ratchet").revision == 1
+
+    failing.fail_compare = True
+    with pytest.raises(
+        RatchetEngineError,
+        match="simulated ratchet witness failure",
+    ):
+        engine.create_prekey_material()
+    engine.close()
+
+    assert witness.get("ratchet").revision == 1
+
+    with RatchetEngineClient(
+        command,
+        local,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ):
+        assert witness.get("ratchet").revision == 2
+
+
+def test_legacy_ratchet_vault_requires_explicit_witness_migration(
+    tmp_path: Path,
+) -> None:
+    local = GhostEntity.generate().enroll_device()
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "legacy-migration.ratchet"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "legacy-migration-witness.sqlite3",
+        state_id,
+        coordination_key,
+    )
+
+    with RatchetEngineClient(
+        command,
+        local,
+        vault_path,
+        master_key,
+    ) as legacy:
+        legacy.create_prekey_material()
+
+    with pytest.raises(
+        RatchetEngineError,
+        match="requires explicit rollback-state migration",
+    ):
+        RatchetEngineClient(
+            command,
+            local,
+            vault_path,
+            master_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=witness,
+        )
+
+    with RatchetEngineClient(
+        command,
+        local,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+        allow_legacy_migration=True,
+    ):
+        assert witness.get("ratchet").revision == 1
 
 
 def test_relay_fetch_establishes_one_time_and_fallback_sessions(

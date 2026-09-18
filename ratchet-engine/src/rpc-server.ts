@@ -14,6 +14,8 @@ const RPC_VERSION = 1;
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES = 1024 * 1024;
 const DEVICE_ID_PATTERN = /^device1:[a-z2-7]{52}$/;
+const STATE_ID_PATTERN = /^[0-9a-f]{32}$/;
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_PUBLICATION_PAYLOAD_BYTES = 1024 * 1024;
 
 interface RpcRequest {
@@ -101,6 +103,45 @@ function requireDeviceId(
     throw new RpcError(
       'INVALID_REQUEST',
       `${field} must be a canonical GhostLink DeviceID`
+    );
+  }
+  return value;
+}
+
+function requireBoolean(
+  document: Record<string, unknown>,
+  field: string
+): boolean {
+  const value = document[field];
+  if (typeof value !== 'boolean') {
+    throw new RpcError('INVALID_REQUEST', `${field} must be a boolean`);
+  }
+  return value;
+}
+
+function requireStateId(
+  document: Record<string, unknown>,
+  field: string
+): string {
+  const value = requireText(document, field, 32);
+  if (!STATE_ID_PATTERN.test(value)) {
+    throw new RpcError(
+      'INVALID_REQUEST',
+      `${field} must be 128-bit lowercase hexadecimal`
+    );
+  }
+  return value;
+}
+
+function requireDigest(
+  document: Record<string, unknown>,
+  field: string
+): string {
+  const value = requireText(document, field, 64);
+  if (!DIGEST_PATTERN.test(value)) {
+    throw new RpcError(
+      'INVALID_REQUEST',
+      `${field} must be 32-byte lowercase hexadecimal`
     );
   }
   return value;
@@ -303,6 +344,10 @@ class RatchetRpcService {
         return this.ping(request.params);
       case 'open':
         return this.open(request.params);
+      case 'state_checkpoint':
+        return this.stateCheckpoint(request.params);
+      case 'acknowledge_checkpoint':
+        return this.acknowledgeCheckpoint(request.params);
       case 'create_prekey_material':
         return this.createPreKeyMaterial(request.params);
       case 'prepare_prekey_generation':
@@ -343,34 +388,86 @@ class RatchetRpcService {
     return { rpc_version: RPC_VERSION };
   }
 
-  private async open(params: unknown): Promise<Record<string, number>> {
+  private async open(params: unknown): Promise<Record<string, unknown>> {
     if (this.party !== null) {
       throw new RpcError('ALREADY_OPEN', 'ratchet engine is already open');
     }
 
     const document = requireObject(params, 'open params');
-    requireExactFields(
-      document,
-      ['device_id', 'vault_path', 'master_key'],
-      'open params'
-    );
+    const rollbackAware = Object.hasOwn(document, 'state_id');
+
+    if (rollbackAware) {
+      requireExactFields(
+        document,
+        [
+          'device_id',
+          'vault_path',
+          'master_key',
+          'state_id',
+          'allow_legacy_migration',
+        ],
+        'open params'
+      );
+    } else {
+      requireExactFields(
+        document,
+        ['device_id', 'vault_path', 'master_key'],
+        'open params'
+      );
+    }
 
     const deviceId = requireDeviceId(document, 'device_id');
     const vaultPath = requireText(document, 'vault_path');
     const masterKey = decodeBase64(document, 'master_key', { exactBytes: 32 });
+    const stateId = rollbackAware
+      ? requireStateId(document, 'state_id')
+      : undefined;
+    const allowLegacyMigration = rollbackAware
+      ? requireBoolean(document, 'allow_legacy_migration')
+      : false;
 
     try {
       this.party = await PersistentRatchetParty.open(
         deviceId,
         1,
         vaultPath,
-        masterKey
+        masterKey,
+        stateId,
+        allowLegacyMigration
       );
     } finally {
       masterKey.fill(0);
     }
 
-    return { rpc_version: RPC_VERSION };
+    if (!rollbackAware) {
+      return { rpc_version: RPC_VERSION };
+    }
+
+    return {
+      rpc_version: RPC_VERSION,
+      state_origin: this.party.getStateOrigin(),
+    };
+  }
+
+  private stateCheckpoint(params: unknown): Record<string, unknown> {
+    const document = requireObject(params, 'state_checkpoint params');
+    requireExactFields(document, [], 'state_checkpoint params');
+
+    const checkpoint = this.requireParty().getCheckpointMetadata();
+    return {
+      state_id: checkpoint.stateId,
+      revision: checkpoint.revision,
+      previous_digest: checkpoint.previousDigest,
+    };
+  }
+
+  private acknowledgeCheckpoint(params: unknown): Record<string, boolean> {
+    const document = requireObject(params, 'acknowledge_checkpoint params');
+    requireExactFields(document, ['digest'], 'acknowledge_checkpoint params');
+    this.requireParty().acknowledgeCheckpoint(
+      requireDigest(document, 'digest')
+    );
+    return { acknowledged: true };
   }
 
   private async createPreKeyMaterial(params: unknown): Promise<unknown> {
