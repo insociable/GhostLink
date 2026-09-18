@@ -392,7 +392,11 @@ export class MemoryPreKeyStore extends SignalClient.PreKeyStore {
   }
 
   async removePreKey(id: number): Promise<void> {
-    this.records.delete(id);
+    const serialized = this.records.get(id);
+    if (serialized !== undefined) {
+      serialized.fill(0);
+      this.records.delete(id);
+    }
   }
 
   hasPreKey(id: number): boolean {
@@ -437,6 +441,11 @@ export class MemorySignedPreKeyStore extends SignalClient.SignedPreKeyStore {
   }
 
   removeSignedPreKey(id: number): boolean {
+    const serialized = this.records.get(id);
+    if (serialized === undefined) {
+      return false;
+    }
+    serialized.fill(0);
     return this.records.delete(id);
   }
 
@@ -507,7 +516,11 @@ export class MemoryKyberPreKeyStore extends SignalClient.KyberPreKeyStore {
   }
 
   removeKyberPreKey(id: number): boolean {
-    const removed = this.records.delete(id);
+    const serialized = this.records.get(id);
+    const removed =
+      serialized === undefined
+        ? false
+        : (serialized.fill(0), this.records.delete(id));
     this.used.delete(id);
 
     const keyId = BigInt(id);
