@@ -5,6 +5,7 @@
 - message plaintext;
 - private identity and device keys;
 - encrypted-profile-held ratchet-vault master key;
+- encrypted-profile-held contact-store key and persisted human trust state;
 - libsignal ratchet/session state;
 - pre-key private material;
 - contact authenticity;
@@ -44,7 +45,9 @@ The current codebase includes:
 
 - self-certifying GhostID and DeviceID identifiers;
 - identity-signed device authorization certificates;
-- verified contact bundles;
+- cryptographically validated public Contact Bundles and versioned public QR payloads;
+- deterministic Fingerprint v2 human verification, persisted separately from bundle validity;
+- encrypted local contact trust states (`imported`, `verified`, `changed`) with verified-identity replacement quarantine;
 - protocol-v2 authenticated encryption and persistent replay suppression;
 - official libsignal PQXDH/session integration with classical and post-quantum ratchet components;
 - encrypted persistent ratchet/pre-key vault state;
@@ -60,7 +63,8 @@ The current codebase includes:
 - atomic/idempotent one-time pre-key allocation with reusable fallback;
 - per-target time-window limiting of new one-time allocations;
 - strict sender-side fetch parsing and response/binding consistency checks;
-- `VerifiedContact` verification before libsignal session establishment;
+- `ValidatedContact` cryptographic identity/device binding verification before libsignal session establishment;
+- normal CLI messaging by persisted contact ID requires explicit local human trust state `verified` and fails closed for `imported` or `changed` contacts;
 - no automatic fallback to static protocol-v2 when ratchet bootstrap fails;
 - owner-authenticated relay pool-status reads using a signature domain separate from fetch;
 - fail-closed pre-key maintenance that cross-checks relay sequence/expiration against local encrypted lifecycle state;
@@ -71,8 +75,8 @@ The current codebase includes:
 - canonical v3 routing/lifecycle context encrypted inside libsignal plaintext;
 - transaction-bound context verification that restores ratchet state when relay-visible v3 metadata is modified;
 - replay-cache acceptance after authenticated v3 context validation and before application plaintext is returned;
-- encrypted local profile v2 carrying an independently random ratchet-vault master key;
-- explicit atomic profile-v1 -> profile-v2 migration before ratcheted commands are allowed;
+- encrypted local profile v3 carrying independently random ratchet-vault and contact-store master keys;
+- explicit atomic profile-v1/v2 -> profile-v3 migration before current ratcheted/contact-trust commands are allowed;
 - user-facing CLI send/inbox bound to protocol v3 with no automatic static-v2 downgrade;
 - durable-session detection before first-contact bootstrap, preventing unnecessary pre-key consumption on later sends;
 - DeviceID-signed protocol-v3 message-relay requests bound to HTTP method, canonical logical path, canonical-body digest, freshness timestamp and random request ID;
@@ -80,7 +84,8 @@ The current codebase includes:
 - persistent SQLite request-ID replay rejection across GhostNode restart, with process-local replay protection in in-memory mode;
 - optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity;
 - relay Bearer-token loading from a secret file rather than token values in argv/environment;
-- reference Oracle Caddy ingress with GhostNode un-published, TCP/443-only public exposure, disabled HTTP access logs and explicit Uvicorn proxy-header distrust.
+- reference Oracle Caddy ingress with GhostNode un-published, TCP/443-only public exposure, disabled HTTP access logs and explicit Uvicorn proxy-header distrust;
+- a stdlib-only external TLS gate that validates every published A/AAAA address, public certificate/hostname trust, closed TCP/80 and TCP/8000, and the HTTPS health response before live-deployment acceptance.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -89,12 +94,12 @@ These are implemented building blocks, not a production-security certification.
 Current security gaps still include:
 
 - relay database anti-rollback protection;
+- complete client-state anti-rollback across profile, contact store, ratchet vault and replay/highest-seen state snapshots;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
 - complete device revocation and recovery design;
 - legacy static-v2 message relay remains bearer-only and diagnostic rather than per-device authenticated;
 - live external validation of the reference TLS ingress (real certificate, closed TCP/80 and TCP/8000, external v3 flow) before issue #21 closure;
-- a complete persisted contact-trust / QR verification workflow;
 - independent cryptographic/protocol review.
 
 No automatic fallback from a failed ratcheted session to static encryption is permitted.
