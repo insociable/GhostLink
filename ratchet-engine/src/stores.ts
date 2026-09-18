@@ -350,6 +350,10 @@ export class MemoryPreKeyStore extends SignalClient.PreKeyStore {
     this.records.delete(id);
   }
 
+  hasPreKey(id: number): boolean {
+    return this.records.has(id);
+  }
+
   exportState(): Array<[number, string]> {
     return [...this.records].map(([id, value]) => [id, encodeBytes(value)]);
   }
@@ -381,6 +385,10 @@ export class MemorySignedPreKeyStore extends SignalClient.SignedPreKeyStore {
       throw new Error(`signed pre-key ${id} not found`);
     }
     return SignalClient.SignedPreKeyRecord.deserialize(Buffer.from(serialized));
+  }
+
+  hasSignedPreKey(id: number): boolean {
+    return this.records.has(id);
   }
 
   exportState(): Array<[number, string]> {
@@ -443,6 +451,10 @@ export class MemoryKyberPreKeyStore extends SignalClient.KyberPreKeyStore {
 
   async hasKyberPreKeyBeenUsed(id: number): Promise<boolean> {
     return this.used.has(id);
+  }
+
+  hasKyberPreKey(id: number): boolean {
+    return this.records.has(id);
   }
 
   exportState(): PartyStoresState['kyberPreKey'] {

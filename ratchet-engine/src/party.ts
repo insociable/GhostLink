@@ -1,6 +1,11 @@
+import { randomInt } from 'node:crypto';
+
 import * as SignalClient from '@signalapp/libsignal-client';
 
-import { validateRegistrationId } from './protocol-profile.js';
+import {
+  MAX_PREKEY_ID,
+  validateRegistrationId,
+} from './protocol-profile.js';
 import {
   createPartyStores,
   MemoryKyberPreKeyStore,
@@ -12,6 +17,16 @@ import {
 export interface WireMessage {
   readonly type: SignalClient.CiphertextMessageType;
   readonly body: Uint8Array;
+}
+
+function uniqueRandomId(isUsed: (id: number) => boolean): number {
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const id = randomInt(1, MAX_PREKEY_ID + 1);
+    if (!isUsed(id)) {
+      return id;
+    }
+  }
+  throw new Error('unable to allocate a unique pre-key identifier');
 }
 
 export class RatchetParty {
@@ -38,7 +53,9 @@ export class RatchetParty {
   async createPreKeyBundle(): Promise<SignalClient.PreKeyBundle> {
     const identityKey = await this.stores.identity.getIdentityKey();
 
-    const preKeyId = 1001;
+    const preKeyId = uniqueRandomId((id) =>
+      this.stores.preKey.hasPreKey(id)
+    );
     const preKey = SignalClient.PrivateKey.generate();
     await this.stores.preKey.savePreKey(
       preKeyId,
@@ -49,7 +66,9 @@ export class RatchetParty {
       )
     );
 
-    const signedPreKeyId = 2001;
+    const signedPreKeyId = uniqueRandomId((id) =>
+      this.stores.signedPreKey.hasSignedPreKey(id)
+    );
     const signedPreKey = SignalClient.PrivateKey.generate();
     const signedPreKeySignature = identityKey.sign(
       signedPreKey.getPublicKey().serialize()
@@ -65,7 +84,9 @@ export class RatchetParty {
       )
     );
 
-    const kyberPreKeyId = 3001;
+    const kyberPreKeyId = uniqueRandomId((id) =>
+      this.stores.kyberPreKey.hasKyberPreKey(id)
+    );
     const kyberKeyPair = SignalClient.KEMKeyPair.generate();
     const kyberSignature = identityKey.sign(
       kyberKeyPair.getPublicKey().serialize()
@@ -95,23 +116,33 @@ export class RatchetParty {
     );
   }
 
-  async establishSession(
-    remote: RatchetParty,
+  async establishSessionAt(
+    remoteAddress: SignalClient.ProtocolAddress,
     bundle: SignalClient.PreKeyBundle
   ): Promise<void> {
     await SignalClient.processPreKeyBundle(
       bundle,
-      remote.address,
+      remoteAddress,
       this.address,
       this.stores.session,
       this.stores.identity
     );
   }
 
-  async encrypt(remote: RatchetParty, plaintext: string): Promise<WireMessage> {
+  async establishSession(
+    remote: RatchetParty,
+    bundle: SignalClient.PreKeyBundle
+  ): Promise<void> {
+    await this.establishSessionAt(remote.address, bundle);
+  }
+
+  async encryptBytes(
+    remoteAddress: SignalClient.ProtocolAddress,
+    plaintext: Uint8Array
+  ): Promise<WireMessage> {
     const ciphertext = await SignalClient.signalEncrypt(
-      Buffer.from(plaintext, 'utf8'),
-      remote.address,
+      Uint8Array.from(plaintext),
+      remoteAddress,
       this.address,
       this.stores.session,
       this.stores.identity
@@ -123,13 +154,25 @@ export class RatchetParty {
     };
   }
 
-  async decrypt(remote: RatchetParty, message: WireMessage): Promise<string> {
+  async encrypt(remote: RatchetParty, plaintext: string): Promise<WireMessage> {
+    return this.encryptBytes(
+      remote.address,
+      Buffer.from(plaintext, 'utf8')
+    );
+  }
+
+  async decryptBytes(
+    remoteAddress: SignalClient.ProtocolAddress,
+    message: WireMessage
+  ): Promise<Uint8Array> {
     let plaintext: Uint8Array;
 
     if (message.type === SignalClient.CiphertextMessageType.PreKey) {
       plaintext = await SignalClient.signalDecryptPreKey(
-        SignalClient.PreKeySignalMessage.deserialize(Buffer.from(message.body)),
-        remote.address,
+        SignalClient.PreKeySignalMessage.deserialize(
+          Uint8Array.from(message.body)
+        ),
+        remoteAddress,
         this.address,
         this.stores.session,
         this.stores.identity,
@@ -139,8 +182,10 @@ export class RatchetParty {
       );
     } else if (message.type === SignalClient.CiphertextMessageType.Whisper) {
       plaintext = await SignalClient.signalDecrypt(
-        SignalClient.SignalMessage.deserialize(Buffer.from(message.body)),
-        remote.address,
+        SignalClient.SignalMessage.deserialize(
+          Uint8Array.from(message.body)
+        ),
+        remoteAddress,
         this.address,
         this.stores.session,
         this.stores.identity
@@ -149,6 +194,11 @@ export class RatchetParty {
       throw new Error(`unsupported libsignal message type: ${message.type}`);
     }
 
+    return Uint8Array.from(plaintext);
+  }
+
+  async decrypt(remote: RatchetParty, message: WireMessage): Promise<string> {
+    const plaintext = await this.decryptBytes(remote.address, message);
     return Buffer.from(plaintext).toString('utf8');
   }
 

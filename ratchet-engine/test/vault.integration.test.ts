@@ -29,6 +29,8 @@ async function establishPersistentPair(directory: string): Promise<{
   bobKey: Buffer;
   alicePath: string;
   bobPath: string;
+  bobPreKeyId: number;
+  bobKyberPreKeyId: number;
 }> {
   const aliceKey = randomBytes(32);
   const bobKey = randomBytes(32);
@@ -44,6 +46,9 @@ async function establishPersistentPair(directory: string): Promise<{
   const bob = await PersistentRatchetParty.open('bob', 1, bobPath, bobKey);
 
   const bundle = await bob.createPreKeyBundle();
+  const bobPreKeyId = bundle.preKeyId();
+  const bobKyberPreKeyId = bundle.kyberPreKeyId();
+  assert.notEqual(bobPreKeyId, null);
   await alice.establishSession(bob, bundle);
 
   const first = await alice.encrypt(bob, 'first');
@@ -59,6 +64,8 @@ async function establishPersistentPair(directory: string): Promise<{
     bobKey,
     alicePath,
     bobPath,
+    bobPreKeyId: bobPreKeyId!,
+    bobKyberPreKeyId,
   };
 }
 
@@ -167,10 +174,13 @@ test('one-time EC and Kyber pre-key consumption survives restart', async () => {
 
   const beforeClose = await pair.bob.exportStateForTesting();
   assert.equal(
-    beforeClose.preKey.some(([id]) => id === 1001),
+    beforeClose.preKey.some(([id]) => id === pair.bobPreKeyId),
     false
   );
-  assert.equal(beforeClose.kyberPreKey.used.includes(3001), true);
+  assert.equal(
+    beforeClose.kyberPreKey.used.includes(pair.bobKyberPreKeyId),
+    true
+  );
   assert.ok(beforeClose.identity.trusted.length > 0);
 
   pair.bob.close();
@@ -184,10 +194,13 @@ test('one-time EC and Kyber pre-key consumption survives restart', async () => {
   const afterReopen = await bob.exportStateForTesting();
 
   assert.equal(
-    afterReopen.preKey.some(([id]) => id === 1001),
+    afterReopen.preKey.some(([id]) => id === pair.bobPreKeyId),
     false
   );
-  assert.equal(afterReopen.kyberPreKey.used.includes(3001), true);
+  assert.equal(
+    afterReopen.kyberPreKey.used.includes(pair.bobKyberPreKeyId),
+    true
+  );
   assert.deepEqual(
     afterReopen.identity.trusted,
     beforeClose.identity.trusted

@@ -103,3 +103,14 @@ test('wire material rejects modified or unknown structure', async () => {
     /fields do not match/
   );
 });
+
+test('successive pre-key bundles use distinct identifiers', async () => {
+  const bob = new RatchetParty('bob-device', 1, 4201);
+
+  const first = await bob.createPreKeyBundle();
+  const second = await bob.createPreKeyBundle();
+
+  assert.notEqual(first.preKeyId(), second.preKeyId());
+  assert.notEqual(first.signedPreKeyId(), second.signedPreKeyId());
+  assert.notEqual(first.kyberPreKeyId(), second.kyberPreKeyId());
+});
