@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal, cast
 
 from ghostlink.device import EnrolledGhostDevice, derive_device_id
 from ghostlink.message import MESSAGE_VERSION, GhostMessage
@@ -342,7 +343,7 @@ def _parse_prekey_fetch_response(
         requester_device_id=requester_device_id,
         publication_sequence=publication_sequence,
         expires_at=expires_at,
-        bundle_kind=bundle_kind,
+        bundle_kind=cast(Literal["one_time", "fallback"], bundle_kind),
         binding=binding,
         remaining_one_time_count=remaining_one_time_count,
     )
