@@ -11,6 +11,7 @@ from ghostlink.device import EnrolledGhostDevice
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app
 from ghostlink.prekey_fetch import create_prekey_fetch_request
+from ghostlink.prekey_status import create_prekey_status_request
 from ghostlink.prekey_relay import (
     RelayPreKeyGeneration,
     SQLitePreKeyPublicationStore,
@@ -90,6 +91,20 @@ def publication_request(
         ).decode("ascii"),
         "publication": export_ratchet_prekey_publication(publication),
     }
+
+
+def status_request(
+    device: EnrolledGhostDevice,
+    *,
+    issued_at: int | None = None,
+    request_id: str | None = None,
+) -> dict[str, object]:
+    request = create_prekey_status_request(
+        device,
+        issued_at=int(time.time()) if issued_at is None else issued_at,
+        request_id=request_id,
+    )
+    return request.model_dump()
 
 
 def test_prekey_publication_is_cryptographically_verified_and_acknowledged() -> None:
@@ -695,3 +710,112 @@ def test_sqlite_fallback_fetches_do_not_create_unbounded_allocations(
         ).fetchone()
 
     assert allocation_count == (1,)
+
+
+
+def test_prekey_owner_status_tracks_remaining_pool_without_consuming() -> None:
+    target = GhostEntity.generate().enroll_device()
+    requester = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app())
+
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication_request(target, sequence=1),
+        ).status_code
+        == 200
+    )
+
+    before = client.post(
+        f"/v2/prekeys/{target.device_id}/status",
+        json=status_request(target),
+    )
+    assert before.status_code == 200
+    assert before.json()["publication_sequence"] == 1
+    assert before.json()["remaining_one_time_count"] == 2
+
+    fetched = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requester, target.device_id),
+    )
+    assert fetched.status_code == 200
+
+    after = client.post(
+        f"/v2/prekeys/{target.device_id}/status",
+        json=status_request(target),
+    )
+    assert after.status_code == 200
+    assert after.json()["remaining_one_time_count"] == 1
+
+
+def test_prekey_owner_status_rejects_other_device_proof() -> None:
+    target = GhostEntity.generate().enroll_device()
+    attacker = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app())
+
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication_request(target, sequence=1),
+        ).status_code
+        == 200
+    )
+
+    response = client.post(
+        f"/v2/prekeys/{target.device_id}/status",
+        json=status_request(attacker),
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": "route DeviceID does not match device signing public key"
+    }
+
+
+def test_prekey_status_proof_cannot_be_used_as_fetch_request() -> None:
+    target = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app())
+
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication_request(target, sequence=1),
+        ).status_code
+        == 200
+    )
+
+    response = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=status_request(target),
+    )
+
+    assert response.status_code == 422
+
+
+def test_prekey_owner_status_requires_shared_bearer_when_enabled() -> None:
+    token = "prekey-status-secret"  # noqa: S105
+    target = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app(settings=NodeSettings(access_token=token)))
+    headers = {"Authorization": f"Bearer {token}"}
+
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication_request(target, sequence=1),
+            headers=headers,
+        ).status_code
+        == 200
+    )
+
+    missing = client.post(
+        f"/v2/prekeys/{target.device_id}/status",
+        json=status_request(target),
+    )
+    accepted = client.post(
+        f"/v2/prekeys/{target.device_id}/status",
+        json=status_request(target),
+        headers=headers,
+    )
+
+    assert missing.status_code == 401
+    assert accepted.status_code == 200
