@@ -314,3 +314,97 @@ test('two local RPC engines establish PQXDH and exchange arbitrary bytes', async
   await alice.close();
   await bob.close();
 });
+
+test('pre-key publication RPC recovers and stages exact pending payload', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ghostlink-rpc-lifecycle-'));
+  const key = randomBytes(32);
+  const vaultPath = join(directory, 'bob.ratchet');
+
+  let bob = await openEngine(DEVICE_B, vaultPath, key);
+
+  const prepared = (await bob.request('prepare_prekey_generation', {
+    one_time_count: 3,
+    issued_at: 1_000,
+    lifetime_seconds: 3_600,
+  })) as {
+    version: number;
+    publication_sequence: number;
+    issued_at: number;
+    expires_at: number;
+    one_time: unknown[];
+    fallback: {
+      pre_key_id: number | null;
+      pre_key: string | null;
+    };
+    public_payload: string | null;
+  };
+
+  assert.equal(prepared.version, 1);
+  assert.equal(prepared.publication_sequence, 1);
+  assert.equal(prepared.issued_at, 1_000);
+  assert.equal(prepared.expires_at, 4_600);
+  assert.equal(prepared.one_time.length, 3);
+  assert.equal(prepared.fallback.pre_key_id, null);
+  assert.equal(prepared.fallback.pre_key, null);
+  assert.equal(prepared.public_payload, null);
+
+  await assert.rejects(
+    () =>
+      bob.request('prepare_prekey_generation', {
+        one_time_count: 3,
+        issued_at: 1_100,
+        lifetime_seconds: 3_600,
+      }),
+    /pending pre-key generation already exists/
+  );
+
+  await bob.close();
+
+  bob = await openEngine(DEVICE_B, vaultPath, key);
+  const recovered = await bob.request('get_pending_prekey_generation', {});
+  assert.deepEqual(recovered, prepared);
+
+  const payload =
+    '{"fallback":{"signed":"exact"},"one_time":[],"publication_sequence":1}';
+
+  await assert.rejects(
+    () =>
+      bob.request('stage_prekey_publication', {
+        publication_sequence: 2,
+        public_payload: payload,
+      }),
+    /sequence does not match/
+  );
+
+  await bob.request('stage_prekey_publication', {
+    publication_sequence: 1,
+    public_payload: payload,
+  });
+
+  await bob.request('stage_prekey_publication', {
+    publication_sequence: 1,
+    public_payload: payload,
+  });
+
+  await assert.rejects(
+    () =>
+      bob.request('stage_prekey_publication', {
+        publication_sequence: 1,
+        public_payload: payload + 'changed',
+      }),
+    /different public payload/
+  );
+
+  await bob.close();
+
+  bob = await openEngine(DEVICE_B, vaultPath, key);
+  const staged = (await bob.request(
+    'get_pending_prekey_generation',
+    {}
+  )) as {
+    public_payload: string | null;
+  };
+  assert.equal(staged.public_payload, payload);
+
+  await bob.close();
+});
