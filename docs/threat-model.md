@@ -65,7 +65,11 @@ The current codebase includes:
 - fail-closed pre-key maintenance that cross-checks relay sequence/expiration against local encrypted lifecycle state;
 - automatic pool replenishment and expiration refresh with cooldown against relay-induced depletion churn;
 - transactional 15-day retired pre-key garbage collection driven only by encrypted lifecycle ownership metadata;
-- fail-closed retention on ambiguous lifecycle ownership or local clock rollback, with best-effort zeroization of serialized private-key buffers before in-memory removal.
+- fail-closed retention on ambiguous lifecycle ownership or local clock rollback, with best-effort zeroization of serialized private-key buffers before in-memory removal;
+- explicitly separate ratcheted message-v3 relay routes/storage with strict envelope validation and no v2 reinterpretation;
+- canonical v3 routing/lifecycle context encrypted inside libsignal plaintext;
+- transaction-bound context verification that restores ratchet state when relay-visible v3 metadata is modified;
+- replay-cache acceptance after authenticated v3 context validation and before application plaintext is returned.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -89,6 +93,8 @@ Garbage collection removes retired key material from the current logical vault s
 ## Metadata
 
 GhostNode necessarily observes relay metadata including DeviceIDs, timing and ciphertext sizes.
+
+For protocol-v3 messages it additionally observes the libsignal ciphertext framing type. V3 routing/lifecycle fields are duplicated as an authenticated context inside the libsignal ciphertext; modifying those external fields causes context-bound decryption to fail and roll the ratchet transaction back.
 
 The ratchet pre-key publication endpoint additionally exposes:
 
