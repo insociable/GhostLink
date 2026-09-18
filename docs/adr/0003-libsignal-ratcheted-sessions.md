@@ -140,20 +140,23 @@ Secrets must not be stored in GhostNode or plaintext logs.
 
 ## Pre-key lifecycle
 
-A later relay migration will add a dedicated public pre-key bundle API.
+The production lifecycle is specified in `docs/specifications/ratchet-prekey-lifecycle.md`.
 
-The relay may publish:
+GhostLink publishes atomic pre-key generations rather than letting GhostNode assemble independent pre-key components.
 
-- registration identifier;
-- device identifier;
-- identity public key;
-- signed EC pre-key;
-- one-time EC pre-key when available;
-- signed Kyber/ML-KEM pre-key.
+Each generation contains:
 
-Private pre-key material remains client-side.
+- one periodically rotated signed EC pre-key;
+- one periodically rotated signed last-resort Kyber/ML-KEM pre-key;
+- a bounded pool of complete one-time EC + one-time Kyber bindings already signed by the GhostLink device;
+- one reusable fallback binding that omits the EC one-time key and uses the last-resort Kyber key;
+- a device-scoped monotonic publication sequence.
 
-One-time pre-keys must be consumed according to libsignal semantics.
+GhostNode stores and selects already signed public bindings only. It never rewrites authenticated fields.
+
+One-time pre-keys are consumed according to libsignal semantics. Retired private material is retained for a bounded delayed-message window and then garbage-collected from the encrypted vault.
+
+The publication sequence improves rollback detection after a sender has observed a newer generation, but it is not a global transparency mechanism.
 
 ## Existing protocol-v2 envelope
 
