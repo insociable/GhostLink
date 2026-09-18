@@ -67,6 +67,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] encrypted highest-seen remote publication sequence persistence with rollback rejection before session establishment;
 - [x] authenticated atomic pre-key fetch/pop with per-requester idempotence and target-window anti-drain limiting;
 - [x] sender fetch -> VerifiedContact -> highest-seen -> libsignal session orchestration;
+- [ ] rollback-aware client-state coordination with external monotonic witness (ADR-0008 / #79);
 - [x] owner-authenticated pool status with automatic replenishment and expiration refresh;
 - [x] transactional 15-day delayed-key garbage collection with fail-closed lifecycle ownership checks;
 - [x] context-bound ratcheted message-v3 envelope and isolated GhostNode v3 relay transport;
