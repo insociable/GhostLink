@@ -141,7 +141,7 @@ def test_database_path_cannot_be_a_directory(tmp_path: Path) -> None:
 
 
 def test_relay_operations_require_configured_access_token() -> None:
-    settings = NodeSettings(access_token="relay-secret")
+    settings = NodeSettings(access_token="relay-secret")  # noqa: S106
     client = TestClient(create_app(settings=settings))
     payload = create_message_payload()
 
@@ -179,7 +179,7 @@ def test_relay_operations_require_configured_access_token() -> None:
 
 
 def test_health_remains_public_when_relay_authentication_is_enabled() -> None:
-    settings = NodeSettings(access_token="relay-secret")
+    settings = NodeSettings(access_token="relay-secret")  # noqa: S106
     client = TestClient(create_app(settings=settings))
 
     response = client.get("/health")
