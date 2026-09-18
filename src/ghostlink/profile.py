@@ -65,7 +65,7 @@ class LocalProfile:
     entity: GhostEntity
     device: EnrolledGhostDevice
     ratchet_master_key: bytes | None
-    contact_store_key: bytes | None
+    contact_store_key: bytes | None = None
 
 
 def create_local_profile() -> LocalProfile:
