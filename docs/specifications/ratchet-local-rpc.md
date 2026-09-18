@@ -182,6 +182,27 @@ The exact payload is persisted inside the encrypted vault before any network ope
 
 An exact retry is accepted. A different payload for an already staged pending sequence fails closed.
 
+### `commit_prekey_publication`
+
+Parameters:
+
+- acknowledged publication sequence;
+- local acknowledgement timestamp.
+
+This operation is called only after the application has validated a successful relay publication acknowledgement.
+
+The engine atomically:
+
+- requires a matching staged pending generation;
+- promotes that generation to `active`;
+- records its publication timestamp;
+- moves the previous active generation to `retired` with the same transition timestamp;
+- leaves retired private material intact for the delayed-message retention policy.
+
+Repeating the acknowledgement for an already active sequence is idempotent. This permits recovery when the local commit succeeded but the RPC response was lost.
+
+An unstaged pending generation, wrong sequence, invalid timestamp or exhausted retired-generation bound fails closed.
+
 ### `establish_session`
 
 Parameters:
@@ -269,7 +290,8 @@ The engine now implements:
 - encrypted lifecycle pending state;
 - recovery of pending public material after restart;
 - Python DeviceID signing of binding-v2 publication members;
-- exact signed publication staging before network use.
+- exact signed publication staging before network use;
+- atomic, idempotent publication acknowledgement commit from pending to active/retired lifecycle state.
 
 The detailed formats and lifecycle are specified in:
 
@@ -280,9 +302,8 @@ The detailed formats and lifecycle are specified in:
 
 Before relay cutover GhostLink still needs:
 
-- GhostNode atomic publication replacement;
-- atomic one-time pop;
-- pending → active acknowledgement transition;
+- atomic one-time pop and anti-drain controls;
+- application HTTP publication orchestration and receipt validation;
 - replenishment threshold execution;
 - seven-day rotation execution;
 - 15-day retired-key garbage collection;

@@ -408,3 +408,53 @@ test('pre-key publication RPC recovers and stages exact pending payload', async 
 
   await bob.close();
 });
+
+
+test('publication acknowledgement RPC is durable and idempotent', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ghostlink-rpc-commit-'));
+  const key = randomBytes(32);
+  const vaultPath = join(directory, 'bob.ratchet');
+
+  let bob = await openEngine(DEVICE_B, vaultPath, key);
+
+  const prepared = (await bob.request('prepare_prekey_generation', {
+    one_time_count: 2,
+    issued_at: 1_000,
+    lifetime_seconds: 3_600,
+  })) as {
+    publication_sequence: number;
+  };
+
+  await bob.request('stage_prekey_publication', {
+    publication_sequence: prepared.publication_sequence,
+    public_payload: '{"sequence":1}',
+  });
+  await bob.request('commit_prekey_publication', {
+    publication_sequence: prepared.publication_sequence,
+    published_at: 1_100,
+  });
+
+  assert.equal(
+    await bob.request('get_pending_prekey_generation', {}),
+    null
+  );
+
+  await bob.request('commit_prekey_publication', {
+    publication_sequence: prepared.publication_sequence,
+    published_at: 1_200,
+  });
+
+  await bob.close();
+  bob = await openEngine(DEVICE_B, vaultPath, key);
+
+  const second = (await bob.request('prepare_prekey_generation', {
+    one_time_count: 2,
+    issued_at: 1_300,
+    lifetime_seconds: 3_600,
+  })) as {
+    publication_sequence: number;
+  };
+  assert.equal(second.publication_sequence, 2);
+
+  await bob.close();
+});

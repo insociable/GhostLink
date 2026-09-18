@@ -162,7 +162,7 @@ This API does not provide key transparency.
 - publication authorization is cryptographic for the target DeviceID, but revocation policy is not yet implemented;
 - relay database rollback protection is not implemented;
 - fetch/pop and anti-drain are not implemented;
-- client pending -> active acknowledgement is not implemented;
+- the client-side pending -> active acknowledgement primitive is implemented, but HTTP publication orchestration/receipt validation is not yet wired;
 - replenishment, rotation and GC execution are not implemented.
 
 GhostLink remains pre-alpha and has not undergone an independent cryptographic/protocol audit.

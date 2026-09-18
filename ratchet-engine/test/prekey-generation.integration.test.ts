@@ -135,3 +135,79 @@ test('a pending generation blocks replacement without changing the vault', async
 
   bob.close();
 });
+
+
+test('publication acknowledgement atomically promotes pending and retires active', async () => {
+  const directory = await temporaryDirectory();
+  const path = join(directory, 'bob-commit.ratchet');
+  const key = randomBytes(32);
+
+  const bob = await PersistentRatchetParty.open('bob', 1, path, key);
+
+  const first = await bob.preparePreKeyGeneration(3, 1_000, 3_600);
+  await bob.stagePreKeyPublication(first.sequence, '{"sequence":1}');
+  await bob.commitPreKeyPublication(first.sequence, 1_100);
+
+  const firstState = await bob.exportStateForTesting();
+  assert.equal(firstState.lifecycle.pending, null);
+  assert.equal(firstState.lifecycle.active?.sequence, 1);
+  assert.equal(firstState.lifecycle.active?.publishedAt, 1_100);
+  assert.equal(firstState.lifecycle.active?.retiredAt, null);
+  assert.deepEqual(firstState.lifecycle.retired, []);
+
+  await bob.commitPreKeyPublication(first.sequence, 1_200);
+  const idempotentState = await bob.exportStateForTesting();
+  assert.deepEqual(idempotentState.lifecycle, firstState.lifecycle);
+
+  const second = await bob.preparePreKeyGeneration(3, 1_200, 3_600);
+  await bob.stagePreKeyPublication(second.sequence, '{"sequence":2}');
+  await bob.commitPreKeyPublication(second.sequence, 1_300);
+
+  const secondState = await bob.exportStateForTesting();
+  assert.equal(secondState.lifecycle.pending, null);
+  assert.equal(secondState.lifecycle.active?.sequence, 2);
+  assert.equal(secondState.lifecycle.active?.publishedAt, 1_300);
+  assert.equal(secondState.lifecycle.retired.length, 1);
+  assert.equal(secondState.lifecycle.retired[0]?.sequence, 1);
+  assert.equal(secondState.lifecycle.retired[0]?.retiredAt, 1_300);
+
+  bob.close();
+
+  const reopened = await PersistentRatchetParty.open('bob', 1, path, key);
+  const afterReopen = await reopened.exportStateForTesting();
+  assert.deepEqual(afterReopen.lifecycle, secondState.lifecycle);
+  reopened.close();
+});
+
+test('publication acknowledgement requires staged matching pending generation', async () => {
+  const directory = await temporaryDirectory();
+  const path = join(directory, 'bob-invalid-commit.ratchet');
+  const key = randomBytes(32);
+
+  const bob = await PersistentRatchetParty.open('bob', 1, path, key);
+  const generation = await bob.preparePreKeyGeneration(3, 1_000, 3_600);
+
+  const before = await readFile(path);
+  await assert.rejects(
+    () => bob.commitPreKeyPublication(generation.sequence, 1_100),
+    /has not been staged/
+  );
+  assert.deepEqual(await readFile(path), before);
+
+  await bob.stagePreKeyPublication(generation.sequence, '{"sequence":1}');
+  const staged = await readFile(path);
+
+  await assert.rejects(
+    () => bob.commitPreKeyPublication(generation.sequence + 1, 1_100),
+    /sequence does not match/
+  );
+  assert.deepEqual(await readFile(path), staged);
+
+  await assert.rejects(
+    () => bob.commitPreKeyPublication(generation.sequence, 4_600),
+    /outside generation lifetime/
+  );
+  assert.deepEqual(await readFile(path), staged);
+
+  bob.close();
+});

@@ -807,6 +807,22 @@ class RatchetEngineClient:
         )
         return payload
 
+    def commit_prekey_publication(
+        self,
+        publication_sequence: int,
+        *,
+        published_at: int | None = None,
+    ) -> None:
+        """Commit a relay-acknowledged pending generation as active."""
+        acknowledged_at = int(time.time()) if published_at is None else published_at
+        self._request(
+            "commit_prekey_publication",
+            {
+                "publication_sequence": publication_sequence,
+                "published_at": acknowledged_at,
+            },
+        )
+
     def establish_session(
         self,
         signed_binding: SignedRatchetPreKeyBinding,

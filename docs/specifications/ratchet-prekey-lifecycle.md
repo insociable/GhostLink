@@ -1,6 +1,6 @@
 # Ratchet pre-key lifecycle
 
-Status: accepted design; pending generation, signed staging and relay publication implemented; fetch/rotation/GC pending
+Status: accepted design; prepare/stage/publish/local-commit implemented; fetch/rotation/GC pending
 
 ## Purpose
 
@@ -399,9 +399,17 @@ Relay publication storage is now implemented:
 
 The relay does not receive the full GhostID contact bundle for publication authorization. GhostID trust verification remains end-to-end at the sender.
 
+Local acknowledgement commit is now implemented:
+
+- a matching staged pending generation is promoted atomically to active;
+- the previous active generation is retained as retired;
+- the acknowledgement transition is idempotent across lost RPC responses/restarts;
+- unstaged, mismatched, expired or time-inconsistent acknowledgements fail closed;
+- retired generations are never silently dropped when the bounded history is full.
+
 The following are still pending:
 
-- local relay acknowledgement -> pending/active/retired transition;
+- application HTTP publication orchestration and receipt validation;
 - atomic relay fetch/pop and anti-drain controls;
 - replenishment and rotation decisions;
 - delayed-key garbage collection.

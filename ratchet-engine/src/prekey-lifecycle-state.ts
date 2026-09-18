@@ -2,7 +2,7 @@ const LIFECYCLE_STATE_VERSION = 1;
 const MAX_PUBLICATION_SEQUENCE = Number.MAX_SAFE_INTEGER;
 const MAX_PREKEY_ID = 0x7fff_ffff;
 const MAX_ONE_TIME_BUNDLES = 256;
-const MAX_RETIRED_GENERATIONS = 32;
+export const MAX_RETIRED_GENERATIONS = 32;
 const MAX_PUBLIC_PAYLOAD_BYTES = 1024 * 1024;
 
 export interface PreKeyGenerationState {
