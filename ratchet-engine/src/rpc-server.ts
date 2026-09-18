@@ -5,6 +5,7 @@ import * as SignalClient from '@signalapp/libsignal-client';
 import { exportPreKeyMaterial, importPreKeyMaterial } from './prekey-material.js';
 import {
   PersistentRatchetParty,
+  type PreKeyLifecycleStatus,
   type PreparedPreKeyGeneration,
 } from './persistent-party.js';
 
@@ -188,6 +189,33 @@ function exportPreparedGeneration(
   };
 }
 
+function exportLifecycleStatus(
+  status: PreKeyLifecycleStatus
+): Record<string, unknown> {
+  const generation = (
+    value: PreKeyLifecycleStatus['active']
+  ): Record<string, unknown> | null => {
+    if (value === null) {
+      return null;
+    }
+    return {
+      publication_sequence: value.sequence,
+      issued_at: value.createdAt,
+      expires_at: value.expiresAt,
+      published_at: value.publishedAt,
+      staged: value.staged,
+    };
+  };
+
+  return {
+    version: 1,
+    publication_sequence: status.publicationSequence,
+    pending: generation(status.pending),
+    active: generation(status.active),
+    retired_count: status.retiredCount,
+  };
+}
+
 function requireMessageType(value: unknown): SignalClient.CiphertextMessageType {
   if (
     value !== SignalClient.CiphertextMessageType.PreKey &&
@@ -269,6 +297,8 @@ class RatchetRpcService {
         return this.preparePreKeyGeneration(request.params);
       case 'get_pending_prekey_generation':
         return this.getPendingPreKeyGeneration(request.params);
+      case 'get_prekey_lifecycle_status':
+        return this.getPreKeyLifecycleStatus(request.params);
       case 'stage_prekey_publication':
         return this.stagePreKeyPublication(request.params);
       case 'commit_prekey_publication':
@@ -366,6 +396,20 @@ class RatchetRpcService {
     const generation =
       await this.requireParty().getPendingPreKeyGeneration();
     return generation === null ? null : exportPreparedGeneration(generation);
+  }
+
+  private async getPreKeyLifecycleStatus(
+    params: unknown
+  ): Promise<unknown> {
+    const document = requireObject(params, 'get_prekey_lifecycle_status params');
+    requireExactFields(
+      document,
+      [],
+      'get_prekey_lifecycle_status params'
+    );
+    return exportLifecycleStatus(
+      await this.requireParty().getPreKeyLifecycleStatus()
+    );
   }
 
   private async stagePreKeyPublication(params: unknown): Promise<null> {

@@ -25,6 +25,12 @@ from ghostlink.prekey_fetch import (
     PreKeyFetchResponse,
     verify_prekey_fetch_request,
 )
+from ghostlink.prekey_status import (
+    PreKeyStatusProofError,
+    PreKeyStatusRequest,
+    PreKeyStatusResponse,
+    verify_prekey_status_request,
+)
 from ghostlink.ratchet_binding import (
     RatchetBindingError,
     export_ratchet_prekey_binding,
@@ -51,6 +57,10 @@ class PreKeyFetchNotFoundError(RuntimeError):
 
 class PreKeyFetchExpiredError(RuntimeError):
     """Raised when the target generation or prior allocation is expired."""
+
+
+class PreKeyStatusNotFoundError(RuntimeError):
+    """Raised when no active pre-key status exists for one DeviceID."""
 
 
 class PreKeyFetchRateLimitError(RuntimeError):
@@ -152,6 +162,9 @@ class PreKeyPublicationStore(Protocol):
         now: int,
     ) -> PreKeyFetchResponse:
         """Idempotently allocate at most one binding for one requester/generation."""
+
+    def status(self, device_id: str) -> PreKeyStatusResponse:
+        """Return current active relay pool status for the owning DeviceID."""
 
     def is_healthy(self) -> bool:
         """Return whether publication storage is available."""
@@ -305,6 +318,25 @@ class InMemoryPreKeyPublicationStore:
             self._allocations[allocation_key] = allocation
             self._request_allocations[request_key] = allocation
             return allocation
+
+    def status(self, device_id: str) -> PreKeyStatusResponse:
+        with self._lock:
+            generation = self._generations.get(device_id)
+            if generation is None:
+                raise PreKeyStatusNotFoundError(
+                    "device has no active pre-key generation"
+                )
+            remaining = self._remaining.get(
+                (device_id, generation.publication_sequence),
+                [],
+            )
+            return PreKeyStatusResponse(
+                version=1,
+                device_id=device_id,
+                publication_sequence=generation.publication_sequence,
+                expires_at=generation.expires_at,
+                remaining_one_time_count=len(remaining),
+            )
 
     def is_healthy(self) -> bool:
         return True
@@ -785,6 +817,42 @@ class SQLitePreKeyPublicationStore:
             )
             return allocation
 
+    def status(self, device_id: str) -> PreKeyStatusResponse:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    publication_sequence,
+                    expires_at
+                FROM prekey_publications
+                WHERE device_id = ?
+                """,
+                (device_id,),
+            ).fetchone()
+            if row is None:
+                raise PreKeyStatusNotFoundError(
+                    "device has no active pre-key generation"
+                )
+            publication_sequence = int(row[0])
+            expires_at = int(row[1])
+            count_row = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM prekey_one_time
+                WHERE device_id = ? AND publication_sequence = ?
+                """,
+                (device_id, publication_sequence),
+            ).fetchone()
+            remaining_count = 0 if count_row is None else int(count_row[0])
+
+        return PreKeyStatusResponse(
+            version=1,
+            device_id=device_id,
+            publication_sequence=publication_sequence,
+            expires_at=expires_at,
+            remaining_one_time_count=remaining_count,
+        )
+
     def is_healthy(self) -> bool:
         try:
             with self._connect() as connection:
@@ -924,6 +992,37 @@ def create_prekey_publication_router(
             ) from exc
 
         return stored.receipt()
+
+    @router.post(
+        "/v2/prekeys/{device_id}/status",
+        response_model=PreKeyStatusResponse,
+    )
+    def prekey_status(
+        device_id: str,
+        request: PreKeyStatusRequest,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> PreKeyStatusResponse:
+        require_relay_access(settings, authorization)
+        now = int(time.time())
+        try:
+            verify_prekey_status_request(
+                request,
+                device_id,
+                now=now,
+            )
+        except PreKeyStatusProofError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(exc),
+            ) from exc
+
+        try:
+            return store.status(device_id)
+        except PreKeyStatusNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
 
     @router.post(
         "/v2/prekeys/{device_id}/fetch",

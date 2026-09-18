@@ -67,7 +67,8 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] encrypted highest-seen remote publication sequence persistence with rollback rejection before session establishment;
 - [x] authenticated atomic pre-key fetch/pop with per-requester idempotence and target-window anti-drain limiting;
 - [x] sender fetch -> VerifiedContact -> highest-seen -> libsignal session orchestration;
-- [ ] replenishment/rotation/GC;
+- [x] owner-authenticated pool status with automatic replenishment and expiration refresh;
+- [ ] delayed-key garbage collection;
 - [ ] ratcheted relay envelope and CLI cutover;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;

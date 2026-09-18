@@ -60,7 +60,10 @@ The current codebase includes:
 - per-target time-window limiting of new one-time allocations;
 - strict sender-side fetch parsing and response/binding consistency checks;
 - `VerifiedContact` verification before libsignal session establishment;
-- no automatic fallback to static protocol-v2 when ratchet bootstrap fails.
+- no automatic fallback to static protocol-v2 when ratchet bootstrap fails;
+- owner-authenticated relay pool-status reads using a signature domain separate from fetch;
+- fail-closed pre-key maintenance that cross-checks relay sequence/expiration against local encrypted lifecycle state;
+- automatic pool replenishment and expiration refresh with cooldown against relay-induced depletion churn.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -71,7 +74,6 @@ Before a ratcheted production cutover GhostLink still lacks:
 - relay database anti-rollback protection;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
-- automated pre-key replenishment and rotation execution;
 - delayed-key garbage collection;
 - complete device revocation and recovery design;
 - general per-device authentication for message-relay operations;
@@ -92,6 +94,8 @@ The ratchet pre-key publication endpoint additionally exposes:
 - publication sequence, lifetime and pool size.
 
 The ratchet pre-key fetch endpoint additionally exposes requester DeviceID -> target DeviceID relationships, fetch timing and whether the target pool has reached fallback.
+
+The owner status endpoint exposes when a DeviceID checks its own active sequence, expiration and remaining pool count. A malicious relay can falsify the remaining count, so that value is treated only as a cooldown-limited operational trigger, not as authenticated lifecycle state.
 
 Publication does not require sending the long-term GhostID identity public key or full device certificate to GhostNode.
 

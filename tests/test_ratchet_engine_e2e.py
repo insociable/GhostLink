@@ -19,6 +19,7 @@ from ghostlink.ratchet_binding import (
 )
 from ghostlink.ratchet_engine import RatchetEngineClient, RatchetEngineError
 from ghostlink.ratchet_fetch import establish_session_from_relay
+from ghostlink.ratchet_maintenance import maintain_prekeys
 from ghostlink.ratchet_publication import (
     import_ratchet_prekey_publication,
     verify_local_ratchet_prekey_publication,
@@ -496,3 +497,114 @@ def test_relay_fetch_establishes_one_time_and_fallback_sessions(
                 bob_engine.decrypt(charlie_contact, charlie_message)
                 == b"fallback session through GhostNode"
             )
+
+
+
+def test_prekey_maintenance_replenishes_exhausted_relay_pool(
+    tmp_path: Path,
+) -> None:
+    bob = GhostEntity.generate()
+    alice = GhostEntity.generate()
+    charlie = GhostEntity.generate()
+    bob_device = bob.enroll_device()
+    alice_device = alice.enroll_device()
+    charlie_device = charlie.enroll_device()
+    command = [_NODE or "node", str(_ENGINE)]
+    api_client = TestClient(create_app())
+
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        assert timeout > 0
+        parsed = urllib.parse.urlparse(url)
+        response = api_client.request(
+            method,
+            parsed.path,
+            json=payload,
+            headers=headers,
+        )
+        return (
+            response.status_code,
+            response.json() if response.content else None,
+        )
+
+    node = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+    now = int(time.time())
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        tmp_path / "bob-maintenance.ratchet",
+        os.urandom(32),
+    ) as bob_engine:
+        initial = maintain_prekeys(
+            bob_engine,
+            node,
+            bob_device,
+            now=now,
+            pool_target=2,
+            replenish_threshold=0,
+            refresh_before_seconds=60,
+            replenish_cooldown_seconds=0,
+            lifetime_seconds=3_600,
+        )
+        assert initial.action == "published_initial"
+        assert initial.publication_sequence == 1
+        assert initial.remaining_one_time_count == 2
+
+        first = node.fetch_prekey(
+            alice_device,
+            bob_device.device_id,
+            issued_at=now,
+        )
+        second = node.fetch_prekey(
+            charlie_device,
+            bob_device.device_id,
+            issued_at=now,
+        )
+        assert first.bundle_kind == "one_time"
+        assert first.remaining_one_time_count == 1
+        assert second.bundle_kind == "one_time"
+        assert second.remaining_one_time_count == 0
+
+        depleted = node.prekey_status(
+            bob_device,
+            issued_at=now,
+        )
+        assert depleted.publication_sequence == 1
+        assert depleted.remaining_one_time_count == 0
+
+        replenished = maintain_prekeys(
+            bob_engine,
+            node,
+            bob_device,
+            now=now + 1,
+            pool_target=2,
+            replenish_threshold=0,
+            refresh_before_seconds=60,
+            replenish_cooldown_seconds=0,
+            lifetime_seconds=3_600,
+        )
+        assert replenished.action == "replenished"
+        assert replenished.publication_sequence == 2
+        assert replenished.remaining_one_time_count == 2
+
+        relay_after = node.prekey_status(
+            bob_device,
+            issued_at=now + 1,
+        )
+        assert relay_after.publication_sequence == 2
+        assert relay_after.remaining_one_time_count == 2
+
+        local_after = bob_engine.get_prekey_lifecycle_status()
+        assert local_after.pending is None
+        assert local_after.active is not None
+        assert local_after.active.publication_sequence == 2
+        assert local_after.retired_count == 1
