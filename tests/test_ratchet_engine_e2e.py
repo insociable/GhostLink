@@ -608,3 +608,73 @@ def test_prekey_maintenance_replenishes_exhausted_relay_pool(
         assert local_after.active is not None
         assert local_after.active.publication_sequence == 2
         assert local_after.retired_count == 1
+
+
+
+def test_prekey_gc_round_trips_python_rpc_and_survives_restart(
+    tmp_path: Path,
+) -> None:
+    bob = GhostEntity.generate()
+    bob_device = bob.enroll_device()
+    bob_key = os.urandom(32)
+    bob_vault = tmp_path / "bob-gc-rpc.ratchet"
+    command = [_NODE or "node", str(_ENGINE)]
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as engine:
+        first_payload = engine.prepare_prekey_publication(
+            one_time_count=2,
+            issued_at=1_000,
+            lifetime_seconds=3_600,
+        )
+        first = import_ratchet_prekey_publication(first_payload)
+        engine.commit_prekey_publication(
+            first.publication_sequence,
+            published_at=1_100,
+        )
+
+        second_payload = engine.prepare_prekey_publication(
+            one_time_count=2,
+            issued_at=1_200,
+            lifetime_seconds=3_600,
+        )
+        second = import_ratchet_prekey_publication(second_payload)
+        engine.commit_prekey_publication(
+            second.publication_sequence,
+            published_at=1_300,
+        )
+
+        before = engine.get_prekey_lifecycle_status()
+        assert before.active is not None
+        assert before.active.publication_sequence == 2
+        assert before.retired_count == 1
+
+        collected = engine.garbage_collect_prekeys(
+            now=1_300 + 15 * 24 * 60 * 60,
+        )
+        assert collected.retired_generations_removed == 1
+        assert collected.pre_keys_removed == 2
+        assert collected.signed_pre_keys_removed == 1
+        assert collected.kyber_pre_keys_removed == 3
+
+        after = engine.get_prekey_lifecycle_status()
+        assert after.pending is None
+        assert after.active is not None
+        assert after.active.publication_sequence == 2
+        assert after.retired_count == 0
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as reopened:
+        persisted = reopened.get_prekey_lifecycle_status()
+        assert persisted.pending is None
+        assert persisted.active is not None
+        assert persisted.active.publication_sequence == 2
+        assert persisted.retired_count == 0
