@@ -18,6 +18,9 @@ import {
   RatchetVaultUnlockError,
 } from '../src/vault.js';
 
+const DEVICE_A = 'device1:' + 'a'.repeat(52);
+const DEVICE_B = 'device1:' + 'b'.repeat(52);
+
 async function temporaryDirectory(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'ghostlink-ratchet-'));
 }
@@ -37,16 +40,14 @@ async function establishPersistentPair(directory: string): Promise<{
   const alicePath = join(directory, 'alice.ratchet');
   const bobPath = join(directory, 'bob.ratchet');
 
-  const aliceDeviceId = 'device1:' + 'a'.repeat(52);
-  const bobDeviceId = 'device1:' + 'b'.repeat(52);
   const alice = await PersistentRatchetParty.open(
-    aliceDeviceId,
+    DEVICE_A,
     1,
     alicePath,
     aliceKey
   );
   const bob = await PersistentRatchetParty.open(
-    bobDeviceId,
+    DEVICE_B,
     1,
     bobPath,
     bobKey
@@ -156,13 +157,13 @@ test('ratcheted session survives full process-style reopen', async () => {
   pair.bob.close();
 
   const alice = await PersistentRatchetParty.open(
-    'alice',
+    DEVICE_A,
     1,
     pair.alicePath,
     pair.aliceKey
   );
   const bob = await PersistentRatchetParty.open(
-    'bob',
+    DEVICE_B,
     1,
     pair.bobPath,
     pair.bobKey
