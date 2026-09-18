@@ -25,7 +25,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - persistent sender-scoped SQLite replay cache with atomic acceptance;
 - protocol-v2 CLI send, inbox and live E2EE smoke flow;
 - removal of the experimental protocol-v1 runtime path;
-- automated dependency update monitoring.
+- automated dependency update monitoring;
+- experimental libsignal-based ratchet engine bootstrap with PQXDH, out-of-order delivery, duplicate rejection and simulated post-compromise recovery tests.
 
 ### Security
 

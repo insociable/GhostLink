@@ -1,0 +1,22 @@
+{
+  "name": "@ghostlink/ratchet-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "check": "npm run test"
+  },
+  "dependencies": {
+    "@signalapp/libsignal-client": "0.102.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "6.0.3"
+  }
+}
