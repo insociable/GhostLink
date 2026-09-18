@@ -47,6 +47,22 @@ The QR payload MUST NOT contain:
 
 A byte-identical canonical Contact Bundle produces a byte-identical QR payload string.
 
+
+## QR rendering and scanner boundary
+
+GhostLink's reference CLI renders payload v1 as a **standard QR Code**, never a Micro QR
+Code, using exact-pinned Segno 1.6.6. SVG is the reference export format so rendering
+does not require an image-processing dependency.
+
+QR image decoding is intentionally outside the core trust model. Desktop or mobile camera
+code may decode an image to text, but that text MUST then pass the same strict
+`ghostlink:contact:1:` decoder and Contact Bundle cryptographic validation before it can
+be persisted.
+
+Scanning a QR creates or updates cryptographically valid public material only. A scan
+MUST NOT directly create the local `verified` trust state. Human verification remains
+a separate explicit Fingerprint v2 confirmation.
+
 ## Local trust record v1
 
 A logical record contains at least:
