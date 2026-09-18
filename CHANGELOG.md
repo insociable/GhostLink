@@ -12,28 +12,34 @@ The format follows Keep a Changelog and Semantic Versioning.
 - GhostID and DeviceID self-certifying identifiers;
 - signed device authorization certificates;
 - separate device signing and encryption keys;
-- device-to-device authenticated encryption;
-- verified public peer devices without sharing private peer keys;
-- versioned public contact bundles with certificate verification;
+- verified public peer devices and versioned public contact bundles;
 - password-encrypted local profiles using Argon2id and PyNaCl SecretBox;
-- GhostNode ciphertext relay API;
-- synchronous GhostNode client transport;
-- persistent SQLite relay storage;
-- M3 command-line client for identity creation, contact exchange, send and inbox;
-- full two-client encrypted-message integration test;
-- Docker/Compose GhostNode deployment and Oracle VM runbook;\n- optional shared Bearer access control for GhostNode relay operations;\n- strict protocol-v1 relay envelope validation with a 1 MiB ciphertext cap;
-- CI validation for Ruff, MyPy, pytest, Compose and container builds.
+- GhostNode ciphertext relay API with persistent SQLite storage;
+- shared Bearer relay access control;
+- strict relay envelope validation and 1 MiB ciphertext cap;
+- Docker/Compose deployment and live container smoke tests;
+- M3 command-line client and full two-client E2EE integration tests;
+- protocol-v2 random 128-bit message identifiers;
+- authenticated creation/expiration metadata with a seven-day maximum lifetime;
+- protocol-v2 relay deduplication and expiry handling;
+- persistent sender-scoped SQLite replay cache with atomic acceptance;
+- protocol-v2 CLI send, inbox and live E2EE smoke flow;
+- automated dependency update monitoring.
 
 ### Security
 
-- local profile data is encrypted at rest;
-- generated private profiles, local configs and relay databases are ignored by Git;
+- private profiles are encrypted at rest and local secret files are excluded from Git;
+- replay IDs are recorded atomically before plaintext is exposed;
+- relay-visible lifecycle metadata is duplicated inside authenticated ciphertext;
+- conflicting reuse of a protocol-v2 message ID is rejected by GhostNode;
+- raw GhostNode port is loopback-bound by default in Compose;
 - container deployment runs as a non-root user with reduced privileges;
-- raw GhostNode port is bound to host loopback by default in Compose;\n- Compose requires an explicit GhostNode relay access token.
+- Compose requires an explicit relay access token.
 
 ### Known limitations
 
-- shared relay access control exists, but no per-device relay authentication yet;
-- no replay protection or message expiration yet;
-- no ratcheting/forward secrecy yet;
+- shared relay access control is not per-device cryptographic authentication;
+- no ratcheting or forward secrecy yet;
+- traffic metadata remains visible to the relay;
+- replay-cache rollback/deletion can weaken replay suppression for still-valid captured messages;
 - no independent security audit yet.

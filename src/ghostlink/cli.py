@@ -18,7 +18,11 @@ from ghostlink.contact import (
 )
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import format_ghost_id_fingerprint
-from ghostlink.message import MessageDecryptionError, decrypt_message, encrypt_message
+from ghostlink.message_v2 import (
+    MessageV2DecryptionError,
+    decrypt_message_v2,
+    encrypt_message_v2,
+)
 from ghostlink.profile import (
     LocalProfile,
     ProfileError,
@@ -26,6 +30,7 @@ from ghostlink.profile import (
     decrypt_local_profile,
     encrypt_local_profile,
 )
+from ghostlink.replay import ReplayCacheError, SQLiteReplayCache
 
 PasswordReader = Callable[[str], str]
 NodeClientFactory = Callable[[str], GhostNodeClient]
@@ -74,6 +79,12 @@ def _prompt_new_password(password_reader: PasswordReader) -> str:
 def _load_profile(path: Path, password_reader: PasswordReader) -> LocalProfile:
     password = password_reader("GhostLink profile password: ")
     return decrypt_local_profile(_read_text(path), password)
+
+
+def _replay_state_path(profile_path: Path, explicit_path: str | None) -> Path:
+    if explicit_path is not None:
+        return Path(explicit_path)
+    return Path(f"{profile_path}.state.sqlite3")
 
 
 def _command_init(args: argparse.Namespace, password_reader: PasswordReader) -> int:
@@ -139,7 +150,7 @@ def _command_node_smoke(
     args: argparse.Namespace,
     node_client_factory: NodeClientFactory,
 ) -> int:
-    """Run an ephemeral end-to-end encrypted round trip through one GhostNode."""
+    """Run an ephemeral protocol-v2 E2EE round trip through one GhostNode."""
     client = node_client_factory(args.node)
     if not client.health():
         raise CLIError("GhostNode returned an unhealthy status")
@@ -148,40 +159,39 @@ def _command_node_smoke(
     bob = GhostEntity.generate()
     alice_device = alice.enroll_device()
     bob_device = bob.enroll_device()
-    expected_plaintext = b"ghostlink-e2ee-smoke-v1"
+    expected_plaintext = b"ghostlink-e2ee-smoke-v2"
 
-    message = encrypt_message(
+    message = encrypt_message_v2(
         sender=alice_device,
         recipient=bob_device.public_device(),
         plaintext=expected_plaintext,
     )
-    relay_message_id = client.send(message)
+    client.send_v2(message)
 
     try:
-        stored = next(
+        received = next(
             (
                 candidate
-                for candidate in client.receive(bob_device.device_id)
-                if candidate.message_id == relay_message_id
+                for candidate in client.receive_v2(bob_device.device_id)
+                if candidate.message_id == message.message_id
             ),
             None,
         )
-        if stored is None:
+        if received is None:
             raise CLIError("smoke message was not returned by GhostNode")
 
-        plaintext = decrypt_message(
+        plaintext = decrypt_message_v2(
             recipient=bob_device,
             sender=alice_device.public_device(),
-            message=stored.message,
+            message=received,
         )
         if plaintext != expected_plaintext:
             raise CLIError("smoke message plaintext did not round-trip correctly")
     finally:
-        client.delete(relay_message_id)
+        client.delete_v2(bob_device.device_id, message.message_id)
 
-    print("GhostNode E2EE smoke test passed")
+    print("GhostNode E2EE V2 smoke test passed")
     return 0
-
 
 def _command_send(
     args: argparse.Namespace,
@@ -192,52 +202,62 @@ def _command_send(
     contact = import_contact_bundle(_read_text(Path(args.contact)))
     plaintext = args.message.encode("utf-8")
 
-    message = encrypt_message(
+    message = encrypt_message_v2(
         sender=profile.device,
         recipient=contact.device,
         plaintext=plaintext,
     )
-    message_id = node_client_factory(args.node).send(message)
+    message_id = node_client_factory(args.node).send_v2(message)
 
     print(f"Message queued: {message_id}")
     print(f"Recipient: {contact.ghost_id}")
     return 0
-
 
 def _command_inbox(
     args: argparse.Namespace,
     password_reader: PasswordReader,
     node_client_factory: NodeClientFactory,
 ) -> int:
-    profile = _load_profile(Path(args.profile), password_reader)
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
     contact = import_contact_bundle(_read_text(Path(args.contact)))
     client = node_client_factory(args.node)
-    stored_messages = client.receive(profile.device.device_id)
+    replay_cache = SQLiteReplayCache(
+        _replay_state_path(profile_path, args.state)
+    )
+    messages = client.receive_v2(profile.device.device_id)
 
     delivered = 0
     skipped = 0
+    replayed = 0
 
-    for stored in stored_messages:
-        if stored.message.sender_device_id != contact.device_id:
+    for message in messages:
+        if message.sender_device_id != contact.device_id:
             skipped += 1
             continue
 
         try:
-            plaintext = decrypt_message(
+            plaintext = decrypt_message_v2(
                 recipient=profile.device,
                 sender=contact.device,
-                message=stored.message,
+                message=message,
             )
             text = plaintext.decode("utf-8")
-        except (MessageDecryptionError, UnicodeDecodeError):
+        except (MessageV2DecryptionError, UnicodeDecodeError):
             skipped += 1
+            continue
+
+        if not replay_cache.accept(contact.device_id, message.message_id):
+            replayed += 1
+            if not args.keep:
+                client.delete_v2(profile.device.device_id, message.message_id)
             continue
 
         print(f"{contact.ghost_id}: {text}")
         delivered += 1
 
         if not args.keep:
-            client.delete(stored.message_id)
+            client.delete_v2(profile.device.device_id, message.message_id)
 
     if delivered == 0:
         print("No readable messages.")
@@ -247,9 +267,13 @@ def _command_inbox(
             f"Skipped {skipped} message(s) that could not be verified or decrypted.",
             file=sys.stderr,
         )
+    if replayed:
+        print(
+            f"Suppressed {replayed} replayed message(s).",
+            file=sys.stderr,
+        )
 
     return 0
-
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the GhostLink M3 command-line parser."""
@@ -310,6 +334,10 @@ def build_parser() -> argparse.ArgumentParser:
     inbox_parser.add_argument("--contact", required=True)
     inbox_parser.add_argument("--node", required=True)
     inbox_parser.add_argument(
+        "--state",
+        help="path to the persistent replay-cache database",
+    )
+    inbox_parser.add_argument(
         "--keep",
         action="store_true",
         help="leave successfully decrypted messages on the relay",
@@ -353,6 +381,7 @@ def run(
         GhostNodeClientError,
         OSError,
         ProfileError,
+        ReplayCacheError,
         ValueError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)

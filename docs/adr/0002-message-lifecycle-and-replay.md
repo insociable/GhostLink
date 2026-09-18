@@ -1,6 +1,6 @@
 # ADR-0002: Authenticated message lifecycle and replay protection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-18
 
 ## Context
@@ -95,9 +95,9 @@ Relay deduplication is defense in depth and resource protection. It is not the s
 
 ### Protocol migration
 
-When v2 is implemented, the experimental clients and reference GhostNode will migrate together and the Oracle reference deployment will reject v1 messages.
+The migration is staged through reviewed pull requests: message core, relay/client transport, persistent replay state, then removal of the v1 runtime path.
 
-GhostLink is not committing to v1 backward compatibility before a stable release.
+GhostLink is pre-1.0 and does not commit to protocol-v1 backward compatibility. Once the v2 client cutover is validated, the reference runtime rejects v1 rather than carrying two security models indefinitely.
 
 ## Consequences
 
@@ -123,3 +123,11 @@ Costs and limitations:
 Protocol v2 should be treated as another experimental hardening step, not as a replacement for a reviewed asynchronous messaging protocol such as a Double Ratchet design.
 
 The static PyNaCl `Box` construction remains temporary until GhostLink adopts and reviews a ratcheting session protocol.
+
+## Implementation status
+
+Accepted and implemented in the reference codebase on 2026-09-18.
+
+The protocol-v2 message core authenticates duplicated routing/lifecycle metadata, GhostNode provides v2 relay storage and deduplication, and the CLI uses a persistent SQLite replay cache before displaying plaintext.
+
+Removal of the temporary protocol-v1 runtime path is tracked as the final migration cleanup step.

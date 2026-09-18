@@ -175,5 +175,107 @@ def test_cli_node_smoke_runs_ephemeral_e2ee_round_trip(capsys) -> None:
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "GhostNode E2EE smoke test passed" in captured.out
+    assert "GhostNode E2EE V2 smoke test passed" in captured.out
     assert captured.err == ""
+
+
+def test_cli_suppresses_authenticated_replay(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password_reader = lambda prompt: "test replay password"  # noqa: E731
+    alice_profile = tmp_path / "alice-replay.ghost"
+    bob_profile = tmp_path / "bob-replay.ghost"
+    alice_contact = tmp_path / "alice-replay.contact"
+    bob_contact = tmp_path / "bob-replay.contact"
+    node_url = "http://ghostnode.test"
+
+    assert run(
+        ["init", "--profile", str(alice_profile)],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    assert run(
+        ["init", "--profile", str(bob_profile)],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    assert run(
+        [
+            "contact-export",
+            "--profile",
+            str(alice_profile),
+            "--output",
+            str(alice_contact),
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    assert run(
+        [
+            "contact-export",
+            "--profile",
+            str(bob_profile),
+            "--output",
+            str(bob_contact),
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    assert run(
+        [
+            "send",
+            "--profile",
+            str(alice_profile),
+            "--contact",
+            str(bob_contact),
+            "--node",
+            node_url,
+            "display exactly once",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    assert run(
+        [
+            "inbox",
+            "--profile",
+            str(bob_profile),
+            "--contact",
+            str(alice_contact),
+            "--node",
+            node_url,
+            "--keep",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    first = capsys.readouterr()
+    assert "display exactly once" in first.out
+    assert first.err == ""
+
+    assert run(
+        [
+            "inbox",
+            "--profile",
+            str(bob_profile),
+            "--contact",
+            str(alice_contact),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    second = capsys.readouterr()
+    assert "display exactly once" not in second.out
+    assert "No readable messages." in second.out
+    assert "Suppressed 1 replayed message(s)." in second.err
