@@ -422,7 +422,9 @@ def test_cli_does_not_fall_back_to_static_v2_when_bootstrap_fails(
         "no fallback password",
     )
     assert api_client.get(f"/v2/messages/{bob.device.device_id}").json() == []
-    assert api_client.get(f"/v3/messages/{bob.device.device_id}").json() == []
+    assert node_client_factory(
+        "http://ghostnode.test"
+    ).receive_ratchet(bob.device) == []
 
 
 def test_cli_suppresses_authenticated_v3_replay_before_second_decrypt(

@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from ghostlink.config import NodeSettings
 from ghostlink.node import create_app
+from ghostlink.relay_request_auth import InMemoryRelayRequestReplayStore
 from ghostlink.relay_v2 import InMemoryV2MessageStore
 from ghostlink.relay_v3 import InMemoryV3MessageStore
 
@@ -72,6 +73,24 @@ class UnhealthyRatchetMessageStore(InMemoryV3MessageStore):
 def test_health_includes_ratcheted_v3_storage() -> None:
     client = TestClient(
         create_app(ratchet_store=UnhealthyRatchetMessageStore())
+    )
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "storage unavailable"}
+
+
+class UnhealthyRelayRequestReplayStore(InMemoryRelayRequestReplayStore):
+    def is_healthy(self) -> bool:
+        return False
+
+
+def test_health_includes_relay_request_replay_storage() -> None:
+    client = TestClient(
+        create_app(
+            request_replay_store=UnhealthyRelayRequestReplayStore(),
+        )
     )
 
     response = client.get("/health")

@@ -776,9 +776,9 @@ def test_ratchet_v3_relay_round_trip_and_tamper_rollback(
                 created_at=now,
             )
             assert outbound.version == 3
-            assert node.send_ratchet(outbound) == outbound.message_id
+            assert node.send_ratchet(alice_device, outbound) == outbound.message_id
 
-            received = node.receive_ratchet(bob_device.device_id)
+            received = node.receive_ratchet(bob_device)
             assert received == [outbound]
 
             tampered = replace(
@@ -812,8 +812,8 @@ def test_ratchet_v3_relay_round_trip_and_tamper_rollback(
                 b"ratcheted v3 reply",
                 created_at=now + 1,
             )
-            node.send_ratchet(reply)
-            reply_received = node.receive_ratchet(alice_device.device_id)
+            node.send_ratchet(bob_device, reply)
+            reply_received = node.receive_ratchet(alice_device)
             assert reply_received == [reply]
             assert (
                 decrypt_ratchet_message(
@@ -827,15 +827,15 @@ def test_ratchet_v3_relay_round_trip_and_tamper_rollback(
             )
 
             node.delete_ratchet(
-                bob_device.device_id,
+                bob_device,
                 outbound.message_id,
             )
             node.delete_ratchet(
-                alice_device.device_id,
+                alice_device,
                 reply.message_id,
             )
-            assert node.receive_ratchet(bob_device.device_id) == []
-            assert node.receive_ratchet(alice_device.device_id) == []
+            assert node.receive_ratchet(bob_device) == []
+            assert node.receive_ratchet(alice_device) == []
 
 
 

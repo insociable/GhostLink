@@ -24,6 +24,7 @@ from ghostlink.prekey_status import (
     create_prekey_status_request,
 )
 from ghostlink.ratchet_message import RATCHET_MESSAGE_VERSION, RatchetMessage
+from ghostlink.relay_request_auth import create_relay_request_headers
 
 _MAX_CIPHERTEXT_BYTES = 1_048_576
 _DEVICE_ID_PREFIX = "device1:"
@@ -514,10 +515,14 @@ class GhostNodeClient:
         method: str,
         path: str,
         payload: dict[str, object] | None = None,
+        *,
+        extra_headers: dict[str, str] | None = None,
     ) -> tuple[int, object | None]:
         headers: dict[str, str] = {}
         if self.access_token is not None:
             headers["Authorization"] = f"Bearer {self.access_token}"
+        if extra_headers is not None:
+            headers.update(extra_headers)
 
         return self.requester(
             method,
@@ -566,8 +571,20 @@ class GhostNodeClient:
             )
         return stored.message_id
 
-    def send_ratchet(self, message: RatchetMessage) -> str:
-        """Submit one explicitly ratcheted protocol-v3 envelope."""
+    def send_ratchet(
+        self,
+        sender_device: EnrolledGhostDevice,
+        message: RatchetMessage,
+        *,
+        issued_at: int | None = None,
+        request_id: str | None = None,
+    ) -> str:
+        """Submit one device-authenticated protocol-v3 envelope."""
+        if sender_device.device_id != message.sender_device_id:
+            raise ValueError(
+                "sender device does not match the ratcheted message sender"
+            )
+
         payload: dict[str, object] = {
             "version": message.version,
             "message_id": message.message_id,
@@ -578,7 +595,21 @@ class GhostNodeClient:
             "ciphertext_type": message.ciphertext_type,
             "ciphertext": base64.b64encode(message.ciphertext).decode("ascii"),
         }
-        status_code, body = self._request("POST", "/v3/messages", payload)
+        path = "/v3/messages"
+        headers = create_relay_request_headers(
+            sender_device,
+            method="POST",
+            path=path,
+            payload=payload,
+            issued_at=int(time.time()) if issued_at is None else issued_at,
+            request_id=request_id,
+        )
+        status_code, body = self._request(
+            "POST",
+            path,
+            payload,
+            extra_headers=headers,
+        )
         if status_code != 201:
             raise GhostNodeRequestError(
                 status_code,
@@ -745,18 +776,27 @@ class GhostNodeClient:
 
     def receive_ratchet(
         self,
-        recipient_device_id: str,
+        recipient_device: EnrolledGhostDevice,
+        *,
+        issued_at: int | None = None,
+        request_id: str | None = None,
     ) -> list[RatchetMessage]:
-        """Retrieve encrypted protocol-v3 ratcheted envelopes for one device."""
-        try:
-            _validate_device_id(recipient_device_id, "recipient_device_id")
-        except GhostNodeProtocolError as exc:
-            raise ValueError(str(exc)) from exc
-
+        """Retrieve one device's protocol-v3 mailbox with owner proof."""
+        recipient_device_id = recipient_device.device_id
         encoded_device_id = urllib.parse.quote(recipient_device_id, safe=":")
+        path = f"/v3/messages/{encoded_device_id}"
+        headers = create_relay_request_headers(
+            recipient_device,
+            method="GET",
+            path=path,
+            payload=None,
+            issued_at=int(time.time()) if issued_at is None else issued_at,
+            request_id=request_id,
+        )
         status_code, body = self._request(
             "GET",
-            f"/v3/messages/{encoded_device_id}",
+            path,
+            extra_headers=headers,
         )
         if status_code != 200:
             raise GhostNodeRequestError(
@@ -792,21 +832,34 @@ class GhostNodeClient:
 
     def delete_ratchet(
         self,
-        recipient_device_id: str,
+        recipient_device: EnrolledGhostDevice,
         message_id: str,
+        *,
+        issued_at: int | None = None,
+        request_id: str | None = None,
     ) -> None:
-        """Delete one delivered protocol-v3 ratcheted envelope."""
+        """Delete one delivered protocol-v3 envelope with owner proof."""
         try:
-            _validate_device_id(recipient_device_id, "recipient_device_id")
             _validate_message_id(message_id)
         except GhostNodeProtocolError as exc:
             raise ValueError(str(exc)) from exc
 
+        recipient_device_id = recipient_device.device_id
         encoded_device_id = urllib.parse.quote(recipient_device_id, safe=":")
         encoded_message_id = urllib.parse.quote(message_id, safe="")
+        path = f"/v3/messages/{encoded_device_id}/{encoded_message_id}"
+        headers = create_relay_request_headers(
+            recipient_device,
+            method="DELETE",
+            path=path,
+            payload=None,
+            issued_at=int(time.time()) if issued_at is None else issued_at,
+            request_id=request_id,
+        )
         status_code, body = self._request(
             "DELETE",
-            f"/v3/messages/{encoded_device_id}/{encoded_message_id}",
+            path,
+            extra_headers=headers,
         )
         if status_code != 204:
             raise GhostNodeRequestError(

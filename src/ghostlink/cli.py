@@ -350,7 +350,7 @@ def _command_send(
             contact,
             plaintext,
         )
-        message_id = client.send_ratchet(message)
+        message_id = client.send_ratchet(profile.device, message)
 
     print(f"Ratcheted message queued: {message_id}")
     print(f"Recipient: {contact.ghost_id}")
@@ -378,7 +378,7 @@ def _command_inbox(
 
     with ratchet_engine_factory(profile, profile_path) as engine:
         maintain_prekeys(engine, client, profile.device)
-        messages = client.receive_ratchet(profile.device.device_id)
+        messages = client.receive_ratchet(profile.device)
 
         for message in messages:
             if message.sender_device_id != contact.device_id:
@@ -389,7 +389,7 @@ def _command_inbox(
                 replayed += 1
                 if not args.keep:
                     client.delete_ratchet(
-                        profile.device.device_id,
+                        profile.device,
                         message.message_id,
                     )
                 continue
@@ -406,7 +406,7 @@ def _command_inbox(
                 replayed += 1
                 if not args.keep:
                     client.delete_ratchet(
-                        profile.device.device_id,
+                        profile.device,
                         message.message_id,
                     )
                 continue
@@ -419,7 +419,7 @@ def _command_inbox(
 
             if not args.keep:
                 client.delete_ratchet(
-                    profile.device.device_id,
+                    profile.device,
                     message.message_id,
                 )
 

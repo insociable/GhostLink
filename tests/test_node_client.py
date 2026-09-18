@@ -293,6 +293,8 @@ def test_node_client_rejects_invalid_message_id_before_delete() -> None:
 
 
 def test_node_client_ratchet_v3_round_trip_is_separate_from_static_v2() -> None:
+    alice = GhostEntity.generate().enroll_device()
+    bob = GhostEntity.generate().enroll_device()
     api_client = TestClient(create_app())
     client = GhostNodeClient(
         "http://ghostnode.test",
@@ -302,23 +304,25 @@ def test_node_client_ratchet_v3_round_trip_is_separate_from_static_v2() -> None:
     message = RatchetMessage(
         version=3,
         message_id="3" * 32,
-        sender_device_id=ALICE_DEVICE_ID,
-        recipient_device_id=BOB_DEVICE_ID,
+        sender_device_id=alice.device_id,
+        recipient_device_id=bob.device_id,
         created_at=now,
         expires_at=now + 3_600,
         ciphertext_type=3,
         ciphertext=b"opaque-libsignal",
     )
 
-    assert client.send_ratchet(message) == message.message_id
-    assert client.receive_ratchet(BOB_DEVICE_ID) == [message]
-    assert client.receive(BOB_DEVICE_ID) == []
+    assert client.send_ratchet(alice, message) == message.message_id
+    assert client.receive_ratchet(bob) == [message]
+    assert client.receive(bob.device_id) == []
 
-    client.delete_ratchet(BOB_DEVICE_ID, message.message_id)
-    assert client.receive_ratchet(BOB_DEVICE_ID) == []
+    client.delete_ratchet(bob, message.message_id)
+    assert client.receive_ratchet(bob) == []
 
 
 def test_node_client_rejects_unexpected_ratchet_v3_fields() -> None:
+    bob = GhostEntity.generate().enroll_device()
+
     def requester(
         method: str,
         url: str,
@@ -350,4 +354,4 @@ def test_node_client_rejects_unexpected_ratchet_v3_fields() -> None:
         GhostNodeProtocolError,
         match="ratcheted message fields do not match",
     ):
-        client.receive_ratchet(BOB_DEVICE_ID)
+        client.receive_ratchet(bob)

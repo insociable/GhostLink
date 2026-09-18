@@ -49,7 +49,9 @@ The format follows Keep a Changelog and Semantic Versioning.
 - local profile v2 with an independently random 32-byte ratchet-vault master key inside the existing Argon2id/SecretBox encrypted payload;
 - explicit atomic profile-v1 migration for ratcheted CLI use;
 - durable ratchet-session lookup before bootstrap;
-- `prekey-sync` plus user-facing `send` / `inbox` cutover to protocol v3 across persistent ratchet-engine restarts.
+- `prekey-sync` plus user-facing `send` / `inbox` cutover to protocol v3 across persistent ratchet-engine restarts;
+- DeviceID-signed protocol-v3 message-relay requests bound to method, canonical path, canonical-body digest, timestamp and random request ID;
+- persistent SQLite protocol-v3 request-replay state that survives GhostNode restart.
 
 ### Security
 
@@ -68,11 +70,15 @@ The format follows Keep a Changelog and Semantic Versioning.
 - ratcheted v3 relay metadata tampering fails inside the durable decrypt transaction, restoring the previous ratchet state instead of consuming a modified envelope;
 - static v2 and ratcheted v3 message routes/tables are isolated and there is no automatic protocol downgrade;
 - user-facing send/inbox fail closed on ratchet bootstrap/decrypt errors instead of retrying via static v2;
-- the ratchet-vault master key is kept inside encrypted profile v2 and is not passed in argv or environment.
+- the ratchet-vault master key is kept inside encrypted profile v2 and is not passed in argv or environment;
+- protocol-v3 submission requires sender DeviceID control, while mailbox list/delete require recipient DeviceID control;
+- stale, replayed, tampered or ownership-mismatched v3 request proofs fail with generic authentication errors; optional Bearer access control remains additive.
 
 ### Known limitations
 
-- shared relay access control is not per-device cryptographic authentication;
+- legacy static-v2 message relay remains bearer-only and diagnostic rather than per-device authenticated;
+- compromise of a DeviceID signing key remains effective until complete device revocation/recovery is designed;
+- relay database rollback can also roll back persisted protocol-v3 request-replay state;
 - the libsignal ratchet engine and user-facing v3 CLI path provide tested forward-secrecy/post-compromise behavior, but GhostLink remains pre-alpha and unaudited;
 - traffic metadata remains visible to the relay;
 - replay-cache rollback/deletion can weaken replay suppression for still-valid captured messages;

@@ -24,6 +24,17 @@ from ghostlink.ratchet_message import (
     RATCHET_MESSAGE_VERSION,
 )
 from ghostlink.relay_auth import require_relay_access
+from ghostlink.relay_request_auth import (
+    AUTH_DEVICE_ID_HEADER,
+    AUTH_ISSUED_AT_HEADER,
+    AUTH_REQUEST_ID_HEADER,
+    AUTH_SIGNATURE_HEADER,
+    AUTH_SIGNING_KEY_HEADER,
+    RelayRequestProofError,
+    RelayRequestReplayStore,
+    authenticate_relay_request,
+    create_relay_request_replay_store,
+)
 
 _DEVICE_ID_PREFIX = "device1:"
 _DEVICE_ID_PAYLOAD_LENGTH = 52
@@ -360,12 +371,50 @@ def create_v3_message_store(settings: NodeSettings) -> V3MessageStore:
     return SQLiteV3MessageStore(settings.database_path)
 
 
+def _require_v3_device_auth(
+    *,
+    replay_store: RelayRequestReplayStore,
+    expected_device_id: str,
+    method: str,
+    path: str,
+    payload: dict[str, object] | None,
+    device_id: str | None,
+    signing_public_key: str | None,
+    request_id: str | None,
+    issued_at: str | None,
+    signature: str | None,
+) -> None:
+    try:
+        authenticate_relay_request(
+            expected_device_id=expected_device_id,
+            method=method,
+            path=path,
+            payload=payload,
+            device_id=device_id,
+            signing_public_key=signing_public_key,
+            request_id=request_id,
+            issued_at=issued_at,
+            signature=signature,
+            now=_unix_time(),
+            replay_store=replay_store,
+        )
+    except RelayRequestProofError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="unauthorized",
+        ) from exc
+
+
 def create_v3_router(
     settings: NodeSettings,
     store: V3MessageStore,
+    request_replay_store: RelayRequestReplayStore | None = None,
 ) -> APIRouter:
     """Create explicitly ratcheted protocol-v3 relay routes."""
     router = APIRouter()
+    replay_store = request_replay_store or create_relay_request_replay_store(
+        settings
+    )
 
     @router.post(
         "/v3/messages",
@@ -375,8 +424,35 @@ def create_v3_router(
     def submit_v3_message(
         envelope: V3MessageEnvelope,
         authorization: Annotated[str | None, Header()] = None,
+        auth_device_id: Annotated[
+            str | None, Header(alias=AUTH_DEVICE_ID_HEADER)
+        ] = None,
+        auth_signing_key: Annotated[
+            str | None, Header(alias=AUTH_SIGNING_KEY_HEADER)
+        ] = None,
+        auth_request_id: Annotated[
+            str | None, Header(alias=AUTH_REQUEST_ID_HEADER)
+        ] = None,
+        auth_issued_at: Annotated[
+            str | None, Header(alias=AUTH_ISSUED_AT_HEADER)
+        ] = None,
+        auth_signature: Annotated[
+            str | None, Header(alias=AUTH_SIGNATURE_HEADER)
+        ] = None,
     ) -> V3MessageEnvelope:
         require_relay_access(settings, authorization)
+        _require_v3_device_auth(
+            replay_store=replay_store,
+            expected_device_id=envelope.sender_device_id,
+            method="POST",
+            path="/v3/messages",
+            payload=envelope.model_dump(),
+            device_id=auth_device_id,
+            signing_public_key=auth_signing_key,
+            request_id=auth_request_id,
+            issued_at=auth_issued_at,
+            signature=auth_signature,
+        )
         if not _relay_time_valid(envelope, _unix_time()):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -397,6 +473,21 @@ def create_v3_router(
     def receive_v3_messages(
         recipient_device_id: str,
         authorization: Annotated[str | None, Header()] = None,
+        auth_device_id: Annotated[
+            str | None, Header(alias=AUTH_DEVICE_ID_HEADER)
+        ] = None,
+        auth_signing_key: Annotated[
+            str | None, Header(alias=AUTH_SIGNING_KEY_HEADER)
+        ] = None,
+        auth_request_id: Annotated[
+            str | None, Header(alias=AUTH_REQUEST_ID_HEADER)
+        ] = None,
+        auth_issued_at: Annotated[
+            str | None, Header(alias=AUTH_ISSUED_AT_HEADER)
+        ] = None,
+        auth_signature: Annotated[
+            str | None, Header(alias=AUTH_SIGNATURE_HEADER)
+        ] = None,
     ) -> list[V3MessageEnvelope]:
         require_relay_access(settings, authorization)
         try:
@@ -406,6 +497,19 @@ def create_v3_router(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
+        path = f"/v3/messages/{recipient_device_id}"
+        _require_v3_device_auth(
+            replay_store=replay_store,
+            expected_device_id=recipient_device_id,
+            method="GET",
+            path=path,
+            payload=None,
+            device_id=auth_device_id,
+            signing_public_key=auth_signing_key,
+            request_id=auth_request_id,
+            issued_at=auth_issued_at,
+            signature=auth_signature,
+        )
         return store.list_for_recipient(recipient_device_id)
 
     @router.delete(
@@ -416,6 +520,21 @@ def create_v3_router(
         recipient_device_id: str,
         message_id: str,
         authorization: Annotated[str | None, Header()] = None,
+        auth_device_id: Annotated[
+            str | None, Header(alias=AUTH_DEVICE_ID_HEADER)
+        ] = None,
+        auth_signing_key: Annotated[
+            str | None, Header(alias=AUTH_SIGNING_KEY_HEADER)
+        ] = None,
+        auth_request_id: Annotated[
+            str | None, Header(alias=AUTH_REQUEST_ID_HEADER)
+        ] = None,
+        auth_issued_at: Annotated[
+            str | None, Header(alias=AUTH_ISSUED_AT_HEADER)
+        ] = None,
+        auth_signature: Annotated[
+            str | None, Header(alias=AUTH_SIGNATURE_HEADER)
+        ] = None,
     ) -> Response:
         require_relay_access(settings, authorization)
         try:
@@ -427,6 +546,19 @@ def create_v3_router(
                 detail=str(exc),
             ) from exc
 
+        path = f"/v3/messages/{recipient_device_id}/{message_id}"
+        _require_v3_device_auth(
+            replay_store=replay_store,
+            expected_device_id=recipient_device_id,
+            method="DELETE",
+            path=path,
+            payload=None,
+            device_id=auth_device_id,
+            signing_public_key=auth_signing_key,
+            request_id=auth_request_id,
+            issued_at=auth_issued_at,
+            signature=auth_signature,
+        )
         if not store.delete(recipient_device_id, message_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
