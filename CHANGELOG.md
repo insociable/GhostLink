@@ -36,7 +36,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - lifecycle-aware ratchet vault snapshots with v1 state migration and encrypted pending/active/retired pre-key generation metadata;
 - atomic pending pre-key generation preparation with shared signed EC material, one-time EC/Kyber pairs and a reusable Kyber last-resort fallback bundle;
 - crash-safe DeviceID-signed pre-key publication staging with exact payload recovery and local re-verification after restart;
-- GhostNode cryptographically authenticated pre-key publication with strict per-DeviceID sequencing and atomic SQLite replacement.
+- GhostNode cryptographically authenticated pre-key publication with strict per-DeviceID sequencing and atomic SQLite replacement;
+- atomic idempotent local publication acknowledgement that promotes staged generations and retains the previous active generation for delayed messages.
 
 ### Security
 
