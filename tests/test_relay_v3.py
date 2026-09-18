@@ -2,6 +2,7 @@ import base64
 import time
 import urllib.parse
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -270,3 +271,30 @@ def test_v3_rejects_messages_outside_relay_time_window_after_auth() -> None:
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail == "message lifecycle is outside relay acceptance window"
+
+
+def test_v3_request_replay_is_rejected_after_sqlite_app_restart(
+    tmp_path: Path,
+) -> None:
+    bob = GhostEntity.generate().enroll_device()
+    settings = NodeSettings(database_path=tmp_path / "ghostnode.sqlite3")
+    now = int(time.time())
+    path = f"/v3/messages/{bob.device_id}"
+    headers = create_relay_request_headers(
+        bob,
+        method="GET",
+        path=path,
+        payload=None,
+        issued_at=now,
+        request_id="8" * 32,
+    )
+
+    first_client = TestClient(create_app(settings=settings))
+    first = first_client.get(path, headers=headers)
+    assert first.status_code == 200
+    assert first.json() == []
+
+    restarted_client = TestClient(create_app(settings=settings))
+    replay = restarted_client.get(path, headers=headers)
+    assert replay.status_code == 401
+    assert replay.json() == {"detail": "unauthorized"}
