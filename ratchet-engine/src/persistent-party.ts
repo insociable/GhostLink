@@ -403,10 +403,13 @@ export class PersistentRatchetParty {
 
   async establishSession(
     remote: PersistentRatchetParty,
+    publicationSequence: number,
     bundle: SignalClient.PreKeyBundle
   ): Promise<void> {
-    await this.transaction((party) =>
-      party.establishSession(remote.inner, bundle)
+    await this.establishSessionWithAddress(
+      remote.address.name(),
+      publicationSequence,
+      bundle
     );
   }
 
