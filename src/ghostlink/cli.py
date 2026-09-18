@@ -412,6 +412,16 @@ def _command_contact_trust(
     return 0
 
 
+def _print_contact_update_result(record: ContactTrustRecord) -> None:
+    if record.state is ContactTrustState.CHANGED:
+        print(
+            "IDENTITY CHANGED: trusted messaging is blocked until the "
+            "candidate fingerprint is verified or rejected.",
+            file=sys.stderr,
+        )
+    _print_contact_record(record)
+
+
 def _command_contact_update(
     args: argparse.Namespace,
     password_reader: PasswordReader,
@@ -425,13 +435,22 @@ def _command_contact_update(
     )
     _save_profile_contact_store(profile_path, profile, args.contacts, store)
 
-    if record.state is ContactTrustState.CHANGED:
-        print(
-            "IDENTITY CHANGED: trusted messaging is blocked until the "
-            "candidate fingerprint is verified or rejected.",
-            file=sys.stderr,
-        )
-    _print_contact_record(record)
+    _print_contact_update_result(record)
+    return 0
+
+
+def _command_contact_update_qr(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    store = _load_profile_contact_store(profile_path, profile, args.contacts)
+    bundle = decode_contact_qr_payload(args.payload)
+    record = store.update_contact_bundle(args.contact_id, bundle)
+    _save_profile_contact_store(profile_path, profile, args.contacts, store)
+
+    _print_contact_update_result(record)
     return 0
 
 
@@ -713,7 +732,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify_parser = subparsers.add_parser(
         "contact-verify",
-        help="verify a public contact bundle",
+        help="cryptographically validate a public contact bundle",
     )
     verify_parser.add_argument("bundle")
 
@@ -767,6 +786,15 @@ def build_parser() -> argparse.ArgumentParser:
     update_parser.add_argument("--contacts")
     update_parser.add_argument("contact_id")
     update_parser.add_argument("bundle")
+
+    update_qr_parser = subparsers.add_parser(
+        "contact-update-qr",
+        help="apply a scanned public QR payload to a saved contact",
+    )
+    update_qr_parser.add_argument("--profile", required=True)
+    update_qr_parser.add_argument("--contacts")
+    update_qr_parser.add_argument("contact_id")
+    update_qr_parser.add_argument("--payload", required=True)
 
     reject_parser = subparsers.add_parser(
         "contact-reject-change",
@@ -879,6 +907,8 @@ def run(
             return _command_contact_trust(args, password_reader)
         if args.command == "contact-update":
             return _command_contact_update(args, password_reader)
+        if args.command == "contact-update-qr":
+            return _command_contact_update_qr(args, password_reader)
         if args.command == "contact-reject-change":
             return _command_contact_reject_change(args, password_reader)
         if args.command == "node-health":

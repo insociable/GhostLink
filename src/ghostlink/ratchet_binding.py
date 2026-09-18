@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from nacl.exceptions import BadSignatureError
 
-from ghostlink.contact import VerifiedContact
+from ghostlink.contact import ValidatedContact
 from ghostlink.device import EnrolledGhostDevice
 
 _BINDING_VERSION = 2
@@ -398,7 +398,7 @@ def sign_ratchet_prekey_binding(
 
 def verify_ratchet_prekey_binding(
     signed: SignedRatchetPreKeyBinding,
-    contact: VerifiedContact,
+    contact: ValidatedContact,
     *,
     now: int | None = None,
 ) -> RatchetPreKeyBinding:

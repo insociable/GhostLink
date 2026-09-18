@@ -49,17 +49,13 @@ class ValidatedContact:
 
     @property
     def ghost_id(self) -> str:
-        """Return the verified remote GhostID."""
+        """Return the cryptographically validated remote GhostID."""
         return self.device.ghost_id
 
     @property
     def device_id(self) -> str:
-        """Return the verified remote DeviceID."""
+        """Return the cryptographically validated remote DeviceID."""
         return self.device.device_id
-
-
-# Compatibility alias for internal callers while #20 migrates terminology.
-VerifiedContact = ValidatedContact
 
 
 def _encode_base64(value: bytes) -> str:

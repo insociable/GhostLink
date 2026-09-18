@@ -8,7 +8,7 @@ from ghostlink.client.node_client import (
     GhostNodeClient,
     GhostNodeProtocolError,
 )
-from ghostlink.contact import VerifiedContact
+from ghostlink.contact import ValidatedContact
 from ghostlink.device import EnrolledGhostDevice
 from ghostlink.prekey_fetch import PreKeyFetchResponse
 from ghostlink.ratchet_binding import (
@@ -23,7 +23,7 @@ def establish_session_from_relay(
     engine: RatchetEngineClient,
     node: GhostNodeClient,
     local_device: EnrolledGhostDevice,
-    contact: VerifiedContact,
+    contact: ValidatedContact,
     *,
     issued_at: int | None = None,
     verification_time: int | None = None,
@@ -31,7 +31,7 @@ def establish_session_from_relay(
     """Fetch, verify and atomically establish one remote libsignal session.
 
     The relay response is treated as untrusted transport data. No ratchet state
-    is mutated until the signed binding has been checked against VerifiedContact
+    is mutated until the signed binding has been checked against ValidatedContact
     and all response metadata agrees with that binding.
     """
     request_time = int(time.time()) if issued_at is None else issued_at

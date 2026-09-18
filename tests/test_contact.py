@@ -11,9 +11,10 @@ from ghostlink.contact import (
     import_contact_qr_payload,
 )
 from ghostlink.entity import GhostEntity
+from ghostlink.identity import derive_identity_fingerprint
 
 
-def test_contact_bundle_round_trip_returns_verified_public_device() -> None:
+def test_contact_bundle_round_trip_returns_validated_public_device() -> None:
     alice = GhostEntity.generate()
     alice_device = alice.enroll_device()
 
@@ -113,6 +114,21 @@ def test_contact_bundle_rejects_unknown_fields() -> None:
     with pytest.raises(ContactBundleError, match="unknown fields: unexpected"):
         import_contact_bundle(json.dumps(document))
 
+
+
+def test_fingerprint_v2_is_identical_across_devices_for_same_identity() -> None:
+    alice = GhostEntity.generate()
+    first = import_contact_bundle(
+        export_contact_bundle(alice, alice.enroll_device())
+    )
+    second = import_contact_bundle(
+        export_contact_bundle(alice, alice.enroll_device())
+    )
+
+    assert first.device_id != second.device_id
+    assert derive_identity_fingerprint(bytes(first.identity_verify_key)) == (
+        derive_identity_fingerprint(bytes(second.identity_verify_key))
+    )
 
 
 def test_contact_qr_payload_round_trip_is_public_and_validated() -> None:
