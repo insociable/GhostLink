@@ -868,11 +868,11 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
     def node_client_factory(base_url: str) -> GhostNodeClient:
         return GhostNodeClient(base_url, requester=requester)
 
-    password = "cross-language CLI password"
+    unlock_phrase = "cross-language CLI password"
 
     def password_reader(prompt: str) -> str:
         del prompt
-        return password
+        return unlock_phrase
 
     alice_profile = tmp_path / "alice-cli-v3.ghost"
     bob_profile = tmp_path / "bob-cli-v3.ghost"
@@ -942,7 +942,7 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
 
     bob_profile_data = decrypt_local_profile(
         bob_profile.read_text(encoding="utf-8"),
-        password,
+        unlock_phrase,
     )
     assert (
         api_client.get(
@@ -975,7 +975,7 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
     # Bob's incoming PreKey message established a durable session to Alice.
     alice_profile_data = decrypt_local_profile(
         alice_profile.read_text(encoding="utf-8"),
-        password,
+        unlock_phrase,
     )
     node_client = node_client_factory(node_url)
     alice_pool_before_reply = node_client.prekey_status(
