@@ -1,3 +1,4 @@
+import base64
 import json
 
 import pytest
@@ -35,9 +36,15 @@ def test_encrypted_profile_does_not_expose_private_key_material() -> None:
 
     serialized = encrypt_local_profile(profile, "a reasonably long password")
 
-    assert bytes(profile.entity.signing_key).hex() not in serialized
-    assert bytes(profile.device.device.signing_key).hex() not in serialized
-    assert bytes(profile.device.device.encryption_key).hex() not in serialized
+    private_values = [
+        bytes(profile.entity.signing_key),
+        bytes(profile.device.device.signing_key),
+        bytes(profile.device.device.encryption_key),
+    ]
+
+    for value in private_values:
+        assert base64.b64encode(value).decode("ascii") not in serialized
+        assert value.hex() not in serialized
 
 
 def test_wrong_password_is_rejected() -> None:
