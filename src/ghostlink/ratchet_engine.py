@@ -1164,6 +1164,42 @@ class RatchetEngineClient:
             allow_empty=True,
         )
 
+    def decrypt_context_bound(
+        self,
+        contact: VerifiedContact,
+        message: RatchetCiphertext,
+        expected_context: bytes,
+    ) -> bytes:
+        """Decrypt only if the authenticated plaintext starts with expected_context."""
+        if not expected_context:
+            raise ValueError("expected_context must not be empty")
+        if len(expected_context) > 4096:
+            raise ValueError("expected_context exceeds the 4096-byte limit")
+
+        result = _require_mapping(
+            self._request(
+                "decrypt_context_bound",
+                {
+                    "remote_device_id": contact.device_id,
+                    "message_type": message.message_type,
+                    "ciphertext": _encode_base64(message.ciphertext),
+                    "expected_context": _encode_base64(expected_context),
+                },
+            ),
+            "decrypt_context_bound result",
+        )
+        _require_exact_fields(
+            result,
+            {"plaintext"},
+            "decrypt_context_bound result",
+        )
+        return _decode_base64(
+            result["plaintext"],
+            "plaintext",
+            max_size=_MAX_PAYLOAD_BYTES,
+            allow_empty=True,
+        )
+
     def close(self) -> None:
         """Close the vault, erase the engine key buffer, and stop the child."""
         if self._closed:
