@@ -1085,6 +1085,24 @@ class RatchetEngineClient:
             },
         )
 
+    def has_session(self, contact: VerifiedContact) -> bool:
+        """Return whether a persistent libsignal session already exists."""
+        result = _require_mapping(
+            self._request(
+                "has_session",
+                {"remote_device_id": contact.device_id},
+            ),
+            "has_session result",
+        )
+        _require_exact_fields(result, {"exists"}, "has_session result")
+        exists = result.get("exists")
+        if not isinstance(exists, bool):
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "has_session exists must be a boolean",
+            )
+        return exists
+
     def establish_session(
         self,
         signed_binding: SignedRatchetPreKeyBinding,
