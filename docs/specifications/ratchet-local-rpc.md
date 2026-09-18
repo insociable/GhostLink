@@ -306,11 +306,10 @@ The detailed formats and lifecycle are specified in:
 
 Before relay cutover GhostLink still needs:
 
-- atomic one-time pop and anti-drain controls;
+- sender HTTP fetch -> VerifiedContact verification -> session establishment orchestration;
 - replenishment threshold execution;
 - seven-day rotation execution;
-- 15-day retired-key garbage collection;
-- relay anti-drain/rate limiting.
+- 15-day retired-key garbage collection.
 
 ## Error handling
 
