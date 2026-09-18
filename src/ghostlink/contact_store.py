@@ -22,8 +22,21 @@ from ghostlink.contact import (
     import_contact_bundle,
 )
 from ghostlink.identity import derive_identity_fingerprint
+from ghostlink.state_witness import (
+    ComponentCheckpoint,
+    MonotonicWitness,
+    StateCheckpointError,
+    StateWitnessError,
+    advance_checkpoint,
+    create_initial_checkpoint,
+    derive_checkpoint,
+    initialize_witness,
+    reconcile_checkpoint,
+    witness_record,
+)
 
-_STORE_VERSION = 1
+_LEGACY_STORE_VERSION = 1
+_STORE_VERSION = 2
 _CIPHER_NAME = "secretbox"
 _MAX_STORE_BYTES = 4 * 1024 * 1024
 _MAX_RECORDS = 1_024
@@ -31,7 +44,14 @@ _MAX_LABEL_BYTES = 256
 _RECORD_ID_BYTES = 16
 _RECORD_ID_HEX_LENGTH = _RECORD_ID_BYTES * 2
 _OUTER_FIELDS = {"version", "cipher", "ciphertext"}
-_PAYLOAD_FIELDS = {"version", "records"}
+_LEGACY_PAYLOAD_FIELDS = {"version", "records"}
+_PAYLOAD_FIELDS = {
+    "version",
+    "state_id",
+    "revision",
+    "previous_digest",
+    "records",
+}
 _RECORD_FIELDS = {
     "record_id",
     "label",
@@ -83,6 +103,10 @@ class ContactTrustStore:
     """In-memory view of the authenticated local contact trust store."""
 
     records: dict[str, ContactTrustRecord] = field(default_factory=dict)
+    state_id: str | None = None
+    revision: int | None = None
+    previous_digest: str | None = None
+    checkpoint_digest: str | None = field(default=None, repr=False)
 
     def list_records(self) -> tuple[ContactTrustRecord, ...]:
         """Return records in a stable display order."""
@@ -417,25 +441,101 @@ def _record_to_document(record: ContactTrustRecord) -> dict[str, object]:
     }
 
 
-def encrypt_contact_store(store: ContactTrustStore, key: bytes) -> str:
-    """Serialize and authenticate-encrypt local trust state."""
-    _validate_key(key)
+def _validate_state_id(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 32
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ContactTrustError(
+            "contact store state_id must be 128-bit lowercase hexadecimal"
+        )
+    return value
+
+
+def _validate_revision(value: object) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 1
+        or value > (1 << 53) - 1
+    ):
+        raise ContactTrustError(
+            "contact store revision must be a positive JSON-safe integer"
+        )
+    return value
+
+
+def _validate_previous_digest(value: object, *, revision: int) -> str | None:
+    if revision == 1:
+        if value is not None:
+            raise ContactTrustError(
+                "initial contact store must not have a previous digest"
+            )
+        return None
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ContactTrustError(
+            "contact store previous_digest must be 32-byte lowercase hexadecimal"
+        )
+    return value
+
+
+def _records_document(store: ContactTrustStore) -> list[dict[str, object]]:
     if len(store.records) > _MAX_RECORDS:
         raise ContactTrustError("contact store contains too many records")
-
-    records = [
+    return [
         _record_to_document(store.records[record_id])
         for record_id in sorted(store.records)
     ]
-    payload = json.dumps(
-        {"version": _STORE_VERSION, "records": records},
+
+
+def _serialize_contact_payload(store: ContactTrustStore) -> bytes:
+    records = _records_document(store)
+    if store.state_id is None and store.revision is None and store.previous_digest is None:
+        payload: dict[str, object] = {
+            "version": _LEGACY_STORE_VERSION,
+            "records": records,
+        }
+    else:
+        if store.state_id is None or store.revision is None:
+            raise ContactTrustError(
+                "contact store rollback metadata is only partially present"
+            )
+        state_id = _validate_state_id(store.state_id)
+        revision = _validate_revision(store.revision)
+        previous_digest = _validate_previous_digest(
+            store.previous_digest,
+            revision=revision,
+        )
+        payload = {
+            "version": _STORE_VERSION,
+            "state_id": state_id,
+            "revision": revision,
+            "previous_digest": previous_digest,
+            "records": records,
+        }
+    return json.dumps(
+        payload,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def encrypt_contact_store(store: ContactTrustStore, key: bytes) -> str:
+    """Serialize and authenticate-encrypt local trust state."""
+    _validate_key(key)
+    payload = _serialize_contact_payload(store)
+    payload_version = json.loads(payload.decode("utf-8"))["version"]
     ciphertext = bytes(SecretBox(key).encrypt(payload))
     document = json.dumps(
         {
-            "version": _STORE_VERSION,
+            "version": payload_version,
             "cipher": _CIPHER_NAME,
             "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
         },
@@ -466,7 +566,7 @@ def decrypt_contact_store(serialized: str, key: bytes) -> ContactTrustStore:
     if (
         not isinstance(version, int)
         or isinstance(version, bool)
-        or version != _STORE_VERSION
+        or version not in {_LEGACY_STORE_VERSION, _STORE_VERSION}
     ):
         raise ContactTrustError("unsupported contact store version")
     if outer.get("cipher") != _CIPHER_NAME:
@@ -492,15 +592,28 @@ def decrypt_contact_store(serialized: str, key: bytes) -> ContactTrustStore:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ContactTrustError("decrypted contact store must be valid UTF-8 JSON") from exc
     payload = _require_mapping(payload_value, "contact store payload")
-    _require_exact_fields(payload, _PAYLOAD_FIELDS, "contact store payload")
 
     payload_version = payload.get("version")
-    if (
-        not isinstance(payload_version, int)
-        or isinstance(payload_version, bool)
-        or payload_version != _STORE_VERSION
-    ):
-        raise ContactTrustError("unsupported contact store payload version")
+    if payload_version != version:
+        raise ContactTrustError("contact store outer/payload versions disagree")
+
+    if version == _LEGACY_STORE_VERSION:
+        _require_exact_fields(
+            payload,
+            _LEGACY_PAYLOAD_FIELDS,
+            "contact store payload",
+        )
+        state_id = None
+        revision = None
+        previous_digest = None
+    else:
+        _require_exact_fields(payload, _PAYLOAD_FIELDS, "contact store payload")
+        state_id = _validate_state_id(payload.get("state_id"))
+        revision = _validate_revision(payload.get("revision"))
+        previous_digest = _validate_previous_digest(
+            payload.get("previous_digest"),
+            revision=revision,
+        )
 
     raw_records = payload.get("records")
     if not isinstance(raw_records, list):
@@ -515,11 +628,16 @@ def decrypt_contact_store(serialized: str, key: bytes) -> ContactTrustStore:
             raise ContactTrustError("contact store contains duplicate record IDs")
         records[record.record_id] = record
 
-    return ContactTrustStore(records=records)
+    return ContactTrustStore(
+        records=records,
+        state_id=state_id,
+        revision=revision,
+        previous_digest=previous_digest,
+    )
 
 
 def load_contact_store(path: Path, key: bytes) -> ContactTrustStore:
-    """Load an encrypted store, or return an empty store when none exists."""
+    """Load an encrypted store without performing freshness verification."""
     _validate_key(key)
     if path.exists() and path.is_dir():
         raise ContactTrustError("contact store path must point to a file")
@@ -532,13 +650,7 @@ def load_contact_store(path: Path, key: bytes) -> ContactTrustStore:
     return decrypt_contact_store(serialized, key)
 
 
-def save_contact_store(
-    path: Path,
-    key: bytes,
-    store: ContactTrustStore,
-) -> None:
-    """Atomically replace one authenticated encrypted contact store."""
-    serialized = encrypt_contact_store(store, key)
+def _atomic_write_contact_store(path: Path, serialized: str) -> None:
     if path.exists() and path.is_dir():
         raise ContactTrustError("contact store path must point to a file")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -572,3 +684,223 @@ def save_contact_store(
             pass
         temporary.unlink(missing_ok=True)
         raise
+
+
+def save_contact_store(
+    path: Path,
+    key: bytes,
+    store: ContactTrustStore,
+) -> None:
+    """Atomically replace one authenticated encrypted contact store."""
+    _atomic_write_contact_store(path, encrypt_contact_store(store, key))
+
+
+def _wrap_witness_error(exc: Exception) -> ContactTrustError:
+    return ContactTrustError(f"contact store rollback verification failed: {exc}")
+
+
+def _current_checkpoint(
+    store: ContactTrustStore,
+    coordination_key: bytes,
+) -> ComponentCheckpoint:
+    if (
+        store.state_id is None
+        or store.revision is None
+        or store.checkpoint_digest is None
+    ):
+        raise ContactTrustError(
+            "contact store has no verified rollback checkpoint"
+        )
+    return ComponentCheckpoint(
+        state_id=store.state_id,
+        component="contacts",
+        revision=store.revision,
+        previous_digest=store.previous_digest,
+        digest=store.checkpoint_digest,
+    )
+
+
+def new_witnessed_contact_store(state_id: str) -> ContactTrustStore:
+    """Create an in-memory revision-1 store ready for first witnessed save."""
+    return ContactTrustStore(
+        state_id=_validate_state_id(state_id),
+        revision=1,
+        previous_digest=None,
+    )
+
+
+def load_contact_store_witnessed(
+    path: Path,
+    key: bytes,
+    *,
+    state_id: str,
+    coordination_key: bytes,
+    witness: MonotonicWitness,
+) -> ContactTrustStore:
+    """Load a current store and fail closed on rollback or divergence."""
+    expected_state_id = _validate_state_id(state_id)
+    if not path.exists():
+        try:
+            if witness.get("contacts") is not None:
+                raise ContactTrustError(
+                    "contact store is missing while its witness is initialized"
+                )
+        except StateWitnessError as exc:
+            raise _wrap_witness_error(exc) from exc
+        return new_witnessed_contact_store(expected_state_id)
+
+    store = load_contact_store(path, key)
+    if store.state_id is None or store.revision is None:
+        raise ContactTrustError(
+            "legacy contact store requires explicit rollback-state migration"
+        )
+    if store.state_id != expected_state_id:
+        raise ContactTrustError(
+            "contact store belongs to a different client state"
+        )
+
+    payload = _serialize_contact_payload(store)
+    try:
+        checkpoint = derive_checkpoint(
+            coordination_key,
+            state_id=store.state_id,
+            component="contacts",
+            revision=store.revision,
+            previous_digest=store.previous_digest,
+            payload=payload,
+        )
+        reconcile_checkpoint(
+            witness,
+            checkpoint,
+            coordination_key=coordination_key,
+            payload=payload,
+        )
+    except (StateCheckpointError, StateWitnessError) as exc:
+        raise _wrap_witness_error(exc) from exc
+
+    store.checkpoint_digest = checkpoint.digest
+    return store
+
+
+def save_contact_store_witnessed(
+    path: Path,
+    key: bytes,
+    store: ContactTrustStore,
+    *,
+    state_id: str,
+    coordination_key: bytes,
+    witness: MonotonicWitness,
+) -> None:
+    """Durably save contact trust state then advance its monotonic witness."""
+    expected_state_id = _validate_state_id(state_id)
+    if store.state_id != expected_state_id or store.revision is None:
+        raise ContactTrustError(
+            "contact store rollback metadata does not match local profile"
+        )
+
+    if store.checkpoint_digest is None:
+        if store.revision != 1 or store.previous_digest is not None:
+            raise ContactTrustError(
+                "unwitnessed contact store is not an initial revision"
+            )
+        payload = _serialize_contact_payload(store)
+        try:
+            checkpoint = create_initial_checkpoint(
+                coordination_key,
+                expected_state_id,
+                "contacts",
+                payload,
+            )
+            if witness.get("contacts") is not None:
+                raise ContactTrustError(
+                    "contact witness already exists for unwitnessed store"
+                )
+        except (StateCheckpointError, StateWitnessError) as exc:
+            raise _wrap_witness_error(exc) from exc
+
+        _atomic_write_contact_store(path, encrypt_contact_store(store, key))
+        try:
+            initialize_witness(
+                witness,
+                checkpoint,
+                coordination_key=coordination_key,
+                payload=payload,
+            )
+        except (StateCheckpointError, StateWitnessError) as exc:
+            raise _wrap_witness_error(exc) from exc
+        store.checkpoint_digest = checkpoint.digest
+        return
+
+    current = _current_checkpoint(store, coordination_key)
+    next_store = ContactTrustStore(
+        records=dict(store.records),
+        state_id=expected_state_id,
+        revision=current.revision + 1,
+        previous_digest=current.digest,
+    )
+    next_payload = _serialize_contact_payload(next_store)
+    try:
+        next_checkpoint = advance_checkpoint(
+            coordination_key,
+            current,
+            next_payload,
+        )
+    except StateCheckpointError as exc:
+        raise _wrap_witness_error(exc) from exc
+
+    _atomic_write_contact_store(
+        path,
+        encrypt_contact_store(next_store, key),
+    )
+    try:
+        witness.compare_and_set(
+            witness_record(current),
+            witness_record(next_checkpoint),
+        )
+    except StateWitnessError as exc:
+        raise _wrap_witness_error(exc) from exc
+
+    store.state_id = next_store.state_id
+    store.revision = next_store.revision
+    store.previous_digest = next_store.previous_digest
+    store.checkpoint_digest = next_checkpoint.digest
+
+
+def migrate_contact_store_to_witness(
+    path: Path,
+    key: bytes,
+    *,
+    state_id: str,
+    coordination_key: bytes,
+    witness: MonotonicWitness,
+) -> ContactTrustStore:
+    """Explicitly enroll one legacy contact store into rollback coordination."""
+    expected_state_id = _validate_state_id(state_id)
+    if path.exists():
+        legacy = load_contact_store(path, key)
+        if legacy.state_id is not None:
+            return load_contact_store_witnessed(
+                path,
+                key,
+                state_id=expected_state_id,
+                coordination_key=coordination_key,
+                witness=witness,
+            )
+        store = ContactTrustStore(
+            records=dict(legacy.records),
+            state_id=expected_state_id,
+            revision=1,
+            previous_digest=None,
+        )
+    else:
+        store = new_witnessed_contact_store(expected_state_id)
+
+    save_contact_store_witnessed(
+        path,
+        key,
+        store,
+        state_id=expected_state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    )
+    return store

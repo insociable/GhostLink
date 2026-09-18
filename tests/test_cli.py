@@ -18,7 +18,12 @@ from ghostlink.contact import (
     export_contact_qr_payload,
     import_contact_bundle,
 )
-from ghostlink.contact_store import ContactTrustState, load_contact_store
+from ghostlink.contact_store import (
+    ContactTrustState,
+    ContactTrustStore,
+    load_contact_store,
+    save_contact_store,
+)
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import derive_identity_fingerprint
 from ghostlink.node import create_app
@@ -561,6 +566,54 @@ def test_cli_profile_upgrade_atomically_migrates_v1(
     assert upgraded.state_revision == 1
     assert upgraded.state_previous_digest is None
     assert "upgraded atomically" in captured.out
+
+
+def test_cli_requires_explicit_contact_store_rollback_migration(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    password = "contact rollback migration password"  # noqa: S105
+    profile_path = tmp_path / "alice.ghost"
+    contacts_path = Path(f"{profile_path}.contacts")
+
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 0
+    capsys.readouterr()
+
+    profile = decrypt_local_profile(profile_path.read_text(), password)
+    assert profile.contact_store_key is not None
+    legacy_store = ContactTrustStore()
+    peer = GhostEntity.generate()
+    bundle = export_contact_bundle(peer, peer.enroll_device())
+    legacy_store.add_contact("Peer", bundle)
+    save_contact_store(
+        contacts_path,
+        profile.contact_store_key,
+        legacy_store,
+    )
+
+    assert run(
+        ["contact-list", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 1
+    refused = capsys.readouterr()
+    assert "requires explicit rollback-state migration" in refused.err
+
+    assert run(
+        ["contact-store-upgrade", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 0
+    migrated = capsys.readouterr()
+    assert "enrolled in rollback-state witness" in migrated.out
+
+    assert run(
+        ["contact-list", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 0
+    listed = capsys.readouterr()
+    assert "Peer" in listed.out
 
 
 def test_cli_refuses_to_overwrite_existing_profile(tmp_path: Path, capsys) -> None:
