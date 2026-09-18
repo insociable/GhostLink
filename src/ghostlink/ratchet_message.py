@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 
 from ghostlink.contact import ValidatedContact
-from ghostlink.message import (
+from ghostlink.message_lifecycle import (
     MESSAGE_CLOCK_SKEW_SECONDS,
     MESSAGE_DEFAULT_TTL_SECONDS,
     MESSAGE_ID_BYTES,

@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from ghostlink.message import (
+from ghostlink.message_lifecycle import (
     MESSAGE_CLOCK_SKEW_SECONDS,
     MESSAGE_MAX_LIFETIME_SECONDS,
 )
