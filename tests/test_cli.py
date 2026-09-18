@@ -13,7 +13,11 @@ import ghostlink.cli as cli_module
 from fastapi.testclient import TestClient
 from ghostlink.cli import run
 from ghostlink.client import GhostNodeClient, GhostNodeRequestError
-from ghostlink.contact import export_contact_bundle, import_contact_bundle
+from ghostlink.contact import (
+    export_contact_bundle,
+    export_contact_qr_payload,
+    import_contact_bundle,
+)
 from ghostlink.contact_store import ContactTrustState, load_contact_store
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import derive_identity_fingerprint
@@ -809,3 +813,68 @@ def test_cli_node_smoke_remains_explicit_legacy_v2(capsys) -> None:
     assert exit_code == 0
     assert "legacy static V2 smoke test passed" in captured.out
     assert captured.err == ""
+
+
+def test_cli_contact_qr_export_and_import_remain_human_unverified(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    unlock_phrase = "qr integration password"
+
+    def password_reader(prompt: str) -> str:
+        del prompt
+        return unlock_phrase
+
+    alice_path = tmp_path / "alice-qr.ghost"
+    bob_path = tmp_path / "bob-qr.ghost"
+    for profile_path in (alice_path, bob_path):
+        assert run(
+            ["init", "--profile", str(profile_path)],
+            password_reader=password_reader,
+        ) == 0
+    capsys.readouterr()
+
+    qr_path = tmp_path / "alice-contact.svg"
+    assert run(
+        [
+            "contact-export-qr",
+            "--profile",
+            str(alice_path),
+            "--output",
+            str(qr_path),
+        ],
+        password_reader=password_reader,
+    ) == 0
+    exported = capsys.readouterr()
+    assert "Public contact QR created:" in exported.out
+    assert qr_path.read_text(encoding="utf-8").startswith("<svg")
+
+    alice = decrypt_local_profile(alice_path.read_text(encoding="utf-8"), unlock_phrase)
+    payload = export_contact_qr_payload(alice.entity, alice.device)
+
+    assert run(
+        [
+            "contact-import-qr",
+            "--profile",
+            str(bob_path),
+            "--label",
+            "Alice QR",
+            "--payload",
+            payload,
+        ],
+        password_reader=password_reader,
+    ) == 0
+    imported = capsys.readouterr()
+    assert "cryptographically valid; human verification pending" in imported.out
+    assert "Trust state: imported" in imported.out
+
+    bob = decrypt_local_profile(bob_path.read_text(encoding="utf-8"), unlock_phrase)
+    assert bob.contact_store_key is not None
+    store = load_contact_store(
+        Path(f"{bob_path}.contacts"),
+        bob.contact_store_key,
+    )
+    records = store.list_records()
+    assert len(records) == 1
+    assert records[0].state is ContactTrustState.IMPORTED
+    assert records[0].pinned_ghost_id is None
