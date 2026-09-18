@@ -1,11 +1,10 @@
-from collections.abc import Callable
 import time
-from typing import cast
 import urllib.parse
+from collections.abc import Callable
+from typing import cast
 
-from fastapi.testclient import TestClient
 import pytest
-
+from fastapi.testclient import TestClient
 from ghostlink.client.node_client import (
     GhostNodeClient,
     GhostNodeConnectionError,
