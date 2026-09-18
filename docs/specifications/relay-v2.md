@@ -12,6 +12,8 @@ The experimental v2 relay surface is:
 
 Protocol-v1 relay routes are not exposed by the reference runtime.
 
+Ratcheted messages use a separate `/v3/messages` surface and `messages_v3` storage table. V2 and V3 envelopes are never reinterpreted as one another.
+
 ## Envelope validation
 
 GhostNode validates only relay-visible structure:
@@ -51,7 +53,7 @@ When persistent storage is configured, v2 uses a dedicated `messages_v2` table i
 
 The primary key is `(recipient_device_id, message_id)`. An index on recipient and expiration supports inbox lookup and expiry cleanup.
 
-The reference runtime stores protocol-v2 relay envelopes only.
+The reference runtime keeps protocol-v2 envelopes isolated in `messages_v2`; ratcheted v3 envelopes use `messages_v3`.
 
 ## Access control
 
@@ -61,7 +63,7 @@ This token limits who may use the relay. It does not authenticate individual Gho
 
 ## Health
 
-The global `/health` endpoint now requires both the v1 and v2 configured stores to be available.
+The global `/health` endpoint requires static-v2 message storage, ratcheted-v3 message storage and pre-key storage to be available.
 
 ## Security boundary
 
@@ -75,4 +77,4 @@ GhostNode sees routing and lifecycle metadata:
 
 GhostNode never receives message plaintext or client private keys.
 
-Metadata reduction, per-device relay authentication, ratcheting, forward secrecy, and traffic-analysis resistance remain separate milestones.
+Metadata reduction, per-device relay authentication and traffic-analysis resistance remain separate milestones. Ratcheted transport/forward-secrecy integration is implemented separately in protocol v3.
