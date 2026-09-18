@@ -1,5 +1,11 @@
 import * as SignalClient from '@signalapp/libsignal-client';
 
+import {
+  emptyPreKeyLifecycleState,
+  MemoryPreKeyLifecycleStore,
+  parsePreKeyLifecycleState,
+  type PreKeyLifecycleState,
+} from './prekey-lifecycle-state.js';
 import { validateRegistrationId } from './protocol-profile.js';
 
 const MAX_STORE_ENTRIES = 100_000;
@@ -48,7 +54,7 @@ function assertString(value: unknown, field: string): string {
 }
 
 export interface PartyStoresState {
-  readonly version: 1;
+  readonly version: 2;
   readonly session: readonly (readonly [string, string])[];
   readonly identity: {
     readonly registrationId: number;
@@ -62,6 +68,7 @@ export interface PartyStoresState {
     readonly used: readonly number[];
     readonly baseKeysSeen: readonly (readonly [string, readonly string[]])[];
   };
+  readonly lifecycle: PreKeyLifecycleState;
 }
 
 function parseStringEntries(
@@ -100,14 +107,27 @@ export function parsePartyStoresState(value: unknown): PartyStoresState {
   }
 
   const document = value as Record<string, unknown>;
-  const expected = ['version', 'session', 'identity', 'preKey', 'signedPreKey', 'kyberPreKey'];
+  const version = assertInteger(document.version, 'version');
+  if (version !== 1 && version !== 2) {
+    throw new Error('unsupported stores state version');
+  }
+
+  const expected =
+    version === 1
+      ? ['version', 'session', 'identity', 'preKey', 'signedPreKey', 'kyberPreKey']
+      : [
+          'version',
+          'session',
+          'identity',
+          'preKey',
+          'signedPreKey',
+          'kyberPreKey',
+          'lifecycle',
+        ];
   if (
     Object.keys(document).sort().join(',') !== expected.slice().sort().join(',')
   ) {
-    throw new Error('stores state fields do not match version 1');
-  }
-  if (document.version !== 1) {
-    throw new Error('unsupported stores state version');
+    throw new Error(`stores state fields do not match version ${version}`);
   }
 
   if (
@@ -166,7 +186,7 @@ export function parsePartyStoresState(value: unknown): PartyStoresState {
   });
 
   return {
-    version: 1,
+    version: 2,
     session: parseStringEntries(document.session, 'session'),
     identity: {
       registrationId: validateRegistrationId(
@@ -187,6 +207,10 @@ export function parsePartyStoresState(value: unknown): PartyStoresState {
       ),
       baseKeysSeen,
     },
+    lifecycle:
+      version === 1
+        ? emptyPreKeyLifecycleState()
+        : parsePreKeyLifecycleState(document.lifecycle),
   };
 }
 
@@ -508,6 +532,7 @@ export interface PartyStores {
   readonly preKey: MemoryPreKeyStore;
   readonly signedPreKey: MemorySignedPreKeyStore;
   readonly kyberPreKey: MemoryKyberPreKeyStore;
+  readonly lifecycle: MemoryPreKeyLifecycleStore;
 }
 
 export function createPartyStores(registrationId: number): PartyStores {
@@ -517,17 +542,19 @@ export function createPartyStores(registrationId: number): PartyStores {
     preKey: new MemoryPreKeyStore(),
     signedPreKey: new MemorySignedPreKeyStore(),
     kyberPreKey: new MemoryKyberPreKeyStore(),
+    lifecycle: new MemoryPreKeyLifecycleStore(),
   };
 }
 
 export function exportPartyStores(stores: PartyStores): PartyStoresState {
   return {
-    version: 1,
+    version: 2,
     session: stores.session.exportState(),
     identity: stores.identity.exportState(),
     preKey: stores.preKey.exportState(),
     signedPreKey: stores.signedPreKey.exportState(),
     kyberPreKey: stores.kyberPreKey.exportState(),
+    lifecycle: stores.lifecycle.exportState(),
   };
 }
 
@@ -538,5 +565,6 @@ export function restorePartyStores(state: PartyStoresState): PartyStores {
     preKey: MemoryPreKeyStore.fromState(state.preKey),
     signedPreKey: MemorySignedPreKeyStore.fromState(state.signedPreKey),
     kyberPreKey: MemoryKyberPreKeyStore.fromState(state.kyberPreKey),
+    lifecycle: MemoryPreKeyLifecycleStore.fromState(state.lifecycle),
   };
 }

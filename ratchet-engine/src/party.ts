@@ -6,6 +6,7 @@ import {
   MAX_PREKEY_ID,
   validateRegistrationId,
 } from './protocol-profile.js';
+import { MemoryPreKeyLifecycleStore } from './prekey-lifecycle-state.js';
 import {
   createPartyStores,
   MemoryKyberPreKeyStore,
@@ -209,6 +210,7 @@ export class RatchetParty {
       preKey: new MemoryPreKeyStore(),
       signedPreKey: new MemorySignedPreKeyStore(),
       kyberPreKey: new MemoryKyberPreKeyStore(),
+      lifecycle: new MemoryPreKeyLifecycleStore(),
     };
 
     return new RatchetParty(
