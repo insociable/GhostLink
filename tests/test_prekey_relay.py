@@ -149,6 +149,23 @@ def test_prekey_publication_sequence_is_strictly_monotonic_and_idempotent() -> N
     assert client.put(f"/v2/prekeys/{device.device_id}", json=first).status_code == 200
     assert client.put(f"/v2/prekeys/{device.device_id}", json=first).status_code == 200
 
+    conflicting = dict(first)
+    conflict_document = json.loads(str(conflicting["publication"]))
+    conflict_document["one_time"].reverse()
+    conflicting["publication"] = json.dumps(
+        conflict_document,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    conflict = client.put(
+        f"/v2/prekeys/{device.device_id}",
+        json=conflicting,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json() == {
+        "detail": "publication_sequence already exists with different payload"
+    }
+
     skipped = publication_request(device, sequence=3)
     response = client.put(f"/v2/prekeys/{device.device_id}", json=skipped)
     assert response.status_code == 409
@@ -192,7 +209,6 @@ def test_prekey_publication_rejects_already_expired_generation() -> None:
     device = entity.enroll_device()
     now = int(time.time())
     request = publication_request(
-        entity,
         device,
         sequence=1,
         issued_at=now - 100,
