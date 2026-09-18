@@ -6,6 +6,7 @@ import base64
 import json
 import struct
 import subprocess
+import time
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -16,10 +17,18 @@ from typing import IO, Self
 from ghostlink.contact import VerifiedContact
 from ghostlink.device import EnrolledGhostDevice
 from ghostlink.ratchet_binding import (
+    RatchetBindingError,
     RatchetPreKeyBinding,
     RatchetPreKeyMaterial,
     SignedRatchetPreKeyBinding,
     verify_ratchet_prekey_binding,
+)
+from ghostlink.ratchet_publication import (
+    RatchetPreKeyPublication,
+    create_ratchet_prekey_publication,
+    export_ratchet_prekey_publication,
+    import_ratchet_prekey_publication,
+    verify_local_ratchet_prekey_publication,
 )
 
 _RPC_VERSION = 1
@@ -31,6 +40,10 @@ _MAX_PREKEY_ID = 0x7FFF_FFFF
 _EC_PUBLIC_KEY_BYTES = 33
 _LIBSIGNAL_SIGNATURE_BYTES = 64
 _MAX_KYBER_PUBLIC_KEY_BYTES = 4096
+_MAX_PUBLICATION_SEQUENCE = (1 << 53) - 1
+_MAX_ONE_TIME_PREKEYS = 256
+_MAX_LIFETIME_SECONDS = 7 * 24 * 60 * 60
+_MAX_PUBLICATION_BYTES = 1024 * 1024
 
 
 class RatchetEngineError(RuntimeError):
@@ -68,6 +81,18 @@ class RatchetCiphertext:
             raise ValueError("ciphertext must not be empty")
         if len(self.ciphertext) > _MAX_FRAME_BYTES:
             raise ValueError("ciphertext exceeds the RPC size limit")
+
+
+@dataclass(frozen=True, slots=True)
+class RatchetPreKeyGeneration:
+    """Public material and lifecycle metadata for one prepared generation."""
+
+    publication_sequence: int
+    issued_at: int
+    expires_at: int
+    one_time: tuple[RatchetPreKeyMaterial, ...]
+    fallback: RatchetPreKeyMaterial
+    public_payload: str | None
 
 
 def _require_mapping(value: object, context: str) -> dict[str, object]:
@@ -307,6 +332,191 @@ def _material_from_wire(value: object) -> RatchetPreKeyMaterial:
     )
 
 
+def _prekey_generation_from_wire(value: object) -> RatchetPreKeyGeneration:
+    document = _require_mapping(value, "pre-key generation")
+    _require_exact_fields(
+        document,
+        {
+            "version",
+            "publication_sequence",
+            "issued_at",
+            "expires_at",
+            "one_time",
+            "fallback",
+            "public_payload",
+        },
+        "pre-key generation",
+    )
+
+    if _require_integer(document, "version", minimum=1) != 1:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "unsupported pre-key generation version",
+        )
+
+    sequence = _require_integer(
+        document,
+        "publication_sequence",
+        minimum=1,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+    issued_at = _require_integer(document, "issued_at", minimum=0)
+    expires_at = _require_integer(document, "expires_at", minimum=0)
+    if expires_at <= issued_at:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "pre-key generation expiration must follow issuance",
+        )
+    if expires_at - issued_at > _MAX_LIFETIME_SECONDS:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "pre-key generation lifetime exceeds seven days",
+        )
+
+    raw_one_time = document["one_time"]
+    if (
+        not isinstance(raw_one_time, list)
+        or not raw_one_time
+        or len(raw_one_time) > _MAX_ONE_TIME_PREKEYS
+    ):
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "one_time must contain between 1 and 256 entries",
+        )
+    one_time = tuple(_material_from_wire(item) for item in raw_one_time)
+    fallback = _material_from_wire(document["fallback"])
+
+    if fallback.pre_key_id is not None or fallback.pre_key is not None:
+        raise RatchetEngineProtocolError(
+            "PROTOCOL_ERROR",
+            "fallback material must not contain an EC one-time pre-key",
+        )
+
+    reference = (
+        fallback.registration_id,
+        fallback.identity_key,
+        fallback.signed_pre_key_id,
+        fallback.signed_pre_key,
+        fallback.signed_pre_key_signature,
+    )
+    pre_key_ids: set[int] = set()
+    kyber_ids = {fallback.kyber_pre_key_id}
+
+    for material in one_time:
+        if material.pre_key_id is None or material.pre_key is None:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "one-time material is missing its EC pre-key",
+            )
+        current = (
+            material.registration_id,
+            material.identity_key,
+            material.signed_pre_key_id,
+            material.signed_pre_key,
+            material.signed_pre_key_signature,
+        )
+        if current != reference:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "pre-key generation materials do not share signed identity data",
+            )
+        if material.pre_key_id in pre_key_ids:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "pre-key generation contains duplicate EC pre-key IDs",
+            )
+        if material.kyber_pre_key_id in kyber_ids:
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "pre-key generation contains duplicate Kyber IDs",
+            )
+        pre_key_ids.add(material.pre_key_id)
+        kyber_ids.add(material.kyber_pre_key_id)
+
+    raw_payload = document["public_payload"]
+    if raw_payload is not None:
+        if (
+            not isinstance(raw_payload, str)
+            or not raw_payload
+            or len(raw_payload.encode("utf-8")) > _MAX_PUBLICATION_BYTES
+        ):
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "public_payload is invalid or exceeds the size limit",
+            )
+        public_payload: str | None = raw_payload
+    else:
+        public_payload = None
+
+    return RatchetPreKeyGeneration(
+        publication_sequence=sequence,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        one_time=one_time,
+        fallback=fallback,
+        public_payload=public_payload,
+    )
+
+
+def _binding_matches_material(
+    binding: RatchetPreKeyBinding,
+    material: RatchetPreKeyMaterial,
+) -> bool:
+    return (
+        binding.registration_id == material.registration_id
+        and binding.identity_key == material.identity_key
+        and binding.pre_key_id == material.pre_key_id
+        and binding.pre_key == material.pre_key
+        and binding.signed_pre_key_id == material.signed_pre_key_id
+        and binding.signed_pre_key == material.signed_pre_key
+        and binding.signed_pre_key_signature
+        == material.signed_pre_key_signature
+        and binding.kyber_pre_key_id == material.kyber_pre_key_id
+        and binding.kyber_pre_key == material.kyber_pre_key
+        and binding.kyber_pre_key_signature
+        == material.kyber_pre_key_signature
+    )
+
+
+def _verify_publication_matches_generation(
+    publication: RatchetPreKeyPublication,
+    generation: RatchetPreKeyGeneration,
+) -> None:
+    if publication.publication_sequence != generation.publication_sequence:
+        raise RatchetBindingError(
+            "staged publication sequence does not match pending generation"
+        )
+    if len(publication.one_time) != len(generation.one_time):
+        raise RatchetBindingError(
+            "staged publication one-time count does not match pending generation"
+        )
+
+    for signed, material in zip(
+        publication.one_time,
+        generation.one_time,
+        strict=True,
+    ):
+        binding = signed.binding
+        if (
+            binding.issued_at != generation.issued_at
+            or binding.expires_at != generation.expires_at
+            or not _binding_matches_material(binding, material)
+        ):
+            raise RatchetBindingError(
+                "staged one-time binding does not match pending generation"
+            )
+
+    fallback = publication.fallback.binding
+    if (
+        fallback.issued_at != generation.issued_at
+        or fallback.expires_at != generation.expires_at
+        or not _binding_matches_material(fallback, generation.fallback)
+    ):
+        raise RatchetBindingError(
+            "staged fallback binding does not match pending generation"
+        )
+
+
 class RatchetEngineClient:
     """Own one local libsignal engine process for a GhostLink device."""
 
@@ -324,6 +534,7 @@ class RatchetEngineClient:
 
         self._lock = threading.Lock()
         self._next_request_id = 1
+        self._local_device = local_device
         self._closed = False
 
         try:
@@ -506,6 +717,95 @@ class RatchetEngineClient:
         return _material_from_wire(
             self._request("create_prekey_material", {}),
         )
+
+    def prepare_prekey_generation(
+        self,
+        *,
+        one_time_count: int = 100,
+        issued_at: int | None = None,
+        lifetime_seconds: int = _MAX_LIFETIME_SECONDS,
+    ) -> RatchetPreKeyGeneration:
+        """Atomically prepare and persist one pending pre-key generation."""
+        now = int(time.time()) if issued_at is None else issued_at
+        return _prekey_generation_from_wire(
+            self._request(
+                "prepare_prekey_generation",
+                {
+                    "one_time_count": one_time_count,
+                    "issued_at": now,
+                    "lifetime_seconds": lifetime_seconds,
+                },
+            )
+        )
+
+    def get_pending_prekey_generation(
+        self,
+    ) -> RatchetPreKeyGeneration | None:
+        """Recover the pending generation and staged payload after restart."""
+        result = self._request("get_pending_prekey_generation", {})
+        if result is None:
+            return None
+        return _prekey_generation_from_wire(result)
+
+    def stage_prekey_publication(
+        self,
+        publication_sequence: int,
+        public_payload: str,
+    ) -> None:
+        """Persist the exact signed public payload before any relay publication."""
+        if not public_payload:
+            raise ValueError("public_payload must not be empty")
+        if len(public_payload.encode("utf-8")) > _MAX_PUBLICATION_BYTES:
+            raise ValueError("public_payload exceeds the 1 MiB limit")
+        self._request(
+            "stage_prekey_publication",
+            {
+                "publication_sequence": publication_sequence,
+                "public_payload": public_payload,
+            },
+        )
+
+    def prepare_prekey_publication(
+        self,
+        *,
+        one_time_count: int = 100,
+        issued_at: int | None = None,
+        lifetime_seconds: int = _MAX_LIFETIME_SECONDS,
+    ) -> str:
+        """Return one durable, locally verified signed publication payload."""
+        generation = self.get_pending_prekey_generation()
+        if generation is None:
+            generation = self.prepare_prekey_generation(
+                one_time_count=one_time_count,
+                issued_at=issued_at,
+                lifetime_seconds=lifetime_seconds,
+            )
+
+        if generation.public_payload is not None:
+            publication = import_ratchet_prekey_publication(
+                generation.public_payload
+            )
+            verify_local_ratchet_prekey_publication(
+                publication,
+                self._local_device,
+            )
+            _verify_publication_matches_generation(publication, generation)
+            return generation.public_payload
+
+        publication = create_ratchet_prekey_publication(
+            self._local_device,
+            publication_sequence=generation.publication_sequence,
+            issued_at=generation.issued_at,
+            expires_at=generation.expires_at,
+            one_time_material=generation.one_time,
+            fallback_material=generation.fallback,
+        )
+        payload = export_ratchet_prekey_publication(publication)
+        self.stage_prekey_publication(
+            generation.publication_sequence,
+            payload,
+        )
+        return payload
 
     def establish_session(
         self,
