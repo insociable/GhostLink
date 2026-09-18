@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import os
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
@@ -47,7 +46,7 @@ class StoredMessage(MessageEnvelope):
 
 
 class MessageStore(Protocol):
-    """Storage contract for ciphertext-only relay envelopes."""
+    """Storage contract used by GhostNode."""
 
     def add(self, envelope: MessageEnvelope) -> StoredMessage:
         """Store one encrypted envelope."""
@@ -88,17 +87,15 @@ class InMemoryMessageStore:
         return self._messages.pop(message_id, None) is not None
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SQLiteMessageStore:
-    """Persistent SQLite store containing encrypted relay envelopes only."""
+    """Persistent SQLite ciphertext store for one GhostNode."""
 
-    path: Path
+    database_path: Path
 
     def __post_init__(self) -> None:
-        if self.path.exists() and self.path.is_dir():
-            raise ValueError("node.database_path must point to a file")
-
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        """Create the database directory and schema when needed."""
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
         with self._connect() as connection:
             connection.execute(
@@ -119,11 +116,10 @@ class SQLiteMessageStore:
                 """
             )
 
-        if os.name == "posix":
-            self.path.chmod(0o600)
-
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path, timeout=5.0)
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        return connection
 
     def add(self, envelope: MessageEnvelope) -> StoredMessage:
         """Persist one encrypted envelope."""
@@ -141,7 +137,8 @@ class SQLiteMessageStore:
                     sender_device_id,
                     recipient_device_id,
                     ciphertext
-                ) VALUES (?, ?, ?, ?, ?)
+                )
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     stored_message.message_id,
@@ -155,7 +152,7 @@ class SQLiteMessageStore:
         return stored_message
 
     def list_for_recipient(self, recipient_device_id: str) -> list[StoredMessage]:
-        """Load encrypted envelopes for one recipient."""
+        """Return persisted encrypted envelopes for one recipient."""
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -167,7 +164,7 @@ class SQLiteMessageStore:
                     ciphertext
                 FROM messages
                 WHERE recipient_device_id = ?
-                ORDER BY rowid
+                ORDER BY rowid ASC
                 """,
                 (recipient_device_id,),
             ).fetchall()
@@ -194,8 +191,7 @@ class SQLiteMessageStore:
         return cursor.rowcount > 0
 
 
-def create_message_store(settings: NodeSettings) -> MessageStore:
-    """Create the configured GhostNode message store."""
+def _create_message_store(settings: NodeSettings) -> MessageStore:
     if settings.database_path is None:
         return InMemoryMessageStore()
 
@@ -208,11 +204,7 @@ def create_app(
 ) -> FastAPI:
     """Create the GhostNode FastAPI application."""
     node_settings = settings or NodeSettings()
-    message_store = (
-        store
-        if store is not None
-        else create_message_store(node_settings)
-    )
+    message_store = store or _create_message_store(node_settings)
 
     app = FastAPI(
         title="GhostNode",
@@ -265,9 +257,8 @@ def main() -> None:
     import uvicorn
 
     settings = load_settings()
-    application = create_app(settings=settings)
     uvicorn.run(
-        application,
+        "ghostlink.node:app",
         host=settings.host,
         port=settings.port,
         log_level=settings.log_level,
