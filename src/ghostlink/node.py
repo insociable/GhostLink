@@ -15,14 +15,20 @@ from ghostlink.relay_v2 import (
     create_v2_message_store,
     create_v2_router,
 )
+from ghostlink.relay_v3 import (
+    V3MessageStore,
+    create_v3_message_store,
+    create_v3_router,
+)
 
 
 def create_app(
     store: V2MessageStore | None = None,
     settings: NodeSettings | None = None,
     prekey_store: PreKeyPublicationStore | None = None,
+    ratchet_store: V3MessageStore | None = None,
 ) -> FastAPI:
-    """Create the GhostNode application with protocol-v2 relay routes."""
+    """Create GhostNode with isolated static-v2 and ratcheted-v3 relay routes."""
     node_settings = settings or NodeSettings()
     message_store = (
         store
@@ -35,14 +41,22 @@ def create_app(
         if prekey_store is not None
         else create_prekey_publication_store(node_settings)
     )
+    v3_message_store = (
+        ratchet_store
+        if ratchet_store is not None
+        else create_v3_message_store(node_settings)
+    )
 
     app = FastAPI(
         title="GhostNode",
-        version="0.2.0",
-        description="Ciphertext-only relay for GhostLink protocol v2.",
+        version="0.3.0",
+        description=(
+            "Ciphertext-only relay for GhostLink static v2 and ratcheted v3."
+        ),
     )
     app.state.settings = node_settings
     app.include_router(create_v2_router(node_settings, message_store))
+    app.include_router(create_v3_router(node_settings, v3_message_store))
     app.include_router(
         create_prekey_publication_router(node_settings, publication_store)
     )
@@ -52,6 +66,7 @@ def create_app(
         """Return node health status, including relay storage availability."""
         if (
             not message_store.is_healthy()
+            or not v3_message_store.is_healthy()
             or not publication_store.is_healthy()
         ):
             raise HTTPException(
