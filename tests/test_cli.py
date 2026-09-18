@@ -11,7 +11,7 @@ from ghostlink.node import create_app
 def create_test_requester(
     api_client: TestClient,
 ) -> Callable[
-    [str, str, dict[str, object] | None, float],
+    [str, str, dict[str, object] | None, float, dict[str, str]],
     tuple[int, object | None],
 ]:
     def requester(
@@ -19,11 +19,12 @@ def create_test_requester(
         url: str,
         payload: dict[str, object] | None,
         timeout: float,
+        headers: dict[str, str],
     ) -> tuple[int, object | None]:
         assert timeout > 0
 
         path = urllib.parse.urlparse(url).path
-        response = api_client.request(method, path, json=payload)
+        response = api_client.request(method, path, json=payload, headers=headers)
 
         if response.content:
             body: object | None = response.json()
