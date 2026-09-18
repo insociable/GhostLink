@@ -19,6 +19,10 @@ from ghostlink.prekey_fetch import (
     PreKeyFetchResponse,
     create_prekey_fetch_request,
 )
+from ghostlink.prekey_status import (
+    PreKeyStatusResponse,
+    create_prekey_status_request,
+)
 
 _MAX_CIPHERTEXT_BYTES = 1_048_576
 _DEVICE_ID_PREFIX = "device1:"
@@ -28,6 +32,7 @@ _MESSAGE_ID_LENGTH = 32
 _HEX_ALPHABET = frozenset("0123456789abcdef")
 _PREKEY_PUBLICATION_VERSION = 1
 _PREKEY_FETCH_VERSION = 1
+_PREKEY_STATUS_VERSION = 1
 _MAX_PREKEY_BINDING_BYTES = 32 * 1024
 _MAX_PUBLICATION_SEQUENCE = (1 << 53) - 1
 _MAX_ONE_TIME_PREKEYS = 256
@@ -47,6 +52,13 @@ _EXPECTED_PREKEY_FETCH_FIELDS = {
     "expires_at",
     "bundle_kind",
     "binding",
+    "remaining_one_time_count",
+}
+_EXPECTED_PREKEY_STATUS_FIELDS = {
+    "version",
+    "device_id",
+    "publication_sequence",
+    "expires_at",
     "remaining_one_time_count",
 }
 _EXPECTED_MESSAGE_FIELDS = {
@@ -349,6 +361,52 @@ def _parse_prekey_fetch_response(
     )
 
 
+def _parse_prekey_status_response(
+    value: object | None,
+) -> PreKeyStatusResponse:
+    document = _require_mapping(value, "pre-key status response")
+    if set(document) != _EXPECTED_PREKEY_STATUS_FIELDS:
+        raise GhostNodeProtocolError(
+            "pre-key status response fields do not match the protocol"
+        )
+
+    version = _require_bounded_integer(
+        document,
+        "version",
+        minimum=_PREKEY_STATUS_VERSION,
+        maximum=_PREKEY_STATUS_VERSION,
+    )
+    device_id = _validate_device_id(
+        _require_text(document, "device_id"),
+        "device_id",
+    )
+    publication_sequence = _require_bounded_integer(
+        document,
+        "publication_sequence",
+        minimum=1,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+    expires_at = _require_bounded_integer(
+        document,
+        "expires_at",
+        minimum=1,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+    remaining_one_time_count = _require_bounded_integer(
+        document,
+        "remaining_one_time_count",
+        minimum=0,
+        maximum=_MAX_ONE_TIME_PREKEYS,
+    )
+    return PreKeyStatusResponse(
+        version=version,
+        device_id=device_id,
+        publication_sequence=publication_sequence,
+        expires_at=expires_at,
+        remaining_one_time_count=remaining_one_time_count,
+    )
+
+
 def _parse_message(value: object) -> GhostMessage:
     document = _require_mapping(value, "message")
     if set(document) != _EXPECTED_MESSAGE_FIELDS:
@@ -548,6 +606,39 @@ class GhostNodeClient:
         if response.requester_device_id != requester_device.device_id:
             raise GhostNodeProtocolError(
                 "pre-key fetch requester DeviceID does not match the local device"
+            )
+        return response
+
+    def prekey_status(
+        self,
+        device: EnrolledGhostDevice,
+        *,
+        issued_at: int | None = None,
+        request_id: str | None = None,
+    ) -> PreKeyStatusResponse:
+        """Return the owning device's active relay pre-key pool status."""
+        now = int(time.time()) if issued_at is None else issued_at
+        request = create_prekey_status_request(
+            device,
+            issued_at=now,
+            request_id=request_id,
+        )
+        encoded_device_id = urllib.parse.quote(device.device_id, safe=":")
+        status_code, body = self._request(
+            "POST",
+            f"/v2/prekeys/{encoded_device_id}/status",
+            request.model_dump(),
+        )
+        if status_code != 200:
+            raise GhostNodeRequestError(
+                status_code,
+                _extract_error_detail(body),
+            )
+
+        response = _parse_prekey_status_response(body)
+        if response.device_id != device.device_id:
+            raise GhostNodeProtocolError(
+                "pre-key status DeviceID does not match the local device"
             )
         return response
 
