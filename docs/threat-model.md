@@ -54,7 +54,10 @@ The current codebase includes:
 - strict client-side relay receipt validation before local lifecycle commit;
 - exact staged-payload retry after ambiguous network failure;
 - monotonic relay publication sequence checks within the current relay database state;
-- encrypted client-side highest-seen remote publication sequence persistence, enforced atomically before libsignal session establishment.
+- encrypted client-side highest-seen remote publication sequence persistence, enforced atomically before libsignal session establishment;
+- target-bound requester DeviceID proof for pre-key fetch;
+- atomic/idempotent one-time pre-key allocation with reusable fallback;
+- per-target time-window limiting of new one-time allocations.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -64,7 +67,8 @@ Before a ratcheted production cutover GhostLink still lacks:
 
 - relay database anti-rollback protection;
 - key transparency;
-- pre-key fetch/pop anti-drain and rate limiting;
+- Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
+- sender-side fetch/VerifiedContact/session orchestration;
 - automated pre-key replenishment and rotation execution;
 - delayed-key garbage collection;
 - complete device revocation and recovery design;
@@ -84,6 +88,8 @@ The ratchet pre-key publication endpoint additionally exposes:
 - the self-certifying DeviceID signing public key;
 - public libsignal identity/pre-key material;
 - publication sequence, lifetime and pool size.
+
+The ratchet pre-key fetch endpoint additionally exposes requester DeviceID -> target DeviceID relationships, fetch timing and whether the target pool has reached fallback.
 
 Publication does not require sending the long-term GhostID identity public key or full device certificate to GhostNode.
 

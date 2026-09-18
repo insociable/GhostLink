@@ -11,3 +11,9 @@ database_path = "data/messages.sqlite3"
 
 # Relay access token is intentionally not stored in TOML.
 # Set it with the GHOSTLINK_NODE_TOKEN environment variable.
+
+
+# Ratchet pre-key fetch anti-drain defaults.
+# Limits count only new one-time allocations; idempotent retries do not consume quota.
+prekey_fetch_window_seconds = 60
+prekey_fetch_max_new_allocations = 10

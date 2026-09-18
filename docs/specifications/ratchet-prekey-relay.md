@@ -1,12 +1,12 @@
 # GhostNode ratchet pre-key publication relay
 
-Status: publication path implemented; fetch/pop and anti-drain controls pending
+Status: publication and authenticated atomic fetch/pop implemented; sender orchestration pending
 
 ## Purpose
 
 GhostNode stores already signed public ratchet pre-key generations for one self-certifying GhostLink DeviceID.
 
-This endpoint is intentionally publication-only at this stage.
+GhostNode now exposes publication plus authenticated allocation of already signed public bindings.
 
 GhostNode does not:
 
@@ -15,14 +15,22 @@ GhostNode does not:
 - rewrite binding fields;
 - sign bindings;
 - verify the user's GhostID trust relationship;
-- hand out one-time bindings yet.
+- establish libsignal sessions for clients.
 
-The future fetch path remains disabled until atomic consumption and anti-drain controls are implemented together.
+Fetch authorization proves control of a requester DeviceID. It does not prove that the target trusts that requester. GhostID trust remains end-to-end at the sender/recipient layer.
 
-## Route
+## Routes
+
+Publication:
 
 ```text
 PUT /v2/prekeys/{device_id}
+```
+
+Authenticated fetch/allocation:
+
+```text
+POST /v2/prekeys/{device_id}/fetch
 ```
 
 The request contains:
@@ -93,9 +101,62 @@ They do not make the relay database rollback-proof.
 
 Restoring an older valid relay database snapshot can restore an older active sequence. Sender-side highest-seen sequence persistence remains necessary to detect that after observation.
 
+## Fetch requester proof
+
+A fetch request contains:
+
+- version 1;
+- requester DeviceID;
+- requester Ed25519 signing public key;
+- random 128-bit lowercase-hex `request_id`;
+- `issued_at`;
+- requester Ed25519 signature.
+
+The signed canonical message is domain-separated and includes the target DeviceID from the route. Redirecting a captured request to another target therefore invalidates the signature.
+
+GhostNode verifies:
+
+1. canonical requester DeviceID syntax;
+2. canonical 32-byte Ed25519 public key encoding;
+3. `derive_device_id(requester_signing_public_key) == requester_device_id`;
+4. request timestamp within the five-minute acceptance window;
+5. requester signature over the target-bound canonical request.
+
+The shared Bearer token remains an additional relay access control when configured. Bearer possession alone is not treated as requester identity.
+
+## Atomic allocation semantics
+
+For one active target generation:
+
+- the first authenticated requester allocation removes exactly one one-time signed binding;
+- the same requester DeviceID receives at most one one-time allocation for that target publication sequence;
+- repeated or concurrent requests from that requester return the same stored allocation;
+- distinct concurrent requesters receive distinct one-time bindings while the pool is non-empty;
+- once the one-time pool is empty, the reusable signed fallback binding is returned;
+- the response includes target/requester DeviceIDs, publication sequence, expiration, bundle kind and remaining one-time count.
+
+The SQLite implementation performs lookup, rate-limit check, one-time deletion, allocation persistence and remaining-count calculation inside one `BEGIN IMMEDIATE` transaction.
+
+## Anti-drain controls and limits
+
+GhostNode limits **new one-time allocations per target DeviceID per time window**.
+
+Defaults:
+
+```text
+window = 60 seconds
+max_new_one_time_allocations = 10
+```
+
+Both values are configurable.
+
+Idempotent retries are checked before this limiter, so retrying an existing allocation is not blocked and cannot consume another one-time key.
+
+This materially limits accidental retry drain and slows a bearer-authorized attacker. It is **not Sybil-proof**: an attacker able to create many self-certifying requester DeviceIDs can still consume multiple allocations over time. Stronger admission, abuse controls, or transparency are separate future work.
+
 ## Persistence
 
-The in-memory implementation serializes publication replacement with a process-local lock.
+The in-memory implementation serializes publication replacement and allocation with a process-local lock.
 
 The SQLite implementation uses:
 
@@ -111,7 +172,11 @@ SQLite stores:
 - generation expiration;
 - exact canonical publication payload;
 - fallback signed binding;
-- ordered one-time signed bindings.
+- currently unallocated one-time signed bindings;
+- requester/target/generation allocation records;
+- short-window target allocation-rate events.
+
+All stored pre-key bindings remain public signed material. Requester DeviceIDs and allocation timing are metadata, not secret key material.
 
 The database contains public signed material only.
 
@@ -123,23 +188,23 @@ A successful replacement updates the active publication and its one-time pool in
 
 A failed sequence check or conflicting retry rolls back without replacing the active generation.
 
+Publication retry compares the immutable canonical publication payload, not the mutable remaining one-time pool. Therefore retrying the exact publication after fetches is idempotent and never restores consumed one-time rows.
+
 Old relay-side one-time rows may be discarded after successful replacement because delayed senders already hold any binding they previously fetched; recipient private material retention is a separate client-side lifecycle concern.
 
-## Fetch intentionally disabled
+## Sender verification boundary
 
-There is currently no public endpoint that returns or consumes the stored one-time bindings.
+The fetch endpoint returns a target-signed binding but does not itself establish target trust.
 
-This is deliberate.
+The application sender must still:
 
-Publishing a fetch endpoint before anti-drain controls would allow any authorized relay client to exhaust another DeviceID's one-time pool and force fallback usage.
+1. parse the returned binding strictly;
+2. verify the binding against its existing `VerifiedContact`;
+3. verify expiration and DeviceID signature;
+4. enforce the locally persisted highest-seen publication sequence;
+5. only then pass the public material into libsignal session establishment.
 
-The fetch milestone must add together:
-
-- atomic one-time pop;
-- fallback behavior;
-- remaining-count reporting;
-- bounded request rate / anti-drain controls;
-- concurrency tests proving one binding is not handed to two honest simultaneous fetchers.
+That application workflow remains the next milestone.
 
 ## Failure and abuse properties
 
@@ -150,7 +215,7 @@ A malicious or compromised GhostNode can still:
 - delete stored public material;
 - roll its database back;
 - later replay still-valid signed bindings;
-- observe DeviceIDs, publication timing, pool size and public pre-key material.
+- observe requester DeviceID -> target DeviceID fetch relationships, timing, pool size and public pre-key material.
 
 It cannot silently alter a binding without invalidating the DeviceID signature.
 
@@ -178,7 +243,8 @@ If the relay returns a malformed or mismatched receipt, the client fails closed 
 - shared Bearer access control is not general per-device authentication for the message relay;
 - publication authorization is cryptographic for the target DeviceID, but revocation policy is not yet implemented;
 - relay database rollback protection is not implemented;
-- fetch/pop and anti-drain are not implemented;
+- requester authentication and target rate limiting reduce drain but are not Sybil-resistant admission control;
+- sender-side HTTP fetch -> VerifiedContact verification -> libsignal orchestration is not yet wired;
 - replenishment, rotation and GC execution are not implemented.
 
 GhostLink remains pre-alpha and has not undergone an independent cryptographic/protocol audit.

@@ -1,6 +1,8 @@
 import base64
 import json
+import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -8,7 +10,15 @@ from ghostlink.config import NodeSettings
 from ghostlink.device import EnrolledGhostDevice
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app
-from ghostlink.ratchet_binding import RatchetPreKeyMaterial
+from ghostlink.prekey_fetch import create_prekey_fetch_request
+from ghostlink.prekey_relay import (
+    RelayPreKeyGeneration,
+    SQLitePreKeyPublicationStore,
+)
+from ghostlink.ratchet_binding import (
+    RatchetPreKeyMaterial,
+    import_ratchet_prekey_binding,
+)
 from ghostlink.ratchet_publication import (
     create_ratchet_prekey_publication,
     export_ratchet_prekey_publication,
@@ -258,3 +268,430 @@ def test_prekey_publication_sqlite_replacement_survives_app_recreation(
     )
     assert replaced.status_code == 200
     assert replaced.json()["publication_sequence"] == 2
+
+
+
+def fetch_request(
+    requester: EnrolledGhostDevice,
+    target_device_id: str,
+    *,
+    issued_at: int | None = None,
+    request_id: str | None = None,
+) -> dict[str, object]:
+    request = create_prekey_fetch_request(
+        requester,
+        target_device_id,
+        issued_at=int(time.time()) if issued_at is None else issued_at,
+        request_id=request_id,
+    )
+    return request.model_dump()
+
+
+def test_prekey_fetch_is_authenticated_idempotent_and_uses_fallback() -> None:
+    target = GhostEntity.generate().enroll_device()
+    requester_a = GhostEntity.generate().enroll_device()
+    requester_b = GhostEntity.generate().enroll_device()
+    requester_c = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app())
+
+    publication = publication_request(target, sequence=1)
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication,
+        ).status_code
+        == 200
+    )
+
+    first_request = fetch_request(requester_a, target.device_id)
+    first = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=first_request,
+    )
+    assert first.status_code == 200
+    assert first.json()["bundle_kind"] == "one_time"
+    assert first.json()["remaining_one_time_count"] == 1
+    first_binding = import_ratchet_prekey_binding(first.json()["binding"])
+    assert first_binding.binding.bundle_kind == "one_time"
+
+    retry = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=first_request,
+    )
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+
+    same_requester_new_nonce = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requester_a, target.device_id),
+    )
+    assert same_requester_new_nonce.status_code == 200
+    assert same_requester_new_nonce.json() == first.json()
+
+    second = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requester_b, target.device_id),
+    )
+    assert second.status_code == 200
+    assert second.json()["bundle_kind"] == "one_time"
+    assert second.json()["remaining_one_time_count"] == 0
+    assert second.json()["binding"] != first.json()["binding"]
+
+    fallback = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requester_c, target.device_id),
+    )
+    assert fallback.status_code == 200
+    assert fallback.json()["bundle_kind"] == "fallback"
+    assert fallback.json()["remaining_one_time_count"] == 0
+    fallback_binding = import_ratchet_prekey_binding(fallback.json()["binding"])
+    assert fallback_binding.binding.bundle_kind == "fallback"
+
+
+def test_prekey_fetch_signature_is_bound_to_target_device() -> None:
+    target = GhostEntity.generate().enroll_device()
+    other_target = GhostEntity.generate().enroll_device()
+    requester = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app())
+
+    assert (
+        client.put(
+            f"/v2/prekeys/{other_target.device_id}",
+            json=publication_request(other_target, sequence=1),
+        ).status_code
+        == 200
+    )
+
+    signed_for_target = fetch_request(requester, target.device_id)
+    response = client.post(
+        f"/v2/prekeys/{other_target.device_id}/fetch",
+        json=signed_for_target,
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "requester signature is invalid"}
+
+
+def test_prekey_fetch_rejects_stale_request_and_device_substitution() -> None:
+    target = GhostEntity.generate().enroll_device()
+    requester = GhostEntity.generate().enroll_device()
+    impostor = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app())
+    now = int(time.time())
+
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication_request(target, sequence=1),
+        ).status_code
+        == 200
+    )
+
+    stale = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(
+            requester,
+            target.device_id,
+            issued_at=now - 301,
+        ),
+    )
+    assert stale.status_code == 401
+    assert stale.json() == {"detail": "fetch request is too old"}
+
+    substituted = fetch_request(requester, target.device_id)
+    substituted["requester_device_id"] = impostor.device_id
+    mismatch = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=substituted,
+    )
+    assert mismatch.status_code == 401
+    assert mismatch.json() == {
+        "detail": (
+            "requester DeviceID does not match requester signing public key"
+        )
+    }
+
+
+def test_prekey_fetch_requires_shared_bearer_when_enabled() -> None:
+    token = "prekey-fetch-secret"  # noqa: S105
+    target = GhostEntity.generate().enroll_device()
+    requester = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app(settings=NodeSettings(access_token=token)))
+
+    publication = publication_request(target, sequence=1)
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication,
+            headers={"Authorization": f"Bearer {token}"},
+        ).status_code
+        == 200
+    )
+
+    request = fetch_request(requester, target.device_id)
+    missing = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=request,
+    )
+    accepted = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=request,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert missing.status_code == 401
+    assert accepted.status_code == 200
+
+
+def test_prekey_fetch_rate_limit_does_not_break_idempotent_retry() -> None:
+    settings = NodeSettings(
+        prekey_fetch_window_seconds=60,
+        prekey_fetch_max_new_allocations=1,
+    )
+    target = GhostEntity.generate().enroll_device()
+    requester_a = GhostEntity.generate().enroll_device()
+    requester_b = GhostEntity.generate().enroll_device()
+    client = TestClient(create_app(settings=settings))
+
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication_request(target, sequence=1),
+        ).status_code
+        == 200
+    )
+
+    request_a = fetch_request(requester_a, target.device_id)
+    first = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=request_a,
+    )
+    blocked = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requester_b, target.device_id),
+    )
+    retry = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=request_a,
+    )
+
+    assert first.status_code == 200
+    assert blocked.status_code == 429
+    assert int(blocked.headers["Retry-After"]) >= 1
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+
+
+def test_prekey_fetch_unknown_target_is_not_found() -> None:
+    target = GhostEntity.generate().enroll_device()
+    requester = GhostEntity.generate().enroll_device()
+
+    response = TestClient(create_app()).post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requester, target.device_id),
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "target has no active pre-key generation"
+    }
+
+
+def test_sqlite_publication_retry_after_pop_does_not_restore_pool(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "relay.sqlite3"
+    settings = NodeSettings(database_path=database_path)
+    target = GhostEntity.generate().enroll_device()
+    requesters = [
+        GhostEntity.generate().enroll_device()
+        for _ in range(3)
+    ]
+    client = TestClient(create_app(settings=settings))
+    publication = publication_request(target, sequence=1)
+
+    assert (
+        client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication,
+        ).status_code
+        == 200
+    )
+    first = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requesters[0], target.device_id),
+    )
+    assert first.status_code == 200
+    assert first.json()["remaining_one_time_count"] == 1
+
+    retry_publication = client.put(
+        f"/v2/prekeys/{target.device_id}",
+        json=publication,
+    )
+    assert retry_publication.status_code == 200
+
+    second = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requesters[1], target.device_id),
+    )
+    third = client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=fetch_request(requesters[2], target.device_id),
+    )
+
+    assert second.status_code == 200
+    assert second.json()["bundle_kind"] == "one_time"
+    assert second.json()["remaining_one_time_count"] == 0
+    assert third.status_code == 200
+    assert third.json()["bundle_kind"] == "fallback"
+
+
+def test_sqlite_fetch_allocation_survives_app_recreation(
+    tmp_path: Path,
+) -> None:
+    settings = NodeSettings(database_path=tmp_path / "relay.sqlite3")
+    target = GhostEntity.generate().enroll_device()
+    requester = GhostEntity.generate().enroll_device()
+    request = fetch_request(requester, target.device_id)
+
+    first_client = TestClient(create_app(settings=settings))
+    assert (
+        first_client.put(
+            f"/v2/prekeys/{target.device_id}",
+            json=publication_request(target, sequence=1),
+        ).status_code
+        == 200
+    )
+    first = first_client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=request,
+    )
+    assert first.status_code == 200
+
+    second_client = TestClient(create_app(settings=settings))
+    retry = second_client.post(
+        f"/v2/prekeys/{target.device_id}/fetch",
+        json=request,
+    )
+
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+
+
+def test_sqlite_fetch_is_atomic_under_concurrent_requesters(
+    tmp_path: Path,
+) -> None:
+    target = GhostEntity.generate().enroll_device()
+    requesters = [
+        GhostEntity.generate().enroll_device()
+        for _ in range(3)
+    ]
+    store = SQLitePreKeyPublicationStore(
+        tmp_path / "relay.sqlite3",
+        fetch_max_new_allocations=10,
+    )
+    store.publish(
+        RelayPreKeyGeneration(
+            device_id=target.device_id,
+            publication_sequence=1,
+            expires_at=10_000,
+            publication_payload='{"generation":1}',
+            one_time_bindings=("one", "two"),
+            fallback_binding="fallback",
+        )
+    )
+
+    def allocate(index: int) -> tuple[str, str]:
+        response = store.fetch(
+            target.device_id,
+            requesters[index].device_id,
+            f"{index + 1:032x}",
+            now=1_000,
+        )
+        return response.bundle_kind, response.binding
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        results = list(executor.map(allocate, range(3)))
+
+    one_time = [binding for kind, binding in results if kind == "one_time"]
+    fallback = [binding for kind, binding in results if kind == "fallback"]
+
+    assert sorted(one_time) == ["one", "two"]
+    assert fallback == ["fallback"]
+
+
+def test_sqlite_same_requester_concurrency_consumes_only_one_bundle(
+    tmp_path: Path,
+) -> None:
+    target = GhostEntity.generate().enroll_device()
+    requester = GhostEntity.generate().enroll_device()
+    store = SQLitePreKeyPublicationStore(tmp_path / "relay.sqlite3")
+    store.publish(
+        RelayPreKeyGeneration(
+            device_id=target.device_id,
+            publication_sequence=1,
+            expires_at=10_000,
+            publication_payload='{"generation":1}',
+            one_time_bindings=("one", "two"),
+            fallback_binding="fallback",
+        )
+    )
+
+    def allocate(index: int) -> tuple[str, int]:
+        response = store.fetch(
+            target.device_id,
+            requester.device_id,
+            f"{index + 1:032x}",
+            now=1_000,
+        )
+        return response.binding, response.remaining_one_time_count
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(allocate, range(4)))
+
+    assert set(results) == {("one", 1)}
+
+
+
+def test_sqlite_fallback_fetches_do_not_create_unbounded_allocations(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "relay.sqlite3"
+    target = GhostEntity.generate().enroll_device()
+    store = SQLitePreKeyPublicationStore(database_path)
+    store.publish(
+        RelayPreKeyGeneration(
+            device_id=target.device_id,
+            publication_sequence=1,
+            expires_at=10_000,
+            publication_payload='{"generation":1}',
+            one_time_bindings=("one",),
+            fallback_binding="fallback",
+        )
+    )
+
+    first_requester = GhostEntity.generate().enroll_device()
+    first = store.fetch(
+        target.device_id,
+        first_requester.device_id,
+        "01" * 16,
+        now=1_000,
+    )
+    assert first.bundle_kind == "one_time"
+
+    for index in range(20):
+        requester = GhostEntity.generate().enroll_device()
+        response = store.fetch(
+            target.device_id,
+            requester.device_id,
+            f"{index + 2:032x}",
+            now=1_001,
+        )
+        assert response.bundle_kind == "fallback"
+
+    with sqlite3.connect(database_path) as connection:
+        allocation_count = connection.execute(
+            "SELECT COUNT(*) FROM prekey_allocations"
+        ).fetchone()
+
+    assert allocation_count == (1,)

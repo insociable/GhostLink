@@ -39,7 +39,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - GhostNode cryptographically authenticated pre-key publication with strict per-DeviceID sequencing and atomic SQLite replacement;
 - atomic idempotent local publication acknowledgement that promotes staged generations and retains the previous active generation for delayed messages;
 - strict GhostNode publication orchestration that validates the complete relay receipt before committing local ratchet lifecycle state;
-- encrypted per-DeviceID highest-seen remote publication sequence state with atomic rollback rejection before libsignal session establishment.
+- encrypted per-DeviceID highest-seen remote publication sequence state with atomic rollback rejection before libsignal session establishment;
+- authenticated target-bound pre-key fetch requests with atomic one-time allocation, idempotent requester allocation, fallback semantics and configurable per-target anti-drain rate limiting.
 
 ### Security
 
@@ -50,7 +51,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - raw GhostNode port is loopback-bound by default in Compose;
 - container deployment runs as a non-root user with reduced privileges;
 - Compose requires an explicit relay access token;
-- ratchet pre-key publication requires proof of control of the target self-certifying DeviceID signing key in addition to relay access control.
+- ratchet pre-key publication requires proof of control of the target self-certifying DeviceID signing key in addition to relay access control;
+- ratchet pre-key fetch requires target-bound proof of control of the requester DeviceID and serializes SQLite allocation so concurrent requests cannot receive the same one-time binding.
 
 ### Known limitations
 

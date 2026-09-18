@@ -19,6 +19,8 @@ def test_settings_are_loaded_from_toml(tmp_path: Path) -> None:
             'port = 9000\n'
             'log_level = "DEBUG"\n'
             'database_path = "data/messages.sqlite3"\n'
+            'prekey_fetch_window_seconds = 120\n'
+            'prekey_fetch_max_new_allocations = 7\n'
         ),  # noqa: S104
         encoding="utf-8",
     )
@@ -30,6 +32,8 @@ def test_settings_are_loaded_from_toml(tmp_path: Path) -> None:
         port=9000,
         log_level="debug",
         database_path=tmp_path / "data/messages.sqlite3",
+        prekey_fetch_window_seconds=120,
+        prekey_fetch_max_new_allocations=7,
     )
 
 
@@ -89,3 +93,16 @@ def test_blank_access_token_disables_authentication(tmp_path: Path, monkeypatch)
 def test_whitespace_access_token_is_rejected() -> None:
     with pytest.raises(ValueError, match="access token"):
         NodeSettings(access_token="   ")  # noqa: S106
+
+
+
+@pytest.mark.parametrize("window", [0, 3601])
+def test_invalid_prekey_fetch_window_is_rejected(window: int) -> None:
+    with pytest.raises(ValueError, match="prekey_fetch_window_seconds"):
+        NodeSettings(prekey_fetch_window_seconds=window)
+
+
+@pytest.mark.parametrize("limit", [0, 257])
+def test_invalid_prekey_fetch_allocation_limit_is_rejected(limit: int) -> None:
+    with pytest.raises(ValueError, match="prekey_fetch_max_new_allocations"):
+        NodeSettings(prekey_fetch_max_new_allocations=limit)

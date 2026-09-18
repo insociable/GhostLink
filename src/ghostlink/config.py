@@ -21,6 +21,8 @@ class NodeSettings:
     log_level: str = "info"
     database_path: Path | None = None
     access_token: str | None = None
+    prekey_fetch_window_seconds: int = 60
+    prekey_fetch_max_new_allocations: int = 10
 
     def __post_init__(self) -> None:
         if not self.host.strip():
@@ -38,6 +40,14 @@ class NodeSettings:
             raise ValueError("node.log_level is invalid")
         if self.access_token is not None and not self.access_token.strip():
             raise ValueError("node access token must not be empty")
+        if not 1 <= self.prekey_fetch_window_seconds <= 3_600:
+            raise ValueError(
+                "node.prekey_fetch_window_seconds must be between 1 and 3600"
+            )
+        if not 1 <= self.prekey_fetch_max_new_allocations <= 256:
+            raise ValueError(
+                "node.prekey_fetch_max_new_allocations must be between 1 and 256"
+            )
 
 
 def _node_section(document: dict[str, Any]) -> dict[str, Any]:
@@ -87,4 +97,10 @@ def load_settings(path: str | Path | None = None) -> NodeSettings:
         log_level=str(node.get("log_level", "info")).lower(),
         database_path=_database_path(node, resolved_path),
         access_token=access_token,
+        prekey_fetch_window_seconds=int(
+            node.get("prekey_fetch_window_seconds", 60)
+        ),
+        prekey_fetch_max_new_allocations=int(
+            node.get("prekey_fetch_max_new_allocations", 10)
+        ),
     )
