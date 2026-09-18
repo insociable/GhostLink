@@ -1,44 +1,66 @@
-# GhostLink M3 CLI — Protocol v2
+# GhostLink CLI — Ratcheted Protocol v3
 
-The M3 command-line client is the first user-facing path through the GhostLink protocol.
+The reference command-line runtime now uses GhostLink protocol v3 for user-facing `send` and `inbox`.
 
-It uses protocol v2 for send, inbox, and the live GhostNode smoke test.
+Static protocol v2 is not an automatic fallback. The retained `node-smoke` command is explicitly a legacy static-v2 diagnostic.
 
-## Commands
+## Local prerequisites
 
-Create Alice and Bob:
+Install the Python package and build the pinned local Node/libsignal engine:
+
+```bash
+poetry install
+cd ratchet-engine
+npm ci
+npm run build
+cd ..
+```
+
+The ratchet engine is a local child process. It does not expose a network socket.
+
+## Create profiles
 
 ```bash
 ghostlink init --profile alice.ghost
 ghostlink init --profile bob.ghost
 ```
 
-Export public contact bundles:
+New profiles are profile v2 and contain an independent encrypted 32-byte ratchet-vault master key.
+
+For an existing legacy profile:
+
+```bash
+ghostlink profile-upgrade --profile alice.ghost
+```
+
+Migration is explicit and atomically replaces only the encrypted profile file.
+
+## Exchange verified contacts
 
 ```bash
 ghostlink contact-export --profile alice.ghost --output alice.contact
 ghostlink contact-export --profile bob.ghost --output bob.contact
-```
 
-Verify a received contact bundle:
-
-```bash
 ghostlink contact-verify bob.contact
 ```
 
-Check the relay:
+The contact bundle must still be verified through the intended out-of-band human trust process. Internal bundle validity alone does not prove the human identity of the contact.
+
+## Publish/maintain pre-keys
+
+A device must have an active relay pre-key generation before another device can establish first contact:
 
 ```bash
-ghostlink node-health --node https://node.example.net
+ghostlink prekey-sync \
+  --profile bob.ghost \
+  --node https://node.example.net
 ```
 
-Run an ephemeral protocol-v2 E2EE round trip:
+The command uses the existing fail-closed maintenance flow: publication receipt validation, sequence continuity, replenishment/refresh policy and delayed-key garbage collection.
 
-```bash
-ghostlink node-smoke --node https://node.example.net
-```
+`send` and `inbox` also run maintenance for their own device, but a first-contact recipient must already have published pre-keys before the sender fetches them.
 
-Alice sends Bob a message:
+## Send a ratcheted message
 
 ```bash
 ghostlink send \
@@ -48,7 +70,26 @@ ghostlink send \
   "Hello Bob"
 ```
 
-Bob receives it:
+The send path is:
+
+```text
+unlock profile v2
+  -> open encrypted ratchet vault
+  -> maintain local pre-keys
+  -> check durable session for Bob
+  -> if absent: authenticated pre-key fetch
+  -> VerifiedContact binding verification
+  -> highest-seen sequence enforcement
+  -> libsignal session establishment
+  -> protocol-v3 context-bound encryption
+  -> POST /v3/messages
+```
+
+An existing durable session is reused. The client does not fetch a new pre-key on every send.
+
+Any bootstrap or ratchet failure aborts the command. It does not send a static-v2 message.
+
+## Receive ratcheted messages
 
 ```bash
 ghostlink inbox \
@@ -57,17 +98,29 @@ ghostlink inbox \
   --node https://node.example.net
 ```
 
+For each candidate from the expected sender, the inbox:
+
+1. suppresses an ID already retained in the authenticated replay cache without touching libsignal state;
+2. reconstructs the canonical v3 relay context;
+3. performs context-bound libsignal decryption transactionally;
+4. rolls ratchet state back if ciphertext/context authentication fails;
+5. validates message lifecycle;
+6. atomically records the authenticated replay ID;
+7. validates UTF-8 for the CLI text surface;
+8. only then prints plaintext;
+9. deletes the relay copy unless `--keep` is used.
+
+A successfully authenticated incoming libsignal PreKey message creates durable session state. A later reply reuses that persisted session across CLI process restarts.
+
 ## Replay state
 
-The inbox maintains a persistent SQLite replay cache.
-
-For `bob.ghost`, the default state path is:
+The default replay database for `bob.ghost` is:
 
 ```text
 bob.ghost.state.sqlite3
 ```
 
-Override it when needed:
+Override it with:
 
 ```bash
 ghostlink inbox \
@@ -77,30 +130,34 @@ ghostlink inbox \
   --state /secure/path/bob-replay.sqlite3
 ```
 
-A successfully authenticated message ID is recorded atomically before plaintext is displayed. An already-recorded ID is suppressed and is never displayed twice.
+Replay-cache rollback or deletion can weaken suppression for still-valid captured messages and remains a documented local-state limitation.
 
-After successful processing, the client deletes the relay copy unless `--keep` is supplied for development.
+## Local files
 
-## Protocol-v2 validation
+For a profile named `alice.ghost`, the development runtime normally uses:
 
-Before displaying text, the client:
+- `alice.ghost` — password-encrypted profile v2;
+- `alice.ghost.ratchet` — encrypted libsignal ratchet vault;
+- `alice.ghost.state.sqlite3` — replay cache.
 
-- verifies the expected sender device;
-- authenticates and decrypts the ciphertext locally;
-- compares encrypted inner metadata with relay-visible outer metadata;
-- validates creation time, expiration, and maximum lifetime;
-- verifies text is valid UTF-8;
-- atomically records the message ID in the replay cache;
-- only then exposes the plaintext.
+The ratchet vault master key is inside the encrypted profile, not in the vault file.
 
-## Security boundary
+## Relay access
 
-The profile password is read interactively and is never accepted as a CLI argument.
+`GHOSTLINK_NODE_TOKEN` remains optional shared relay access control when configured by GhostNode.
 
-The client keeps identity/device private keys local. GhostNode receives ciphertext and routing/lifecycle metadata only.
+It is not per-device cryptographic authentication and does not replace end-to-end verification.
 
-The shared GhostNode Bearer token is relay access control, not per-device cryptographic authentication.
+## Diagnostic smoke
 
-M3 still supports one explicitly supplied contact per inbox command. Conversation history, per-device relay authentication, ratcheting, forward secrecy, notifications, desktop/mobile UX, and metadata reduction remain future work.
+```bash
+ghostlink node-smoke --node https://node.example.net
+```
 
-GhostLink is experimental and is not yet suitable for sensitive real-world communications without independent cryptographic review.
+This command intentionally exercises the retained static-v2 compatibility path and prints that it is a legacy V2 smoke test. It is not called as a fallback by ratcheted `send` or `inbox`.
+
+## Security status
+
+The CLI cutover demonstrates the implemented v3/libsignal path across separate process invocations and persistent encrypted vault state.
+
+GhostLink remains pre-alpha. General per-device message-relay authentication, relay/client anti-rollback hardening, key transparency, production ingress hardening, revocation/recovery and independent cryptographic review remain open.
