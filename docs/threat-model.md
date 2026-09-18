@@ -4,6 +4,7 @@
 
 - message plaintext;
 - private identity and device keys;
+- encrypted-profile-held ratchet-vault master key;
 - libsignal ratchet/session state;
 - pre-key private material;
 - contact authenticity;
@@ -69,13 +70,17 @@ The current codebase includes:
 - explicitly separate ratcheted message-v3 relay routes/storage with strict envelope validation and no v2 reinterpretation;
 - canonical v3 routing/lifecycle context encrypted inside libsignal plaintext;
 - transaction-bound context verification that restores ratchet state when relay-visible v3 metadata is modified;
-- replay-cache acceptance after authenticated v3 context validation and before application plaintext is returned.
+- replay-cache acceptance after authenticated v3 context validation and before application plaintext is returned;
+- encrypted local profile v2 carrying an independently random ratchet-vault master key;
+- explicit atomic profile-v1 -> profile-v2 migration before ratcheted commands are allowed;
+- user-facing CLI send/inbox bound to protocol v3 with no automatic static-v2 downgrade;
+- durable-session detection before first-contact bootstrap, preventing unnecessary pre-key consumption on later sends.
 
 These are implemented building blocks, not a production-security certification.
 
 ## Current known gaps
 
-Before a ratcheted production cutover GhostLink still lacks:
+Current security gaps still include:
 
 - relay database anti-rollback protection;
 - key transparency;
