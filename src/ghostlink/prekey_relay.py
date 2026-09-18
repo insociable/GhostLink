@@ -269,7 +269,6 @@ class InMemoryPreKeyPublicationStore:
             )
             prior = self._allocations.get(allocation_key)
             if prior is not None:
-                self._request_allocations[request_key] = prior
                 return prior
 
             remaining = self._remaining[
@@ -282,8 +281,16 @@ class InMemoryPreKeyPublicationStore:
                 bundle_kind = "one_time"
                 self._fetch_events.setdefault(target_device_id, []).append(now)
             else:
-                binding = generation.fallback_binding
-                bundle_kind = "fallback"
+                return PreKeyFetchResponse(
+                    version=1,
+                    target_device_id=target_device_id,
+                    requester_device_id=requester_device_id,
+                    publication_sequence=generation.publication_sequence,
+                    expires_at=generation.expires_at,
+                    bundle_kind="fallback",
+                    binding=generation.fallback_binding,
+                    remaining_one_time_count=0,
+                )
 
             allocation = PreKeyFetchResponse(
                 version=1,
@@ -393,6 +400,12 @@ class SQLitePreKeyPublicationStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_prekey_fetch_events_target_time
                 ON prekey_fetch_events (target_device_id, allocated_at)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_prekey_fetch_events_time
+                ON prekey_fetch_events (allocated_at)
                 """
             )
 
@@ -589,9 +602,9 @@ class SQLitePreKeyPublicationStore:
         connection.execute(
             """
             DELETE FROM prekey_fetch_events
-            WHERE target_device_id = ? AND allocated_at <= ?
+            WHERE allocated_at <= ?
             """,
-            (target_device_id, cutoff),
+            (cutoff,),
         )
         row = connection.execute(
             """
@@ -686,13 +699,21 @@ class SQLitePreKeyPublicationStore:
 
             bundle_kind: Literal["one_time", "fallback"]
             if one_time is None:
-                bundle_kind = "fallback"
-                binding = fallback_binding
-            else:
-                self._check_rate_limit(connection, target_device_id, now)
-                position = int(one_time[0])
-                binding = str(one_time[1])
-                deleted = connection.execute(
+                return PreKeyFetchResponse(
+                    version=1,
+                    target_device_id=target_device_id,
+                    requester_device_id=requester_device_id,
+                    publication_sequence=publication_sequence,
+                    expires_at=expires_at,
+                    bundle_kind="fallback",
+                    binding=fallback_binding,
+                    remaining_one_time_count=0,
+                )
+
+            self._check_rate_limit(connection, target_device_id, now)
+            position = int(one_time[0])
+            binding = str(one_time[1])
+            deleted = connection.execute(
                     """
                     DELETE FROM prekey_one_time
                     WHERE device_id = ?
@@ -701,20 +722,20 @@ class SQLitePreKeyPublicationStore:
                     """,
                     (target_device_id, publication_sequence, position),
                 )
-                if deleted.rowcount != 1:
-                    raise RuntimeError(
-                        "pre-key one-time allocation lost atomic ownership"
-                    )
-                bundle_kind = "one_time"
-                connection.execute(
-                    """
-                    INSERT INTO prekey_fetch_events (
-                        target_device_id,
-                        allocated_at
-                    ) VALUES (?, ?)
-                    """,
-                    (target_device_id, now),
+            if deleted.rowcount != 1:
+                raise RuntimeError(
+                    "pre-key one-time allocation lost atomic ownership"
                 )
+            bundle_kind = "one_time"
+            connection.execute(
+                """
+                INSERT INTO prekey_fetch_events (
+                    target_device_id,
+                    allocated_at
+                ) VALUES (?, ?)
+                """,
+                (target_device_id, now),
+            )
 
             remaining_row = connection.execute(
                 """
