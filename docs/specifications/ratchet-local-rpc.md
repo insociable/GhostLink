@@ -249,6 +249,24 @@ The engine persists the highest publication sequence observed for each remote De
 
 The engine applies libsignal identity trust checks as a second layer.
 
+### `has_session`
+
+Parameters:
+
+- verified remote DeviceID.
+
+Returns:
+
+```json
+{"exists": true}
+```
+
+The query checks the encrypted persistent libsignal session store for the canonical remote protocol address.
+
+The CLI uses this before first-contact bootstrap so an existing durable session is reused rather than consuming a fresh relay pre-key for every send.
+
+The method does not modify ratchet state.
+
 ### `encrypt`
 
 Parameters:
@@ -355,9 +373,9 @@ The detailed formats and lifecycle are specified in:
 
 ## Ratchet cutover status
 
-The context-bound ratcheted message-v3 envelope and GhostNode v3 transport are implemented.
+The context-bound ratcheted message-v3 envelope, GhostNode v3 transport and user-facing CLI `send` / `inbox` cutover are implemented.
 
-The remaining explicit cutover step is switching user-facing CLI send/inbox to v3 without adding any ratchet-to-static fallback.
+The CLI queries durable session state before bootstrap and never falls back to static protocol v2 after a ratchet failure.
 
 ## Error handling
 
@@ -388,7 +406,8 @@ The repository runs a real Python-to-Node smoke test that:
 13. reopens both vaults in new processes;
 14. continues the same ratcheted session;
 15. exercises Python-to-Node retired pre-key GC, validates strict result parsing and confirms the collected lifecycle state survives restart;
-16. sends a real ratcheted v3 envelope through GhostNode, proves external metadata tampering rolls the ratchet transaction back, then successfully decrypts the original ciphertext and a ratcheted reply.
+16. sends a real ratcheted v3 envelope through GhostNode, proves external metadata tampering rolls the ratchet transaction back, then successfully decrypts the original ciphertext and a ratcheted reply;
+17. drives the real CLI across separate process invocations: pre-key sync, v3 first-contact send, inbox decrypt, durable-session reply and reciprocal inbox, while confirming no static-v2 message is emitted.
 
 The Node test suite separately exercises raw RPC validation and the same restart behavior.
 
