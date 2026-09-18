@@ -218,7 +218,8 @@ def test_publication_orchestration_rejects_mismatched_receipt_without_commit(
     assert fake_engine.commits == []
 
 
-def test_publication_orchestration_keeps_pending_after_lost_response_then_retries() -> None:
+def test_publication_orchestration_keeps_pending_after_lost_response_then_retries(
+) -> None:
     entity = GhostEntity.generate()
     device = entity.enroll_device()
     payload = _publication(device)
