@@ -10,7 +10,7 @@ The experimental v2 relay surface is:
 - `GET /v2/messages/{recipient_device_id}` — list non-expired envelopes for one recipient;
 - `DELETE /v2/messages/{recipient_device_id}/{message_id}` — remove one delivered envelope.
 
-The existing v1 routes remain available temporarily during migration.
+Protocol-v1 relay routes are not exposed by the reference runtime.
 
 ## Envelope validation
 
@@ -51,7 +51,7 @@ When persistent storage is configured, v2 uses a dedicated `messages_v2` table i
 
 The primary key is `(recipient_device_id, message_id)`. An index on recipient and expiration supports inbox lookup and expiry cleanup.
 
-Protocol-v1 storage is left untouched during staged migration.
+The reference runtime stores protocol-v2 relay envelopes only.
 
 ## Access control
 

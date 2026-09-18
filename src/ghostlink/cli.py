@@ -18,10 +18,10 @@ from ghostlink.contact import (
 )
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import format_ghost_id_fingerprint
-from ghostlink.message_v2 import (
-    MessageV2DecryptionError,
-    decrypt_message_v2,
-    encrypt_message_v2,
+from ghostlink.message import (
+    MessageDecryptionError,
+    decrypt_message,
+    encrypt_message,
 )
 from ghostlink.profile import (
     LocalProfile,
@@ -161,18 +161,18 @@ def _command_node_smoke(
     bob_device = bob.enroll_device()
     expected_plaintext = b"ghostlink-e2ee-smoke-v2"
 
-    message = encrypt_message_v2(
+    message = encrypt_message(
         sender=alice_device,
         recipient=bob_device.public_device(),
         plaintext=expected_plaintext,
     )
-    client.send_v2(message)
+    client.send(message)
 
     try:
         received = next(
             (
                 candidate
-                for candidate in client.receive_v2(bob_device.device_id)
+                for candidate in client.receive(bob_device.device_id)
                 if candidate.message_id == message.message_id
             ),
             None,
@@ -180,7 +180,7 @@ def _command_node_smoke(
         if received is None:
             raise CLIError("smoke message was not returned by GhostNode")
 
-        plaintext = decrypt_message_v2(
+        plaintext = decrypt_message(
             recipient=bob_device,
             sender=alice_device.public_device(),
             message=received,
@@ -188,7 +188,7 @@ def _command_node_smoke(
         if plaintext != expected_plaintext:
             raise CLIError("smoke message plaintext did not round-trip correctly")
     finally:
-        client.delete_v2(bob_device.device_id, message.message_id)
+        client.delete(bob_device.device_id, message.message_id)
 
     print("GhostNode E2EE V2 smoke test passed")
     return 0
@@ -202,12 +202,12 @@ def _command_send(
     contact = import_contact_bundle(_read_text(Path(args.contact)))
     plaintext = args.message.encode("utf-8")
 
-    message = encrypt_message_v2(
+    message = encrypt_message(
         sender=profile.device,
         recipient=contact.device,
         plaintext=plaintext,
     )
-    message_id = node_client_factory(args.node).send_v2(message)
+    message_id = node_client_factory(args.node).send(message)
 
     print(f"Message queued: {message_id}")
     print(f"Recipient: {contact.ghost_id}")
@@ -225,7 +225,7 @@ def _command_inbox(
     replay_cache = SQLiteReplayCache(
         _replay_state_path(profile_path, args.state)
     )
-    messages = client.receive_v2(profile.device.device_id)
+    messages = client.receive(profile.device.device_id)
 
     delivered = 0
     skipped = 0
@@ -237,27 +237,27 @@ def _command_inbox(
             continue
 
         try:
-            plaintext = decrypt_message_v2(
+            plaintext = decrypt_message(
                 recipient=profile.device,
                 sender=contact.device,
                 message=message,
             )
             text = plaintext.decode("utf-8")
-        except (MessageV2DecryptionError, UnicodeDecodeError):
+        except (MessageDecryptionError, UnicodeDecodeError):
             skipped += 1
             continue
 
         if not replay_cache.accept(contact.device_id, message.message_id):
             replayed += 1
             if not args.keep:
-                client.delete_v2(profile.device.device_id, message.message_id)
+                client.delete(profile.device.device_id, message.message_id)
             continue
 
         print(f"{contact.ghost_id}: {text}")
         delivered += 1
 
         if not args.keep:
-            client.delete_v2(profile.device.device_id, message.message_id)
+            client.delete(profile.device.device_id, message.message_id)
 
     if delivered == 0:
         print("No readable messages.")

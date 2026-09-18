@@ -130,4 +130,4 @@ Accepted and implemented in the reference codebase on 2026-09-18.
 
 The protocol-v2 message core authenticates duplicated routing/lifecycle metadata, GhostNode provides v2 relay storage and deduplication, and the CLI uses a persistent SQLite replay cache before displaying plaintext.
 
-Removal of the temporary protocol-v1 runtime path is tracked as the final migration cleanup step.
+The temporary protocol-v1 runtime path has been removed; protocol v2 is canonical.

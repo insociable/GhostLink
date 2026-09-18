@@ -6,7 +6,6 @@ from ghostlink.client.node_client import (
     GhostNodeConnectionError,
     GhostNodeProtocolError,
     GhostNodeRequestError,
-    StoredGhostMessage,
 )
 
 __all__ = [
@@ -15,5 +14,4 @@ __all__ = [
     "GhostNodeConnectionError",
     "GhostNodeProtocolError",
     "GhostNodeRequestError",
-    "StoredGhostMessage",
 ]

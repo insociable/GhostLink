@@ -15,7 +15,7 @@ from fastapi import APIRouter, Header, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from ghostlink.config import NodeSettings
-from ghostlink.message_v2 import (
+from ghostlink.message import (
     MESSAGE_CLOCK_SKEW_SECONDS,
     MESSAGE_MAX_LIFETIME_SECONDS,
     MESSAGE_VERSION,

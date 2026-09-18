@@ -51,8 +51,8 @@ GhostLink does not implement a custom cipher, MAC, nonce generator, or key agree
 
 Protocol v2 improves lifecycle authentication and replay-defense foundations. It does **not** provide forward secrecy or post-compromise security. A reviewed ratcheting session protocol remains a later milestone.
 
-## Migration status
+## Runtime status
 
-This module is introduced alongside protocol v1 so that its cryptographic format can be reviewed and tested independently.
+Protocol v2 is the canonical GhostLink message format.
 
-The next migration step will move GhostNode, the HTTP client, and the CLI to v2, after which the experimental v1 message path will be removed.
+The experimental protocol-v1 runtime path has been removed. GhostNode exposes only versioned `/v2/messages` relay routes, and the reference client uses this format for send, inbox, and smoke tests.

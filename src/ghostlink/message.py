@@ -1,8 +1,10 @@
-"""Encrypted GhostLink messages."""
+"""Canonical GhostLink authenticated encrypted message protocol."""
 
 from __future__ import annotations
 
+import secrets
 import struct
+import time
 from dataclasses import dataclass
 
 from nacl.exceptions import CryptoError
@@ -10,25 +12,40 @@ from nacl.public import Box
 
 from ghostlink.device import EnrolledGhostDevice, PublicGhostDevice
 
-_MESSAGE_VERSION = 1
+MESSAGE_VERSION = 2
+MESSAGE_ID_BYTES = 16
+MESSAGE_DEFAULT_TTL_SECONDS = 24 * 60 * 60
+MESSAGE_MAX_LIFETIME_SECONDS = 7 * 24 * 60 * 60
+MESSAGE_CLOCK_SKEW_SECONDS = 5 * 60
+_MAX_UINT64 = (1 << 64) - 1
 
 
 class MessageDecryptionError(ValueError):
-    """Raised when an encrypted GhostLink message cannot be validated."""
+    """Raised when a protocol-v2 message cannot be authenticated or validated."""
+
+
+@dataclass(frozen=True, slots=True)
+class GhostMessage:
+    """Outer relay envelope for one protocol-v2 encrypted message."""
+
+    version: int
+    message_id: str
+    sender_device_id: str
+    recipient_device_id: str
+    created_at: int
+    expires_at: int
+    ciphertext: bytes
 
 
 def _encode_bytes(value: bytes) -> bytes:
-    """Encode bytes with a deterministic length prefix."""
     return struct.pack(">I", len(value)) + value
 
 
 def _encode_text(value: str) -> bytes:
-    """Encode text with a deterministic length prefix."""
     return _encode_bytes(value.encode("utf-8"))
 
 
 def _read_bytes(payload: bytes, offset: int) -> tuple[bytes, int]:
-    """Read one length-prefixed byte field."""
     if offset + 4 > len(payload):
         raise MessageDecryptionError("message payload is truncated")
 
@@ -42,30 +59,88 @@ def _read_bytes(payload: bytes, offset: int) -> tuple[bytes, int]:
     return payload[start:end], end
 
 
-@dataclass(frozen=True, slots=True)
-class GhostMessage:
-    """An encrypted message exchanged between two GhostLink devices."""
+def _read_uint64(payload: bytes, offset: int) -> tuple[int, int]:
+    end = offset + 8
+    if end > len(payload):
+        raise MessageDecryptionError("message payload is truncated")
+    return struct.unpack(">Q", payload[offset:end])[0], end
 
-    version: int
-    sender_device_id: str
-    recipient_device_id: str
-    ciphertext: bytes
+
+def _decode_text(value: bytes, field: str) -> str:
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise MessageDecryptionError(
+            f"encrypted {field} is not valid UTF-8"
+        ) from exc
+
+
+def _is_canonical_message_id(value: str) -> bool:
+    return (
+        len(value) == MESSAGE_ID_BYTES * 2
+        and value == value.lower()
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _validate_encrypt_time(created_at: int, ttl_seconds: int) -> tuple[int, int]:
+    if isinstance(created_at, bool) or not isinstance(created_at, int):
+        raise ValueError("created_at must be an integer Unix timestamp")
+    if created_at < 0 or created_at > _MAX_UINT64:
+        raise ValueError("created_at is outside the supported timestamp range")
+    if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int):
+        raise ValueError("ttl_seconds must be an integer")
+    if ttl_seconds <= 0:
+        raise ValueError("ttl_seconds must be greater than zero")
+    if ttl_seconds > MESSAGE_MAX_LIFETIME_SECONDS:
+        raise ValueError("ttl_seconds exceeds the maximum message lifetime")
+
+    expires_at = created_at + ttl_seconds
+    if expires_at > _MAX_UINT64:
+        raise ValueError("expires_at is outside the supported timestamp range")
+
+    return created_at, expires_at
+
+
+def _validate_decrypted_lifecycle(
+    created_at: int,
+    expires_at: int,
+    now: int,
+) -> None:
+    if expires_at <= created_at:
+        raise MessageDecryptionError("message expiration is not after creation")
+    if expires_at - created_at > MESSAGE_MAX_LIFETIME_SECONDS:
+        raise MessageDecryptionError("message lifetime exceeds protocol maximum")
+    if created_at > now + MESSAGE_CLOCK_SKEW_SECONDS:
+        raise MessageDecryptionError("message creation time is too far in the future")
+    if expires_at < now - MESSAGE_CLOCK_SKEW_SECONDS:
+        raise MessageDecryptionError("message has expired")
 
 
 def encrypt_message(
     sender: EnrolledGhostDevice,
     recipient: PublicGhostDevice,
     plaintext: bytes,
+    *,
+    ttl_seconds: int = MESSAGE_DEFAULT_TTL_SECONDS,
+    created_at: int | None = None,
 ) -> GhostMessage:
-    """Encrypt and authenticate a message for one public recipient device."""
+    """Encrypt one protocol-v2 message with authenticated lifecycle metadata."""
     if not plaintext:
         raise ValueError("plaintext must not be empty")
 
+    timestamp = int(time.time()) if created_at is None else created_at
+    timestamp, expires_at = _validate_encrypt_time(timestamp, ttl_seconds)
+    message_id = secrets.token_hex(MESSAGE_ID_BYTES)
+
     payload = b"".join(
         (
-            struct.pack(">B", _MESSAGE_VERSION),
+            struct.pack(">B", MESSAGE_VERSION),
+            _encode_text(message_id),
             _encode_text(sender.device_id),
             _encode_text(recipient.device_id),
+            struct.pack(">Q", timestamp),
+            struct.pack(">Q", expires_at),
             _encode_bytes(plaintext),
         )
     )
@@ -76,9 +151,12 @@ def encrypt_message(
     )
 
     return GhostMessage(
-        version=_MESSAGE_VERSION,
+        version=MESSAGE_VERSION,
+        message_id=message_id,
         sender_device_id=sender.device_id,
         recipient_device_id=recipient.device_id,
+        created_at=timestamp,
+        expires_at=expires_at,
         ciphertext=bytes(box.encrypt(payload)),
     )
 
@@ -87,14 +165,14 @@ def decrypt_message(
     recipient: EnrolledGhostDevice,
     sender: PublicGhostDevice,
     message: GhostMessage,
+    *,
+    now: int | None = None,
 ) -> bytes:
-    """Decrypt and validate a message received from one public sender device."""
-    if message.version != _MESSAGE_VERSION:
+    """Decrypt, authenticate, and validate one protocol-v2 message."""
+    if message.version != MESSAGE_VERSION:
         raise MessageDecryptionError("unsupported message version")
-
     if message.sender_device_id != sender.device_id:
         raise MessageDecryptionError("sender device does not match message")
-
     if message.recipient_device_id != recipient.device_id:
         raise MessageDecryptionError("recipient device does not match message")
 
@@ -110,25 +188,40 @@ def decrypt_message(
             "message authentication or decryption failed"
         ) from exc
 
-    if not payload or payload[0] != _MESSAGE_VERSION:
+    if not payload or payload[0] != MESSAGE_VERSION:
         raise MessageDecryptionError("invalid encrypted message version")
 
     offset = 1
-
+    message_id_bytes, offset = _read_bytes(payload, offset)
     sender_id_bytes, offset = _read_bytes(payload, offset)
     recipient_id_bytes, offset = _read_bytes(payload, offset)
+    created_at, offset = _read_uint64(payload, offset)
+    expires_at, offset = _read_uint64(payload, offset)
     plaintext, offset = _read_bytes(payload, offset)
 
     if offset != len(payload):
         raise MessageDecryptionError("unexpected trailing message data")
+    if not plaintext:
+        raise MessageDecryptionError("decrypted plaintext must not be empty")
 
-    sender_id = sender_id_bytes.decode("utf-8")
-    recipient_id = recipient_id_bytes.decode("utf-8")
+    inner_message_id = _decode_text(message_id_bytes, "message identifier")
+    inner_sender_id = _decode_text(sender_id_bytes, "sender identifier")
+    inner_recipient_id = _decode_text(recipient_id_bytes, "recipient identifier")
 
-    if sender_id != message.sender_device_id:
+    if not _is_canonical_message_id(inner_message_id):
+        raise MessageDecryptionError("invalid encrypted message identifier")
+    if inner_message_id != message.message_id:
+        raise MessageDecryptionError("encrypted message identifier mismatch")
+    if inner_sender_id != message.sender_device_id:
         raise MessageDecryptionError("encrypted sender identifier mismatch")
-
-    if recipient_id != message.recipient_device_id:
+    if inner_recipient_id != message.recipient_device_id:
         raise MessageDecryptionError("encrypted recipient identifier mismatch")
+    if created_at != message.created_at:
+        raise MessageDecryptionError("encrypted creation timestamp mismatch")
+    if expires_at != message.expires_at:
+        raise MessageDecryptionError("encrypted expiration timestamp mismatch")
+
+    current_time = int(time.time()) if now is None else now
+    _validate_decrypted_lifecycle(created_at, expires_at, current_time)
 
     return plaintext
