@@ -118,11 +118,11 @@ Changing suite semantics requires a new GhostLink binding version or explicit co
 
 ## Production lifecycle versioning
 
-Binding version 1 is the implemented bootstrap format used by current local integration tests.
+Binding version 1 was the bootstrap format used by the first local integration tests.
 
-It is not the production relay-pool format.
+Binding version 2 is now the implemented signing/parsing format. The relay-side lifecycle and publication pool are still pending.
 
-The production pre-key lifecycle defined in `ratchet-prekey-lifecycle.md` requires binding version 2 before GhostNode exposes ratchet pre-key publication/fetch APIs.
+The production pre-key lifecycle defined in `ratchet-prekey-lifecycle.md` uses version 2 before GhostNode exposes ratchet pre-key publication/fetch APIs.
 
 Version 2 adds signed lifecycle semantics including:
 
@@ -135,7 +135,7 @@ For a `fallback` binding, the EC one-time pre-key must be absent and the Kyber k
 
 The relay must not be able to change this role without invalidating the GhostLink device signature.
 
-Because ratcheted relay traffic has not yet been cut over, the project does not require wire compatibility between bootstrap binding version 1 and the future production binding version 2. The production relay path must not silently downgrade to version 1.
+Because ratcheted relay traffic has not yet been cut over, the project does not preserve wire compatibility with bootstrap binding version 1. The production relay path must not silently downgrade to version 1.
 
 ## Lifetime
 
