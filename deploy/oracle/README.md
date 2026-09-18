@@ -52,11 +52,14 @@ Create a private local secret directory and generate the token directly into a f
 ```bash
 umask 077
 mkdir -p .secrets
+chmod 700 .secrets
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > .secrets/ghostlink_node_token
-chmod 600 .secrets/ghostlink_node_token
+chmod 444 .secrets/ghostlink_node_token
 ```
 
 Do not print the token, place it in shell history, pass it in argv, or store its value in an environment variable.
+
+The source file is read-only because the non-root GhostNode container must be able to read the Compose secret bind mount. Host confidentiality comes from the parent `.secrets` directory being mode `0700`; do not move the read-only token file into a traversable shared directory.
 
 The repository ignores `.secrets/`.
 
@@ -284,7 +287,7 @@ Generate a replacement directly into a temporary private file, then atomically r
 ```bash
 umask 077
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > .secrets/ghostlink_node_token.new
-chmod 600 .secrets/ghostlink_node_token.new
+chmod 444 .secrets/ghostlink_node_token.new
 mv .secrets/ghostlink_node_token.new .secrets/ghostlink_node_token
 ```
 
