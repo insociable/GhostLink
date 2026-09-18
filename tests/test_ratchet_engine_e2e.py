@@ -3,6 +3,7 @@ import os
 import shutil
 import time
 import urllib.parse
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -20,11 +21,17 @@ from ghostlink.ratchet_binding import (
 from ghostlink.ratchet_engine import RatchetEngineClient, RatchetEngineError
 from ghostlink.ratchet_fetch import establish_session_from_relay
 from ghostlink.ratchet_maintenance import maintain_prekeys
+from ghostlink.ratchet_message import (
+    RatchetMessageError,
+    decrypt_ratchet_message,
+    encrypt_ratchet_message,
+)
 from ghostlink.ratchet_publication import (
     import_ratchet_prekey_publication,
     verify_local_ratchet_prekey_publication,
 )
 from ghostlink.ratchet_publish import publish_prekey_generation
+from ghostlink.replay import SQLiteReplayCache
 
 _ROOT = Path(__file__).resolve().parents[1]
 _ENGINE = _ROOT / "ratchet-engine" / "dist" / "src" / "rpc-server.js"
@@ -678,3 +685,153 @@ def test_prekey_gc_round_trips_python_rpc_and_survives_restart(
         assert persisted.active is not None
         assert persisted.active.publication_sequence == 2
         assert persisted.retired_count == 0
+
+
+
+def test_ratchet_v3_relay_round_trip_and_tamper_rollback(
+    tmp_path: Path,
+) -> None:
+    alice = GhostEntity.generate()
+    bob = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    bob_device = bob.enroll_device()
+    alice_contact = import_contact_bundle(
+        export_contact_bundle(alice, alice_device)
+    )
+    bob_contact = import_contact_bundle(
+        export_contact_bundle(bob, bob_device)
+    )
+
+    command = [_NODE or "node", str(_ENGINE)]
+    api_client = TestClient(create_app())
+
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        assert timeout > 0
+        parsed = urllib.parse.urlparse(url)
+        response = api_client.request(
+            method,
+            parsed.path,
+            json=payload,
+            headers=headers,
+        )
+        return (
+            response.status_code,
+            response.json() if response.content else None,
+        )
+
+    node = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+    now = int(time.time())
+    alice_key = os.urandom(32)
+    bob_key = os.urandom(32)
+    alice_vault = tmp_path / "alice-v3.ratchet"
+    bob_vault = tmp_path / "bob-v3.ratchet"
+    bob_replay = SQLiteReplayCache(tmp_path / "bob-v3-replay.sqlite3")
+    alice_replay = SQLiteReplayCache(tmp_path / "alice-v3-replay.sqlite3")
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as bob_engine:
+        publish_prekey_generation(
+            bob_engine,
+            node,
+            bob_device,
+            one_time_count=2,
+            issued_at=now,
+            lifetime_seconds=3_600,
+            acknowledged_at=now,
+        )
+
+        with RatchetEngineClient(
+            command,
+            alice_device,
+            alice_vault,
+            alice_key,
+        ) as alice_engine:
+            establish_session_from_relay(
+                alice_engine,
+                node,
+                alice_device,
+                bob_contact,
+                issued_at=now,
+                verification_time=now,
+            )
+
+            outbound = encrypt_ratchet_message(
+                alice_engine,
+                bob_contact,
+                b"ratcheted v3 through GhostNode",
+                created_at=now,
+            )
+            assert outbound.version == 3
+            assert node.send_ratchet(outbound) == outbound.message_id
+
+            received = node.receive_ratchet(bob_device.device_id)
+            assert received == [outbound]
+
+            tampered = replace(
+                received[0],
+                message_id="f" * 32,
+            )
+            with pytest.raises(
+                RatchetEngineError,
+                match="decrypted ratchet context does not match",
+            ):
+                decrypt_ratchet_message(
+                    bob_engine,
+                    alice_contact,
+                    tampered,
+                    bob_replay,
+                    now=now,
+                )
+
+            plaintext = decrypt_ratchet_message(
+                bob_engine,
+                alice_contact,
+                received[0],
+                bob_replay,
+                now=now,
+            )
+            assert plaintext == b"ratcheted v3 through GhostNode"
+
+            reply = encrypt_ratchet_message(
+                bob_engine,
+                alice_contact,
+                b"ratcheted v3 reply",
+                created_at=now + 1,
+            )
+            node.send_ratchet(reply)
+            reply_received = node.receive_ratchet(alice_device.device_id)
+            assert reply_received == [reply]
+            assert (
+                decrypt_ratchet_message(
+                    alice_engine,
+                    bob_contact,
+                    reply_received[0],
+                    alice_replay,
+                    now=now + 1,
+                )
+                == b"ratcheted v3 reply"
+            )
+
+            node.delete_ratchet(
+                bob_device.device_id,
+                outbound.message_id,
+            )
+            node.delete_ratchet(
+                alice_device.device_id,
+                reply.message_id,
+            )
+            assert node.receive_ratchet(bob_device.device_id) == []
+            assert node.receive_ratchet(alice_device.device_id) == []
