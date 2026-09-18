@@ -75,12 +75,44 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GHOSTLINK_NODE_TOKEN: ci-placeholder-token
+      GHOSTLINK_PUBLIC_HOSTNAME: node.example.com
+      GHOSTLINK_ACME_EMAIL: admin@example.com
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate Compose configuration
         run: docker compose config --quiet
+
+      - name: Validate public HTTPS Compose configuration
+        run: |
+          docker compose -f deploy/oracle/compose.public.yaml config --quiet
+          docker compose -f deploy/oracle/compose.public.yaml config --format json > /tmp/ghostlink-public-compose.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          document = json.loads(Path("/tmp/ghostlink-public-compose.json").read_text())
+          services = document["services"]
+          ghostnode_ports = services["ghostnode"].get("ports", [])
+          assert ghostnode_ports == [], ghostnode_ports
+
+          caddy_ports = services["caddy"].get("ports", [])
+          assert len(caddy_ports) == 1, caddy_ports
+          port = caddy_ports[0]
+          assert int(port["target"]) == 443, port
+          assert int(port["published"]) == 443, port
+          assert port["protocol"] == "tcp", port
+          PY
+
+      - name: Validate Caddy TLS ingress configuration
+        run: |
+          docker run --rm \
+            --env GHOSTLINK_PUBLIC_HOSTNAME \
+            --env GHOSTLINK_ACME_EMAIL \
+            --volume "$PWD/deploy/oracle/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.4-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
       - name: Build GhostNode image
         run: docker compose build
