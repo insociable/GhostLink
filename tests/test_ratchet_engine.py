@@ -74,6 +74,8 @@ def test_python_client_public_api_over_framed_rpc(tmp_path: Path) -> None:
         binding = create_ratchet_prekey_binding(
             bob_device,
             material,
+            publication_sequence=1,
+            bundle_kind="one_time",
             issued_at=1000,
         )
         signed = sign_ratchet_prekey_binding(binding, bob_device)
