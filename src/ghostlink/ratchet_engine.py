@@ -14,7 +14,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, Self
 
-from ghostlink.contact import VerifiedContact
+from ghostlink.contact import ValidatedContact
 from ghostlink.device import EnrolledGhostDevice
 from ghostlink.ratchet_binding import (
     RatchetBindingError,
@@ -1085,7 +1085,7 @@ class RatchetEngineClient:
             },
         )
 
-    def has_session(self, contact: VerifiedContact) -> bool:
+    def has_session(self, contact: ValidatedContact) -> bool:
         """Return whether a persistent libsignal session already exists."""
         result = _require_mapping(
             self._request(
@@ -1106,7 +1106,7 @@ class RatchetEngineClient:
     def establish_session(
         self,
         signed_binding: SignedRatchetPreKeyBinding,
-        contact: VerifiedContact,
+        contact: ValidatedContact,
         *,
         now: int | None = None,
     ) -> None:
@@ -1127,7 +1127,7 @@ class RatchetEngineClient:
 
     def encrypt(
         self,
-        contact: VerifiedContact,
+        contact: ValidatedContact,
         plaintext: bytes,
     ) -> RatchetCiphertext:
         """Encrypt arbitrary bytes for one already verified contact device."""
@@ -1164,7 +1164,7 @@ class RatchetEngineClient:
 
     def decrypt(
         self,
-        contact: VerifiedContact,
+        contact: ValidatedContact,
         message: RatchetCiphertext,
     ) -> bytes:
         """Decrypt one libsignal ciphertext from a verified contact device."""
@@ -1189,7 +1189,7 @@ class RatchetEngineClient:
 
     def decrypt_context_bound(
         self,
-        contact: VerifiedContact,
+        contact: ValidatedContact,
         message: RatchetCiphertext,
         expected_context: bytes,
     ) -> bytes:
