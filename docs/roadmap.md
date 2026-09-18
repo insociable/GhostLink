@@ -27,7 +27,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [ ] explicit delivery acknowledgement protocol;
 - [ ] retention limits and quotas;
 - [x] Docker/Compose deployment;
-- [ ] production TLS ingress;
+- [ ] production TLS ingress (Caddy/443-only reference stack implemented; live external certificate/closed-port validation pending);
 - [ ] anti-abuse controls.
 
 ## M3 — Two-client demonstration
