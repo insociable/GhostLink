@@ -9,6 +9,7 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       GHOSTLINK_CONFIG: /config/ghostlink.toml
+      GHOSTLINK_NODE_TOKEN: ${GHOSTLINK_NODE_TOKEN:?Set GHOSTLINK_NODE_TOKEN before starting GhostNode}
     volumes:
       - ghostnode_data:/data
       - ./deploy/oracle/ghostlink.toml:/config/ghostlink.toml:ro
