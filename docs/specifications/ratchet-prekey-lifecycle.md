@@ -1,6 +1,6 @@
 # Ratchet pre-key lifecycle
 
-Status: accepted design; implementation pending
+Status: accepted design; lifecycle vault state and pending-generation preparation implemented, publication/rotation/GC pending
 
 ## Purpose
 
@@ -366,6 +366,29 @@ The vault schema must record at least:
 Adding this metadata requires an explicit versioned vault-state migration.
 
 Private material remains inside the existing AES-256-GCM encrypted vault.
+
+## Current implementation status
+
+The ratchet engine now implements the local preparation half of the lifecycle:
+
+- one signed EC pre-key is generated for a publication generation;
+- one Kyber/ML-KEM last-resort key is generated for fallback use;
+- a bounded set of one-time EC + one-time Kyber pairs is generated;
+- complete libsignal one-time bundles share the generation signed EC key;
+- the fallback bundle contains no EC one-time key and uses the last-resort Kyber key;
+- key material and the pending lifecycle generation are committed atomically to the encrypted vault;
+- an existing pending generation blocks replacement;
+- the pending generation survives close/reopen.
+
+The production default pool target is 100. The generator is bounded to 256 one-time bundles.
+
+The following are still pending:
+
+- reconstructing/staging the exact signed public publication payload after restart;
+- relay publication acknowledgement and active/retired transitions;
+- replenishment and rotation decisions;
+- delayed-key garbage collection;
+- relay-side pool storage/pop semantics.
 
 ## RPC implications
 
