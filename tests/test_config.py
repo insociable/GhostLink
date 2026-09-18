@@ -13,7 +13,13 @@ def test_missing_config_uses_safe_local_defaults(tmp_path: Path) -> None:
 def test_settings_are_loaded_from_toml(tmp_path: Path) -> None:
     config_path = tmp_path / "ghostlink.toml"
     config_path.write_text(
-        '[node]\nhost = "0.0.0.0"\nport = 9000\nlog_level = "DEBUG"\n',  # noqa: S104
+        (
+            '[node]\n'
+            'host = "0.0.0.0"\n'
+            'port = 9000\n'
+            'log_level = "DEBUG"\n'
+            'database_path = "data/messages.sqlite3"\n'
+        ),  # noqa: S104
         encoding="utf-8",
     )
 
@@ -23,7 +29,21 @@ def test_settings_are_loaded_from_toml(tmp_path: Path) -> None:
         host="0.0.0.0",  # noqa: S104
         port=9000,
         log_level="debug",
+        database_path=tmp_path / "data/messages.sqlite3",
     )
+
+
+def test_absolute_database_path_is_preserved(tmp_path: Path) -> None:
+    database_path = tmp_path / "messages.sqlite3"
+    config_path = tmp_path / "ghostlink.toml"
+    config_path.write_text(
+        f'[node]\ndatabase_path = "{database_path}"\n',
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config_path)
+
+    assert settings.database_path == database_path
 
 
 @pytest.mark.parametrize("port", [0, 65536])
