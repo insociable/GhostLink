@@ -1,5 +1,6 @@
 import * as SignalClient from '@signalapp/libsignal-client';
 
+import { validateRegistrationId } from './protocol-profile.js';
 import {
   createPartyStores,
   MemoryKyberPreKeyStore,
@@ -23,6 +24,13 @@ export class RatchetParty {
     registrationId: number,
     stores: PartyStores = createPartyStores(registrationId)
   ) {
+    if (!name) {
+      throw new Error('ratchet party name must not be empty');
+    }
+    if (!Number.isSafeInteger(deviceId) || deviceId <= 0) {
+      throw new Error('ratchet party deviceId must be a positive safe integer');
+    }
+    validateRegistrationId(registrationId);
     this.address = SignalClient.ProtocolAddress.new(name, deviceId);
     this.stores = stores;
   }
@@ -156,7 +164,7 @@ export class RatchetParty {
     return new RatchetParty(
       this.address.name(),
       this.address.deviceId(),
-      0,
+      stores.identity.exportState().registrationId,
       stores
     );
   }

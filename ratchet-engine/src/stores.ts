@@ -1,5 +1,7 @@
 import * as SignalClient from '@signalapp/libsignal-client';
 
+import { validateRegistrationId } from './protocol-profile.js';
+
 const MAX_STORE_ENTRIES = 100_000;
 
 function addressKey(address: SignalClient.ProtocolAddress): string {
@@ -167,9 +169,11 @@ export function parsePartyStoresState(value: unknown): PartyStoresState {
     version: 1,
     session: parseStringEntries(document.session, 'session'),
     identity: {
-      registrationId: assertInteger(
-        identity.registrationId,
-        'identity.registrationId'
+      registrationId: validateRegistrationId(
+        assertInteger(
+          identity.registrationId,
+          'identity.registrationId'
+        )
       ),
       privateKey: assertString(identity.privateKey, 'identity.privateKey'),
       trusted: parseStringEntries(identity.trusted, 'identity.trusted'),

@@ -55,7 +55,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] PQXDH + ratchet-engine bootstrap integration tests;
 - [x] simulated forward-secrecy / post-compromise recovery behavior at engine level;
 - [x] encrypted persistent libsignal session/pre-key stores;
-- [ ] GhostID/DeviceID binding to libsignal identities;
+- [x] GhostID/DeviceID binding to libsignal identities;
 - [ ] ratcheted relay envelope and CLI cutover;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;

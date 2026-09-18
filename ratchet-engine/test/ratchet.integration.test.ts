@@ -9,8 +9,8 @@ async function establishPair(): Promise<{
   alice: RatchetParty;
   bob: RatchetParty;
 }> {
-  const alice = new RatchetParty('alice', 1, 41001);
-  const bob = new RatchetParty('bob', 1, 42001);
+  const alice = new RatchetParty('alice', 1, 4101);
+  const bob = new RatchetParty('bob', 1, 4201);
 
   const bobBundle = await bob.createPreKeyBundle();
   await alice.establishSession(bob, bobBundle);
@@ -104,4 +104,21 @@ test('an old compromised session snapshot loses access after fresh ratchet entro
   assert.equal(await alice.decrypt(bob, b3), 'B3-post-recovery');
 
   await assert.rejects(() => attacker.decrypt(bob, b3));
+});
+test('a changed libsignal identity for the same protocol address fails closed', async () => {
+  const { alice } = await establishPair();
+
+  const replacementBob = new RatchetParty('bob', 1, 4301);
+  const replacementBundle = await replacementBob.createPreKeyBundle();
+
+  await assert.rejects(
+    () => alice.establishSession(replacementBob, replacementBundle),
+    (error: unknown) => {
+      if (!(error instanceof Error)) {
+        return false;
+      }
+      assert.match(error.name, /UntrustedIdentity|LibSignal/);
+      return true;
+    }
+  );
 });

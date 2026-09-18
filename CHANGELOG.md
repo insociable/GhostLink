@@ -28,6 +28,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 - automated dependency update monitoring;
 - experimental libsignal-based ratchet engine bootstrap with PQXDH, out-of-order delivery, duplicate rejection and simulated post-compromise recovery tests.
 - encrypted persistent ratchet-state vault with atomic multi-store commits and restart continuity tests.
+- signed GhostID/DeviceID-to-libsignal pre-key binding with deterministic protocol-address mapping and identity-change fail-closed tests.
 
 ### Security
 

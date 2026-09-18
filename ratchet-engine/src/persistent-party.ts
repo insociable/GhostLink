@@ -4,15 +4,16 @@ import * as SignalClient from '@signalapp/libsignal-client';
 
 import { RatchetParty, type WireMessage } from './party.js';
 import {
+  MAX_REGISTRATION_ID,
+  MIN_REGISTRATION_ID,
+} from './protocol-profile.js';
+import {
   createPartyStores,
   exportPartyStores,
   restorePartyStores,
   type PartyStoresState,
 } from './stores.js';
 import { RatchetStateVault } from './vault.js';
-
-const MIN_REGISTRATION_ID = 1;
-const MAX_REGISTRATION_ID_EXCLUSIVE = 16_381;
 
 interface Owner {
   readonly name: string;
@@ -51,7 +52,7 @@ export class PersistentRatchetParty {
     let stores;
     if (persisted === null) {
       stores = createPartyStores(
-        randomInt(MIN_REGISTRATION_ID, MAX_REGISTRATION_ID_EXCLUSIVE)
+        randomInt(MIN_REGISTRATION_ID, MAX_REGISTRATION_ID + 1)
       );
       await vault.save(owner, exportPartyStores(stores));
     } else {
