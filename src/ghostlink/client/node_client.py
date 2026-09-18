@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from ghostlink.device import EnrolledGhostDevice, derive_device_id
-from ghostlink.message import MESSAGE_VERSION, GhostMessage
 from ghostlink.prekey_fetch import (
     PreKeyFetchResponse,
     create_prekey_fetch_request,
@@ -62,15 +61,6 @@ _EXPECTED_PREKEY_STATUS_FIELDS = {
     "publication_sequence",
     "expires_at",
     "remaining_one_time_count",
-}
-_EXPECTED_MESSAGE_FIELDS = {
-    "version",
-    "message_id",
-    "sender_device_id",
-    "recipient_device_id",
-    "created_at",
-    "expires_at",
-    "ciphertext",
 }
 _EXPECTED_RATCHET_MESSAGE_FIELDS = {
     "version",
@@ -187,14 +177,6 @@ def _require_text(document: dict[str, object], field: str) -> str:
         raise GhostNodeProtocolError(f"{field} must be non-empty text")
     return value
 
-
-def _require_version(document: dict[str, object]) -> int:
-    value = document.get("version")
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise GhostNodeProtocolError("version must be an integer")
-    if value != MESSAGE_VERSION:
-        raise GhostNodeProtocolError("unsupported message version")
-    return value
 
 
 def _require_timestamp(document: dict[str, object], field: str) -> int:
@@ -459,37 +441,10 @@ def _parse_ratchet_message(value: object) -> RatchetMessage:
     )
 
 
-def _parse_message(value: object) -> GhostMessage:
-    document = _require_mapping(value, "message")
-    if set(document) != _EXPECTED_MESSAGE_FIELDS:
-        raise GhostNodeProtocolError(
-            "message fields do not match the protocol specification"
-        )
-
-    message_id = _validate_message_id(_require_text(document, "message_id"))
-    sender_device_id = _validate_device_id(
-        _require_text(document, "sender_device_id"),
-        "sender_device_id",
-    )
-    recipient_device_id = _validate_device_id(
-        _require_text(document, "recipient_device_id"),
-        "recipient_device_id",
-    )
-
-    return GhostMessage(
-        version=_require_version(document),
-        message_id=message_id,
-        sender_device_id=sender_device_id,
-        recipient_device_id=recipient_device_id,
-        created_at=_require_timestamp(document, "created_at"),
-        expires_at=_require_timestamp(document, "expires_at"),
-        ciphertext=_decode_ciphertext(_require_text(document, "ciphertext")),
-    )
-
 
 @dataclass(frozen=True, slots=True)
 class GhostNodeClient:
-    """Synchronous client for GhostNode static-v2 and ratcheted-v3 APIs."""
+    """Synchronous client for GhostNode ratcheted messaging and pre-key APIs."""
 
     base_url: str
     timeout: float = 10.0
@@ -544,32 +499,6 @@ class GhostNodeClient:
 
         document = _require_mapping(body, "health response")
         return document.get("status") == "ok"
-
-    def send(self, message: GhostMessage) -> str:
-        """Submit one encrypted protocol-v2 envelope."""
-        payload: dict[str, object] = {
-            "version": message.version,
-            "message_id": message.message_id,
-            "sender_device_id": message.sender_device_id,
-            "recipient_device_id": message.recipient_device_id,
-            "created_at": message.created_at,
-            "expires_at": message.expires_at,
-            "ciphertext": base64.b64encode(message.ciphertext).decode("ascii"),
-        }
-
-        status_code, body = self._request("POST", "/v2/messages", payload)
-        if status_code != 201:
-            raise GhostNodeRequestError(
-                status_code,
-                _extract_error_detail(body),
-            )
-
-        stored = _parse_message(body)
-        if stored != message:
-            raise GhostNodeProtocolError(
-                "GhostNode returned an envelope different from the submission"
-            )
-        return stored.message_id
 
     def send_ratchet(
         self,
@@ -749,31 +678,6 @@ class GhostNodeClient:
             )
         return response
 
-    def receive(self, recipient_device_id: str) -> list[GhostMessage]:
-        """Retrieve encrypted protocol-v2 envelopes for one device."""
-        try:
-            _validate_device_id(recipient_device_id, "recipient_device_id")
-        except GhostNodeProtocolError as exc:
-            raise ValueError(str(exc)) from exc
-
-        encoded_device_id = urllib.parse.quote(recipient_device_id, safe=":")
-        status_code, body = self._request(
-            "GET",
-            f"/v2/messages/{encoded_device_id}",
-        )
-
-        if status_code != 200:
-            raise GhostNodeRequestError(
-                status_code,
-                _extract_error_detail(body),
-            )
-        if not isinstance(body, list):
-            raise GhostNodeProtocolError(
-                "message list response must be a JSON array"
-            )
-
-        return [_parse_message(item) for item in body]
-
     def receive_ratchet(
         self,
         recipient_device: EnrolledGhostDevice,
@@ -808,27 +712,6 @@ class GhostNodeClient:
                 "ratcheted message list response must be a JSON array"
             )
         return [_parse_ratchet_message(item) for item in body]
-
-    def delete(self, recipient_device_id: str, message_id: str) -> None:
-        """Delete one delivered protocol-v2 envelope."""
-        try:
-            _validate_device_id(recipient_device_id, "recipient_device_id")
-            _validate_message_id(message_id)
-        except GhostNodeProtocolError as exc:
-            raise ValueError(str(exc)) from exc
-
-        encoded_device_id = urllib.parse.quote(recipient_device_id, safe=":")
-        encoded_message_id = urllib.parse.quote(message_id, safe="")
-        status_code, body = self._request(
-            "DELETE",
-            f"/v2/messages/{encoded_device_id}/{encoded_message_id}",
-        )
-
-        if status_code != 204:
-            raise GhostNodeRequestError(
-                status_code,
-                _extract_error_detail(body),
-            )
 
     def delete_ratchet(
         self,

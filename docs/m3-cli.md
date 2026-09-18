@@ -3,8 +3,7 @@
 The reference command-line runtime uses GhostLink protocol v3 for user-facing `send` and
 `inbox`.
 
-Static protocol v2 is not an automatic fallback. The retained `node-smoke` command is
-explicitly a legacy static-v2 diagnostic.
+The historical static protocol-v2 message relay has been retired. Ratcheted protocol v3 is the only current network message path.
 
 ## Local prerequisites
 
@@ -240,20 +239,10 @@ The client separately signs each POST/GET/DELETE request with the local DeviceID
 key; GhostNode verifies method/path/body binding, freshness and request-ID replay.
 
 The Bearer token does not replace DeviceID request authentication, end-to-end libsignal,
-or local human contact verification. Legacy static-v2 diagnostic routes remain
-bearer-only.
-
-## Diagnostic smoke
-
-```bash
-ghostlink node-smoke --node https://node.example.net
-```
-
-This command intentionally exercises the retained static-v2 compatibility path. It is not
-called as a fallback by ratcheted `send` or `inbox`.
+or local human contact verification.
 
 ## Security status
 
 GhostLink remains pre-alpha. Relay/client anti-rollback hardening, key transparency, live
 external validation of the reference TLS ingress, complete device revocation/recovery,
-legacy-v2 hardening/removal and independent cryptographic review remain open.
+independent cryptographic review remain open.

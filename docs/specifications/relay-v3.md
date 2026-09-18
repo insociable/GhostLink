@@ -10,7 +10,7 @@ The v3 relay surface is intentionally separate from static v2:
 - `GET /v3/messages/{recipient_device_id}` — list non-expired v3 envelopes;
 - `DELETE /v3/messages/{recipient_device_id}/{message_id}` — remove one delivered v3 envelope.
 
-There is no automatic translation between `/v2/messages` and `/v3/messages`.
+The historical `/v2/messages...` surface is retired; current network message delivery uses `/v3/messages...` only.
 
 ## Envelope validation
 

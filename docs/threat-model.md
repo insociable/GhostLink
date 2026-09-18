@@ -77,7 +77,7 @@ The current codebase includes:
 - replay-cache acceptance after authenticated v3 context validation and before application plaintext is returned;
 - encrypted local profile v3 carrying independently random ratchet-vault and contact-store master keys;
 - explicit atomic profile-v1/v2 -> profile-v3 migration before current ratcheted/contact-trust commands are allowed;
-- user-facing CLI send/inbox bound to protocol v3 with no automatic static-v2 downgrade;
+- user-facing CLI send/inbox bound to protocol v3, with the historical static-v2 network relay retired;
 - durable-session detection before first-contact bootstrap, preventing unnecessary pre-key consumption on later sends;
 - DeviceID-signed protocol-v3 message-relay requests bound to HTTP method, canonical logical path, canonical-body digest, freshness timestamp and random request ID;
 - sender ownership enforcement for v3 submission and recipient ownership enforcement for v3 mailbox list/delete;
@@ -98,7 +98,6 @@ Current security gaps still include:
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
 - complete device revocation and recovery design;
-- legacy static-v2 message relay remains bearer-only and diagnostic rather than per-device authenticated;
 - live external validation of the reference TLS ingress (real certificate, closed TCP/80 and TCP/8000, external v3 flow) before issue #21 closure;
 - independent cryptographic/protocol review.
 

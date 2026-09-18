@@ -1,80 +1,27 @@
-# GhostNode Relay Protocol v2
+# GhostNode Relay Protocol v2 — Retired
 
-GhostNode v2 transports protocol-v2 ciphertext envelopes without decrypting message content.
+## Status
 
-## API
+The historical static protocol-v2 **message relay** is retired from the reference GhostNode runtime.
 
-The experimental v2 relay surface is:
+The following routes are no longer exposed and must return `404`:
 
-- `POST /v2/messages` — store one encrypted envelope;
-- `GET /v2/messages/{recipient_device_id}` — list non-expired envelopes for one recipient;
-- `DELETE /v2/messages/{recipient_device_id}/{message_id}` — remove one delivered envelope.
+- `POST /v2/messages`;
+- `GET /v2/messages/{recipient_device_id}`;
+- `DELETE /v2/messages/{recipient_device_id}/{message_id}`.
 
-Protocol-v1 relay routes are not exposed by the reference runtime.
+The `/v2/prekeys/...` namespace is unrelated to this retired message transport and remains part of the current ratchet bootstrap and maintenance protocol.
 
-Ratcheted messages use a separate `/v3/messages` surface and `messages_v3` storage table. V2 and V3 envelopes are never reinterpreted as one another.
+## Historical behavior
 
-## Envelope validation
+Before retirement, GhostNode stored opaque protocol-v2 envelopes in an isolated `messages_v2` table, enforced structural/lifetime limits, and used the optional shared Bearer token as coarse relay access control.
 
-GhostNode validates only relay-visible structure:
+That surface did not provide DeviceID-authenticated relay operations and was not used by the current ratcheted `send` / `inbox` runtime.
 
-- protocol version must be `2`;
-- message IDs are 32 lowercase hexadecimal characters;
-- DeviceIDs use the canonical `device1:` representation;
-- timestamps are non-negative integers;
-- expiration is after creation;
-- declared lifetime does not exceed seven days;
-- ciphertext is valid Base64 and decodes to at most 1 MiB;
-- unknown JSON fields are rejected.
+## Migration
 
-These checks are operational hardening, not proof that the message is authentic.
+GhostLink is pre-alpha and does not preserve a compatibility switch for the retired routes.
 
-## Time policy
+Existing SQLite databases may still contain a historical `messages_v2` table. Current GhostNode code does not read, serve, migrate or delete those rows. Leaving the table untouched avoids a destructive migration.
 
-The relay rejects envelopes that are already expired beyond the five-minute clock tolerance or whose creation time is more than five minutes in the future.
-
-The recipient remains the security authority. It authenticates the encrypted inner lifecycle fields and performs its own time validation after decryption.
-
-## Idempotency and deduplication
-
-The key is the pair:
-
-`(recipient_device_id, message_id)`
-
-Submitting the exact same envelope again is idempotent and returns the stored envelope.
-
-Reusing the same key for different envelope content returns HTTP 409.
-
-Relay deduplication is defense in depth only. A recipient must still maintain its own persistent replay cache because a malicious or reset relay can forget prior state.
-
-## SQLite storage
-
-When persistent storage is configured, v2 uses a dedicated `messages_v2` table in the existing GhostNode SQLite database.
-
-The primary key is `(recipient_device_id, message_id)`. An index on recipient and expiration supports inbox lookup and expiry cleanup.
-
-The reference runtime keeps protocol-v2 envelopes isolated in `messages_v2`; ratcheted v3 envelopes use `messages_v3`.
-
-## Access control
-
-V2 uses the same optional shared Bearer relay token as V1.
-
-This token limits who may use the relay. It does not authenticate individual GhostIDs or DeviceIDs and does not replace end-to-end cryptographic authentication.
-
-## Health
-
-The global `/health` endpoint requires static-v2 message storage, ratcheted-v3 message storage and pre-key storage to be available.
-
-## Security boundary
-
-GhostNode sees routing and lifecycle metadata:
-
-- sender DeviceID;
-- recipient DeviceID;
-- message ID;
-- creation and expiration times;
-- ciphertext size.
-
-GhostNode never receives message plaintext or client private keys.
-
-Metadata reduction, per-device relay authentication and traffic-analysis resistance remain separate milestones. Ratcheted transport/forward-secrecy integration is implemented separately in protocol v3.
+The retirement decision and acceptance criteria are recorded in [ADR-0007](../adr/0007-retire-static-v2-message-relay.md).

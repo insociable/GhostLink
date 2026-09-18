@@ -120,13 +120,7 @@ Check the node:
 ghostlink node-health --node http://127.0.0.1:8000
 ```
 
-The retained static diagnostic smoke can be run explicitly:
-
-```bash
-ghostlink node-smoke --node http://127.0.0.1:8000
-```
-
-This V2 smoke is diagnostic only. User-facing `send` / `inbox` use protocol v3 and never fall back to it automatically.
+The historical static-v2 message relay is retired. A request to `/v2/messages/...` must return `404`; `/v2/prekeys/...` remains part of the current ratchet bootstrap API.
 
 ## 6. Prepare public DNS
 

@@ -1,4 +1,4 @@
-"""GhostNode protocol-v2 relay application."""
+"""GhostNode ratcheted relay application."""
 
 from __future__ import annotations
 
@@ -14,11 +14,6 @@ from ghostlink.relay_request_auth import (
     RelayRequestReplayStore,
     create_relay_request_replay_store,
 )
-from ghostlink.relay_v2 import (
-    V2MessageStore,
-    create_v2_message_store,
-    create_v2_router,
-)
 from ghostlink.relay_v3 import (
     V3MessageStore,
     create_v3_message_store,
@@ -27,20 +22,13 @@ from ghostlink.relay_v3 import (
 
 
 def create_app(
-    store: V2MessageStore | None = None,
     settings: NodeSettings | None = None,
     prekey_store: PreKeyPublicationStore | None = None,
     ratchet_store: V3MessageStore | None = None,
     request_replay_store: RelayRequestReplayStore | None = None,
 ) -> FastAPI:
-    """Create GhostNode with isolated static-v2 and ratcheted-v3 relay routes."""
+    """Create GhostNode with ratcheted-v3 message and pre-key routes."""
     node_settings = settings or NodeSettings()
-    message_store = (
-        store
-        if store is not None
-        else create_v2_message_store(node_settings)
-    )
-
     publication_store = (
         prekey_store
         if prekey_store is not None
@@ -60,12 +48,9 @@ def create_app(
     app = FastAPI(
         title="GhostNode",
         version="0.3.0",
-        description=(
-            "Ciphertext-only relay for GhostLink static v2 and ratcheted v3."
-        ),
+        description="Ciphertext-only relay for GhostLink ratcheted v3.",
     )
     app.state.settings = node_settings
-    app.include_router(create_v2_router(node_settings, message_store))
     app.include_router(
         create_v3_router(
             node_settings,
@@ -79,10 +64,9 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        """Return node health status, including relay storage availability."""
+        """Return node health status for current relay storage."""
         if (
-            not message_store.is_healthy()
-            or not v3_message_store.is_healthy()
+            not v3_message_store.is_healthy()
             or not publication_store.is_healthy()
             or not relay_request_replay_store.is_healthy()
         ):

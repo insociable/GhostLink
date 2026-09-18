@@ -53,6 +53,8 @@ Protocol v2 improves lifecycle authentication and replay-defense foundations. It
 
 ## Runtime status
 
-Protocol v2 remains implemented as an explicitly separate legacy/static compatibility path. The user-facing `send` / `inbox` CLI runtime uses ratcheted protocol v3; the retained `node-smoke` command exercises v2 deliberately as a legacy diagnostic.
+Protocol v2 is retained only as historical/local codec code and as the source of a few shared lifecycle constants pending later cleanup.
 
-The experimental protocol-v1 runtime path has been removed. GhostNode exposes static `/v2/messages` and separately isolated ratcheted `/v3/messages` routes. A v3 failure never causes automatic fallback or reinterpretation as v2.
+The reference GhostNode no longer exposes `/v2/messages...`, `GhostNodeClient` no longer provides static-v2 send/receive/delete methods, and the CLI no longer exposes `node-smoke`.
+
+Current network messaging is protocol v3 only. The `/v2/prekeys/...` namespace remains active because it is the current ratchet pre-key bootstrap API, not the retired static message relay.

@@ -17,7 +17,7 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 - persistent replay protection for authenticated message IDs;
 - ciphertext-only GhostNode relay with optional SQLite persistence;
 - ratcheted protocol-v3 messaging used by the current `send` / `inbox` CLI runtime;
-- retained static protocol-v2 relay/smoke path for compatibility diagnostics only;
+- retired static protocol-v2 network relay; current runtime exposes ratcheted v3 messages plus v2-namespaced pre-key APIs;
 - a local Node/TypeScript ratchet engine using pinned official `@signalapp/libsignal-client`;
 - encrypted persistent libsignal session and pre-key vault state;
 - signed GhostID/DeviceID-to-libsignal pre-key bindings;
@@ -34,7 +34,7 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 
 The current user-facing `send` and `inbox` commands use **ratcheted protocol v3**.
 
-A failed ratchet bootstrap, encrypt or decrypt does not trigger static-v2 messaging. Static protocol v2 remains available only as an explicitly separate relay/diagnostic compatibility path; `node-smoke` identifies itself as a legacy static-v2 smoke test.
+A failed ratchet bootstrap, encrypt or decrypt does not trigger static-v2 messaging. The historical `/v2/messages...` network relay and `node-smoke` command have been removed from the current runtime.
 
 ## Security status
 
@@ -44,7 +44,6 @@ The ratchet path exercises forward-secrecy/post-compromise behavior through the 
 
 Important remaining gaps include:
 
-- legacy static-v2 relay operations remain bearer-only and diagnostic;
 - relay database anti-rollback protection;
 - key transparency;
 - public Caddy/TLS reference deployment implemented, but live external certificate/closed-port verification is still required;
@@ -60,7 +59,7 @@ See [SECURITY.md](SECURITY.md) and [docs/threat-model.md](docs/threat-model.md) 
 
 | Path | Status |
 | --- | --- |
-| Static message protocol v2 | Implemented; retained legacy relay/diagnostic path |
+| Static message protocol v2 | Historical local codec only; `/v2/messages...` runtime retired |
 | Ratcheted message protocol v3 | Implemented/tested; current `send` / `inbox` CLI runtime |
 | Ratchet pre-key lifecycle | Publication, fetch, continuity, maintenance and GC implemented |
 | Protocol v1 | Removed from runtime |
@@ -163,7 +162,7 @@ Existing legacy profile-v1 files remain readable, but ratcheted commands require
 poetry run ghostlink profile-upgrade --profile alice.ghost
 ```
 
-`send` and `inbox` use protocol v3 only. They never silently retry through static protocol v2.
+`send` and `inbox` use protocol v3 only. The historical static-v2 network relay is no longer exposed.
 
 See [docs/m3-cli.md](docs/m3-cli.md) for the current ratcheted CLI workflow and [deploy/oracle/README.md](deploy/oracle/README.md) for the container deployment runbook.
 

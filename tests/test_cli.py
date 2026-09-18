@@ -271,10 +271,11 @@ def test_cli_two_client_ratcheted_message_workflow(
 
     sent = capsys.readouterr()
     assert "Ratcheted message queued:" in sent.out
-    assert api_client.get("/v2/messages/" + decrypt_local_profile(
+    retired = api_client.get("/v2/messages/" + decrypt_local_profile(
         bob_profile.read_text(),
         "test profile password",
-    ).device.device_id).json() == []
+    ).device.device_id)
+    assert retired.status_code == 404
 
     assert run(
         [
@@ -429,7 +430,7 @@ def test_cli_does_not_fall_back_to_static_v2_when_bootstrap_fails(
         (tmp_path / "bob.ghost").read_text(),
         "no fallback password",
     )
-    assert api_client.get(f"/v2/messages/{bob.device.device_id}").json() == []
+    assert api_client.get(f"/v2/messages/{bob.device.device_id}").status_code == 404
     assert node_client_factory(
         "http://ghostnode.test"
     ).receive_ratchet(bob.device) == []
@@ -797,22 +798,8 @@ def test_cli_send_by_contact_id_requires_verified_state_and_blocks_changes(
     assert "identity changed and requires re-verification" in changed_send.err
 
 
-def test_cli_node_smoke_remains_explicit_legacy_v2(capsys) -> None:
-    api_client = TestClient(create_app())
-    requester = create_test_requester(api_client)
-
-    def node_client_factory(base_url: str) -> GhostNodeClient:
-        return GhostNodeClient(base_url, requester=requester)
-
-    exit_code = run(
-        ["node-smoke", "--node", "http://ghostnode.test"],
-        node_client_factory=node_client_factory,
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "legacy static V2 smoke test passed" in captured.out
-    assert captured.err == ""
+def test_cli_does_not_expose_retired_static_v2_smoke_command() -> None:
+    assert "node-smoke" not in cli_module.build_parser().format_help()
 
 
 def test_cli_contact_qr_export_and_import_remain_human_unverified(

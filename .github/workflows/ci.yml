@@ -143,33 +143,12 @@ jobs:
           docker compose logs ghostnode
           exit 1
 
-      - name: Verify unauthenticated relay access is rejected
+      - name: Verify retired static-v2 message relay is absent
         run: |
           DEVICE_ID="device1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}'             "http://127.0.0.1:8000/v2/messages/$DEVICE_ID")"
-          test "$STATUS" = "401"
-
-      - name: Verify authenticated relay access works
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import urllib.request
-          from pathlib import Path
-
-          device_id = "device1:" + ("a" * 52)
-          token = Path(os.environ["GHOSTLINK_NODE_TOKEN_FILE"]).read_text().strip()
-          request = urllib.request.Request(
-              f"http://127.0.0.1:8000/v2/messages/{device_id}",
-              headers={"Authorization": f"Bearer {token}"},
-          )
-          with urllib.request.urlopen(request, timeout=5) as response:
-              assert response.status == 200
-              assert json.loads(response.read()) == []
-          PY
-
-      - name: Run protocol-v2 E2EE smoke test
-        run: docker compose exec -T ghostnode ghostlink node-smoke --node http://127.0.0.1:8000
+          STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            "http://127.0.0.1:8000/v2/messages/$DEVICE_ID")"
+          test "$STATUS" = "404"
 
       - name: Show GhostNode status
         run: docker compose ps
