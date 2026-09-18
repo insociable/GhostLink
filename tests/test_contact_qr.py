@@ -14,7 +14,9 @@ def test_contact_qr_svg_is_deterministic_standard_svg() -> None:
 
     assert first == second
     assert first.startswith("<svg")
-    assert 'xmlns="http://www.w3.org/2000/svg"' in first
+    assert first.endswith("</svg>")
+    assert "<path " in first
+    assert 'class="segno"' in first
     assert "ghostlink:contact:" not in first
 
 
