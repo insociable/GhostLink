@@ -2,7 +2,11 @@ import { randomInt } from 'node:crypto';
 
 import * as SignalClient from '@signalapp/libsignal-client';
 
-import { RatchetParty, type WireMessage } from './party.js';
+import {
+  RatchetParty,
+  type PreKeyGenerationMaterial,
+  type WireMessage,
+} from './party.js';
 import {
   MAX_REGISTRATION_ID,
   MIN_REGISTRATION_ID,
@@ -20,6 +24,20 @@ interface Owner {
   readonly name: string;
   readonly deviceId: number;
 }
+
+export interface PreparedPreKeyGeneration extends PreKeyGenerationMaterial {
+  readonly sequence: number;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+}
+
+const DEFAULT_ONE_TIME_POOL_TARGET = 100;
+const MAX_ONE_TIME_POOL_SIZE = 256;
+const MAX_BINDING_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
+const MAX_PUBLICATION_SEQUENCE = Number.MAX_SAFE_INTEGER;
+const MAX_SECONDS_SAFE_FOR_MILLISECONDS = Math.floor(
+  Number.MAX_SAFE_INTEGER / 1000
+);
 
 export class PersistentRatchetParty {
   private inner: RatchetParty;
@@ -118,6 +136,81 @@ export class PersistentRatchetParty {
 
   async createPreKeyBundle(): Promise<SignalClient.PreKeyBundle> {
     return this.transaction((party) => party.createPreKeyBundle());
+  }
+
+
+  async preparePreKeyGeneration(
+    oneTimeCount = DEFAULT_ONE_TIME_POOL_TARGET,
+    nowSeconds = Math.floor(Date.now() / 1000),
+    lifetimeSeconds = MAX_BINDING_LIFETIME_SECONDS
+  ): Promise<PreparedPreKeyGeneration> {
+    if (
+      !Number.isSafeInteger(oneTimeCount) ||
+      oneTimeCount <= 0 ||
+      oneTimeCount > MAX_ONE_TIME_POOL_SIZE
+    ) {
+      throw new Error(
+        `oneTimeCount must be between 1 and ${MAX_ONE_TIME_POOL_SIZE}`
+      );
+    }
+    if (
+      !Number.isSafeInteger(nowSeconds) ||
+      nowSeconds < 0 ||
+      nowSeconds > MAX_SECONDS_SAFE_FOR_MILLISECONDS
+    ) {
+      throw new Error('nowSeconds is outside the supported range');
+    }
+    if (
+      !Number.isSafeInteger(lifetimeSeconds) ||
+      lifetimeSeconds <= 0 ||
+      lifetimeSeconds > MAX_BINDING_LIFETIME_SECONDS
+    ) {
+      throw new Error('lifetimeSeconds must be between 1 and seven days');
+    }
+
+    const expiresAt = nowSeconds + lifetimeSeconds;
+    if (!Number.isSafeInteger(expiresAt)) {
+      throw new Error('pre-key generation expiration exceeds safe integer range');
+    }
+
+    return this.transaction(async (party) => {
+      const lifecycle = party.stores.lifecycle.snapshot();
+      if (lifecycle.pending !== null) {
+        throw new Error('a pending pre-key generation already exists');
+      }
+      if (lifecycle.publicationSequence >= MAX_PUBLICATION_SEQUENCE) {
+        throw new Error('pre-key publication sequence is exhausted');
+      }
+
+      const sequence = lifecycle.publicationSequence + 1;
+      const material = await party.createPreKeyGeneration(
+        oneTimeCount,
+        nowSeconds * 1000
+      );
+
+      party.stores.lifecycle.replace({
+        ...lifecycle,
+        publicationSequence: sequence,
+        pending: {
+          sequence,
+          createdAt: nowSeconds,
+          expiresAt,
+          signedPreKeyId: material.signedPreKeyId,
+          lastResortKyberPreKeyId: material.lastResortKyberPreKeyId,
+          oneTimeKeyIds: material.oneTimeKeyIds,
+          publicPayload: null,
+          publishedAt: null,
+          retiredAt: null,
+        },
+      });
+
+      return {
+        ...material,
+        sequence,
+        createdAt: nowSeconds,
+        expiresAt,
+      };
+    });
   }
 
   private remoteAddress(name: string): SignalClient.ProtocolAddress {
