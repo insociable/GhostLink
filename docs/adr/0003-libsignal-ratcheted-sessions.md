@@ -93,7 +93,9 @@ libsignal Rust implementation
 
 The engine is not a network service.
 
-The initial transport between Python and the engine will be local stdio using length-bounded structured messages. A Unix-domain socket may be considered later if needed for a desktop/mobile architecture.
+The implemented desktop/development transport is local stdio using a 32-bit length prefix and bounded structured messages. It has no listening network socket and does not place the ratchet vault key in argv or the environment. The detailed protocol is defined in `docs/specifications/ratchet-local-rpc.md`.
+
+A different platform-native process boundary will be required for mobile clients rather than spawning a desktop-style Node process.
 
 ## Trust boundary
 

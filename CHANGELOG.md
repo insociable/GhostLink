@@ -28,7 +28,9 @@ The format follows Keep a Changelog and Semantic Versioning.
 - automated dependency update monitoring;
 - experimental libsignal-based ratchet engine bootstrap with PQXDH, out-of-order delivery, duplicate rejection and simulated post-compromise recovery tests.
 - encrypted persistent ratchet-state vault with atomic multi-store commits and restart continuity tests.
-- signed GhostID/DeviceID-to-libsignal pre-key binding with deterministic protocol-address mapping and identity-change fail-closed tests.
+- signed GhostID/DeviceID-to-libsignal pre-key binding with deterministic protocol-address mapping and identity-change fail-closed tests;
+- bounded local Python-to-libsignal framed RPC with real cross-language PQXDH/restart smoke tests;
+- randomized collision-checked pre-key identifiers while retaining delayed-message private pre-key state.
 
 ### Security
 
@@ -43,7 +45,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 ### Known limitations
 
 - shared relay access control is not per-device cryptographic authentication;
-- no ratcheting or forward secrecy yet;
+- the libsignal ratchet engine provides tested forward-secrecy/post-compromise behavior, but the user-facing relay/CLI still uses the static protocol-v2 message path until explicit cutover;
 - traffic metadata remains visible to the relay;
 - replay-cache rollback/deletion can weaken replay suppression for still-valid captured messages;
 - no independent security audit yet.

@@ -56,6 +56,9 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] simulated forward-secrecy / post-compromise recovery behavior at engine level;
 - [x] encrypted persistent libsignal session/pre-key stores;
 - [x] GhostID/DeviceID binding to libsignal identities;
+- [x] local framed Python ↔ libsignal engine RPC + cross-language restart smoke;
+- [x] randomized collision-checked pre-key identifiers with persistent consumption state;
+- [ ] pre-key replenishment, rotation and garbage-collection policy;
 - [ ] ratcheted relay envelope and CLI cutover;
 - [ ] external cryptographic review;
 - [ ] dependency review and automated vulnerability policy;

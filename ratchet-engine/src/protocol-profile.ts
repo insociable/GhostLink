@@ -1,6 +1,7 @@
 export const SIGNAL_DEVICE_ID = 1;
 export const MIN_REGISTRATION_ID = 1;
 export const MAX_REGISTRATION_ID = 16_380;
+export const MAX_PREKEY_ID = 0x7fff_ffff;
 
 export function validateRegistrationId(value: number): number {
   if (

@@ -58,6 +58,19 @@ jobs:
         working-directory: ratchet-engine
         run: npm test
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry for cross-language smoke
+        run: pipx install poetry
+
+      - name: Install Python dependencies for cross-language smoke
+        run: poetry install --no-interaction
+
+      - name: Run Python to libsignal RPC smoke test
+        run: poetry run pytest tests/test_ratchet_engine_e2e.py
+
   container:
     runs-on: ubuntu-latest
     env:

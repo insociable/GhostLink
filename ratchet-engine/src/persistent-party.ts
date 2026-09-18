@@ -6,6 +6,7 @@ import { RatchetParty, type WireMessage } from './party.js';
 import {
   MAX_REGISTRATION_ID,
   MIN_REGISTRATION_ID,
+  SIGNAL_DEVICE_ID,
 } from './protocol-profile.js';
 import {
   createPartyStores,
@@ -117,6 +118,43 @@ export class PersistentRatchetParty {
 
   async createPreKeyBundle(): Promise<SignalClient.PreKeyBundle> {
     return this.transaction((party) => party.createPreKeyBundle());
+  }
+
+  private remoteAddress(name: string): SignalClient.ProtocolAddress {
+    if (!name) {
+      throw new Error('remote ratchet address must not be empty');
+    }
+    return SignalClient.ProtocolAddress.new(name, SIGNAL_DEVICE_ID);
+  }
+
+  async establishSessionWithAddress(
+    remoteName: string,
+    bundle: SignalClient.PreKeyBundle
+  ): Promise<void> {
+    const remoteAddress = this.remoteAddress(remoteName);
+    await this.transaction((party) =>
+      party.establishSessionAt(remoteAddress, bundle)
+    );
+  }
+
+  async encryptBytesTo(
+    remoteName: string,
+    plaintext: Uint8Array
+  ): Promise<WireMessage> {
+    const remoteAddress = this.remoteAddress(remoteName);
+    return this.transaction((party) =>
+      party.encryptBytes(remoteAddress, plaintext)
+    );
+  }
+
+  async decryptBytesFrom(
+    remoteName: string,
+    message: WireMessage
+  ): Promise<Uint8Array> {
+    const remoteAddress = this.remoteAddress(remoteName);
+    return this.transaction((party) =>
+      party.decryptBytes(remoteAddress, message)
+    );
   }
 
   async establishSession(
