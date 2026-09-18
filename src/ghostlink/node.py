@@ -10,14 +10,14 @@ from ghostlink.prekey_relay import (
     create_prekey_publication_router,
     create_prekey_publication_store,
 )
+from ghostlink.relay_request_auth import (
+    RelayRequestReplayStore,
+    create_relay_request_replay_store,
+)
 from ghostlink.relay_v2 import (
     V2MessageStore,
     create_v2_message_store,
     create_v2_router,
-)
-from ghostlink.relay_request_auth import (
-    RelayRequestReplayStore,
-    create_relay_request_replay_store,
 )
 from ghostlink.relay_v3 import (
     V3MessageStore,
