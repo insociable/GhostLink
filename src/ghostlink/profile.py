@@ -435,11 +435,17 @@ def decrypt_local_profile(serialized: str, password: str) -> LocalProfile:
 def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
     """Upgrade a decrypted v1/v2 profile to the current independent secrets."""
     ratchet_master_key = profile.ratchet_master_key
-    if ratchet_master_key is not None and len(ratchet_master_key) != _RATCHET_MASTER_KEY_SIZE:
+    if (
+        ratchet_master_key is not None
+        and len(ratchet_master_key) != _RATCHET_MASTER_KEY_SIZE
+    ):
         raise ProfileError("ratchet master key has an invalid length")
 
     contact_store_key = profile.contact_store_key
-    if contact_store_key is not None and len(contact_store_key) != _CONTACT_STORE_KEY_SIZE:
+    if (
+        contact_store_key is not None
+        and len(contact_store_key) != _CONTACT_STORE_KEY_SIZE
+    ):
         raise ProfileError("contact store key has an invalid length")
 
     if ratchet_master_key is not None and contact_store_key is not None:
