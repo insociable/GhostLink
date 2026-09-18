@@ -1,7 +1,9 @@
+import base64
 import json
 from dataclasses import replace
 
 import pytest
+from ghostlink.device import EnrolledGhostDevice
 from ghostlink.entity import GhostEntity
 from ghostlink.ratchet_binding import RatchetBindingError, RatchetPreKeyMaterial
 from ghostlink.ratchet_publication import (
@@ -34,7 +36,7 @@ def material(
     )
 
 
-def publication_fixture() -> tuple[GhostEntity, object, RatchetPreKeyPublication]:
+def publication_fixture() -> tuple[GhostEntity, EnrolledGhostDevice, RatchetPreKeyPublication]:
     entity = GhostEntity.generate()
     device = entity.enroll_device()
     publication = create_ratchet_prekey_publication(
@@ -74,7 +76,7 @@ def test_publication_round_trip_is_deterministic_and_locally_verifiable() -> Non
 
     assert imported == publication
     assert export_ratchet_prekey_publication(imported) == serialized
-    verify_local_ratchet_prekey_publication(imported, device)  # type: ignore[arg-type]
+    verify_local_ratchet_prekey_publication(imported, device)
 
 
 def test_publication_rejects_duplicate_kyber_role() -> None:
@@ -116,7 +118,7 @@ def test_publication_rejects_generation_identity_mismatch() -> None:
 def test_publication_tampering_breaks_local_signature_verification() -> None:
     _, device, publication = publication_fixture()
     document = json.loads(export_ratchet_prekey_publication(publication))
-    document["one_time"][0]["pre_key_id"] += 1
+    document["one_time"][0]["pre_key"] = base64.b64encode(b"\\x99" * 33).decode("ascii")
 
     imported = import_ratchet_prekey_publication(
         json.dumps(document, sort_keys=True, separators=(",", ":"))
@@ -125,5 +127,5 @@ def test_publication_tampering_breaks_local_signature_verification() -> None:
     with pytest.raises(RatchetBindingError, match="invalid device signature"):
         verify_local_ratchet_prekey_publication(
             imported,
-            device,  # type: ignore[arg-type]
+            device,
         )
