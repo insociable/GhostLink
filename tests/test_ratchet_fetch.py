@@ -13,7 +13,7 @@ from ghostlink.client.node_client import (
     GhostNodeProtocolError,
 )
 from ghostlink.contact import (
-    VerifiedContact,
+    ValidatedContact,
     export_contact_bundle,
     import_contact_bundle,
 )
@@ -128,13 +128,13 @@ def _requester(
 class FakeEngine:
     def __init__(self) -> None:
         self.established: list[
-            tuple[SignedRatchetPreKeyBinding, VerifiedContact, int | None]
+            tuple[SignedRatchetPreKeyBinding, ValidatedContact, int | None]
         ] = []
 
     def establish_session(
         self,
         signed_binding: SignedRatchetPreKeyBinding,
-        contact: VerifiedContact,
+        contact: ValidatedContact,
         *,
         now: int | None = None,
     ) -> None:
@@ -147,7 +147,7 @@ def _setup_relay(
     GhostNodeClient,
     EnrolledGhostDevice,
     EnrolledGhostDevice,
-    VerifiedContact,
+    ValidatedContact,
     int,
 ]:
     alice = GhostEntity.generate()
