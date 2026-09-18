@@ -15,8 +15,8 @@ This roadmap distinguishes implemented building blocks from security work that i
 
 - [x] versioned encrypted message envelope;
 - [x] relay message identifiers;
-- [ ] timestamps and expiration;
-- [ ] replay-protection design and implementation;
+- [x] timestamps and expiration;
+- [x] replay-protection design and implementation;
 - [x] serialization and tamper-rejection tests.
 
 ## M2 — Relay

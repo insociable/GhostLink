@@ -1,8 +1,8 @@
-# GhostLink M3 CLI
+# GhostLink M3 CLI — Protocol v2
 
 The M3 command-line client is the first user-facing path through the GhostLink protocol.
 
-It is intentionally narrow: one encrypted local profile, one verified contact bundle, one GhostNode, and encrypted text messages.
+It uses protocol v2 for send, inbox, and the live GhostNode smoke test.
 
 ## Commands
 
@@ -32,6 +32,12 @@ Check the relay:
 ghostlink node-health --node https://node.example.net
 ```
 
+Run an ephemeral protocol-v2 E2EE round trip:
+
+```bash
+ghostlink node-smoke --node https://node.example.net
+```
+
 Alice sends Bob a message:
 
 ```bash
@@ -51,22 +57,50 @@ ghostlink inbox \
   --node https://node.example.net
 ```
 
-After a message is successfully authenticated, decrypted, and decoded as UTF-8, the M3 client deletes its relay copy. Use `--keep` during development to leave the relay copy in place.
+## Replay state
+
+The inbox maintains a persistent SQLite replay cache.
+
+For `bob.ghost`, the default state path is:
+
+```text
+bob.ghost.state.sqlite3
+```
+
+Override it when needed:
+
+```bash
+ghostlink inbox \
+  --profile bob.ghost \
+  --contact alice.contact \
+  --node https://node.example.net \
+  --state /secure/path/bob-replay.sqlite3
+```
+
+A successfully authenticated message ID is recorded atomically before plaintext is displayed. An already-recorded ID is suppressed and is never displayed twice.
+
+After successful processing, the client deletes the relay copy unless `--keep` is supplied for development.
+
+## Protocol-v2 validation
+
+Before displaying text, the client:
+
+- verifies the expected sender device;
+- authenticates and decrypts the ciphertext locally;
+- compares encrypted inner metadata with relay-visible outer metadata;
+- validates creation time, expiration, and maximum lifetime;
+- verifies text is valid UTF-8;
+- atomically records the message ID in the replay cache;
+- only then exposes the plaintext.
 
 ## Security boundary
 
 The profile password is read interactively and is never accepted as a CLI argument.
 
-The client:
+The client keeps identity/device private keys local. GhostNode receives ciphertext and routing/lifecycle metadata only.
 
-- unlocks keys locally;
-- verifies the contact locally;
-- encrypts plaintext locally;
-- sends only ciphertext to GhostNode;
-- retrieves ciphertext from GhostNode;
-- decrypts locally;
-- deletes the relay copy only after successful processing.
+The shared GhostNode Bearer token is relay access control, not per-device cryptographic authentication.
 
-M3 still supports only one explicitly supplied contact per inbox command. A contact database, message history, replay protection, authenticated relay access, metadata reduction, ratcheting, notifications, and mobile UX remain future work.
+M3 still supports one explicitly supplied contact per inbox command. Conversation history, per-device relay authentication, ratcheting, forward secrecy, notifications, desktop/mobile UX, and metadata reduction remain future work.
 
-GhostLink is experimental and not ready for sensitive real-world communications.
+GhostLink is experimental and is not yet suitable for sensitive real-world communications without independent cryptographic review.
