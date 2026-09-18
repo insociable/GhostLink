@@ -18,6 +18,7 @@ from nacl.signing import VerifyKey
 
 from ghostlink.config import NodeSettings
 from ghostlink.device import EnrolledGhostDevice, derive_device_id
+from ghostlink.relay_state import RelayStateCoordinator
 
 AUTH_VERSION = 1
 AUTH_CLOCK_SKEW_SECONDS = 5 * 60
@@ -316,8 +317,16 @@ class SQLiteRelayRequestReplayStore:
     """Persistent replay state colocated with the GhostNode SQLite database."""
 
     path: Path
+    coordinator: RelayStateCoordinator | None = None
 
     def __post_init__(self) -> None:
+        if (
+            self.coordinator is not None
+            and self.coordinator.path.resolve() != self.path.resolve()
+        ):
+            raise ValueError(
+                "relay state coordinator path does not match request replay store"
+            )
         if self.path.exists() and self.path.is_dir():
             raise ValueError("node.database_path must point to a file")
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -342,6 +351,31 @@ class SQLiteRelayRequestReplayStore:
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=5.0)
 
+    def _accept(
+        self,
+        connection: sqlite3.Connection,
+        device_id: str,
+        request_id: str,
+        *,
+        expires_at: int,
+        now: int,
+    ) -> bool:
+        connection.execute(
+            "DELETE FROM relay_request_replay_v1 WHERE expires_at < ?",
+            (now,),
+        )
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO relay_request_replay_v1 (
+                device_id,
+                request_id,
+                expires_at
+            ) VALUES (?, ?, ?)
+            """,
+            (device_id, request_id, expires_at),
+        )
+        return cursor.rowcount == 1
+
     def accept(
         self,
         device_id: str,
@@ -350,25 +384,29 @@ class SQLiteRelayRequestReplayStore:
         expires_at: int,
         now: int,
     ) -> bool:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "DELETE FROM relay_request_replay_v1 WHERE expires_at < ?",
-                (now,),
-            )
-            cursor = connection.execute(
-                """
-                INSERT OR IGNORE INTO relay_request_replay_v1 (
+        if self.coordinator is not None:
+            return self.coordinator.mutate(
+                lambda connection: self._accept(
+                    connection,
                     device_id,
                     request_id,
-                    expires_at
-                ) VALUES (?, ?, ?)
-                """,
-                (device_id, request_id, expires_at),
+                    expires_at=expires_at,
+                    now=now,
+                )
             )
-        return cursor.rowcount == 1
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            return self._accept(
+                connection,
+                device_id,
+                request_id,
+                expires_at=expires_at,
+                now=now,
+            )
 
     def is_healthy(self) -> bool:
+        if self.coordinator is not None and not self.coordinator.is_healthy():
+            return False
         try:
             with self._connect() as connection:
                 connection.execute("SELECT 1").fetchone()

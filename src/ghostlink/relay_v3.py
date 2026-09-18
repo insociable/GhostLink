@@ -35,6 +35,7 @@ from ghostlink.relay_request_auth import (
     authenticate_relay_request,
     create_relay_request_replay_store,
 )
+from ghostlink.relay_state import RelayStateCoordinator
 
 _DEVICE_ID_PREFIX = "device1:"
 _DEVICE_ID_PAYLOAD_LENGTH = 52
@@ -216,8 +217,14 @@ class SQLiteV3MessageStore:
     """Persistent SQLite store isolated from legacy static-v2 envelopes."""
 
     path: Path
+    coordinator: RelayStateCoordinator | None = None
 
     def __post_init__(self) -> None:
+        if (
+            self.coordinator is not None
+            and self.coordinator.path.resolve() != self.path.resolve()
+        ):
+            raise ValueError("relay state coordinator path does not match message store")
         if self.path.exists() and self.path.is_dir():
             raise ValueError("node.database_path must point to a file")
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -264,48 +271,51 @@ class SQLiteV3MessageStore:
             ciphertext=cast(str, row[7]),
         )
 
-    def add(self, envelope: V3MessageEnvelope) -> V3MessageEnvelope:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO messages_v3 (
-                    message_id,
-                    version,
-                    sender_device_id,
-                    recipient_device_id,
-                    created_at,
-                    expires_at,
-                    ciphertext_type,
-                    ciphertext
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    envelope.message_id,
-                    envelope.version,
-                    envelope.sender_device_id,
-                    envelope.recipient_device_id,
-                    envelope.created_at,
-                    envelope.expires_at,
-                    envelope.ciphertext_type,
-                    envelope.ciphertext,
-                ),
-            )
-            row = connection.execute(
-                """
-                SELECT
-                    message_id,
-                    version,
-                    sender_device_id,
-                    recipient_device_id,
-                    created_at,
-                    expires_at,
-                    ciphertext_type,
-                    ciphertext
-                FROM messages_v3
-                WHERE recipient_device_id = ? AND message_id = ?
-                """,
-                (envelope.recipient_device_id, envelope.message_id),
-            ).fetchone()
+    def _add(
+        self,
+        connection: sqlite3.Connection,
+        envelope: V3MessageEnvelope,
+    ) -> V3MessageEnvelope:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO messages_v3 (
+                message_id,
+                version,
+                sender_device_id,
+                recipient_device_id,
+                created_at,
+                expires_at,
+                ciphertext_type,
+                ciphertext
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                envelope.message_id,
+                envelope.version,
+                envelope.sender_device_id,
+                envelope.recipient_device_id,
+                envelope.created_at,
+                envelope.expires_at,
+                envelope.ciphertext_type,
+                envelope.ciphertext,
+            ),
+        )
+        row = connection.execute(
+            """
+            SELECT
+                message_id,
+                version,
+                sender_device_id,
+                recipient_device_id,
+                created_at,
+                expires_at,
+                ciphertext_type,
+                ciphertext
+            FROM messages_v3
+            WHERE recipient_device_id = ? AND message_id = ?
+            """,
+            (envelope.recipient_device_id, envelope.message_id),
+        ).fetchone()
 
         if row is None:
             raise RuntimeError("stored protocol-v3 message could not be reloaded")
@@ -316,47 +326,93 @@ class SQLiteV3MessageStore:
             )
         return stored
 
+    def add(self, envelope: V3MessageEnvelope) -> V3MessageEnvelope:
+        if self.coordinator is not None:
+            return self.coordinator.mutate(
+                lambda connection: self._add(connection, envelope)
+            )
+        with self._connect() as connection:
+            return self._add(connection, envelope)
+
+    def _list_for_recipient(
+        self,
+        connection: sqlite3.Connection,
+        recipient_device_id: str,
+        cutoff: int,
+    ) -> list[V3MessageEnvelope]:
+        connection.execute(
+            "DELETE FROM messages_v3 WHERE expires_at < ?",
+            (cutoff,),
+        )
+        rows = connection.execute(
+            """
+            SELECT
+                message_id,
+                version,
+                sender_device_id,
+                recipient_device_id,
+                created_at,
+                expires_at,
+                ciphertext_type,
+                ciphertext
+            FROM messages_v3
+            WHERE recipient_device_id = ?
+            ORDER BY created_at, rowid
+            """,
+            (recipient_device_id,),
+        ).fetchall()
+        return [self._from_row(tuple(row)) for row in rows]
+
     def list_for_recipient(
         self,
         recipient_device_id: str,
     ) -> list[V3MessageEnvelope]:
         cutoff = _unix_time() - MESSAGE_CLOCK_SKEW_SECONDS
-        with self._connect() as connection:
-            connection.execute(
-                "DELETE FROM messages_v3 WHERE expires_at < ?",
-                (cutoff,),
-            )
-            rows = connection.execute(
-                """
-                SELECT
-                    message_id,
-                    version,
-                    sender_device_id,
+        if self.coordinator is not None:
+            return self.coordinator.mutate(
+                lambda connection: self._list_for_recipient(
+                    connection,
                     recipient_device_id,
-                    created_at,
-                    expires_at,
-                    ciphertext_type,
-                    ciphertext
-                FROM messages_v3
-                WHERE recipient_device_id = ?
-                ORDER BY created_at, rowid
-                """,
-                (recipient_device_id,),
-            ).fetchall()
-        return [self._from_row(row) for row in rows]
-
-    def delete(self, recipient_device_id: str, message_id: str) -> bool:
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                DELETE FROM messages_v3
-                WHERE recipient_device_id = ? AND message_id = ?
-                """,
-                (recipient_device_id, message_id),
+                    cutoff,
+                )
             )
+        with self._connect() as connection:
+            return self._list_for_recipient(
+                connection,
+                recipient_device_id,
+                cutoff,
+            )
+
+    def _delete(
+        self,
+        connection: sqlite3.Connection,
+        recipient_device_id: str,
+        message_id: str,
+    ) -> bool:
+        cursor = connection.execute(
+            """
+            DELETE FROM messages_v3
+            WHERE recipient_device_id = ? AND message_id = ?
+            """,
+            (recipient_device_id, message_id),
+        )
         return cursor.rowcount > 0
 
+    def delete(self, recipient_device_id: str, message_id: str) -> bool:
+        if self.coordinator is not None:
+            return self.coordinator.mutate(
+                lambda connection: self._delete(
+                    connection,
+                    recipient_device_id,
+                    message_id,
+                )
+            )
+        with self._connect() as connection:
+            return self._delete(connection, recipient_device_id, message_id)
+
     def is_healthy(self) -> bool:
+        if self.coordinator is not None and not self.coordinator.is_healthy():
+            return False
         try:
             with self._connect() as connection:
                 connection.execute("SELECT 1").fetchone()

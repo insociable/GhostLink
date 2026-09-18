@@ -930,6 +930,13 @@ class RelayStateCoordinator:
             self._checkpoint = next_checkpoint
             return result
 
+    def require_healthy(self) -> None:
+        """Fail closed when protected relay state is not currently trusted."""
+        if not self.is_healthy():
+            raise RelayStateError(
+                "relay state coordinator is unsafe or not reconciled"
+            )
+
     def is_healthy(self) -> bool:
         """Return whether the coordinator currently trusts its relay state."""
         return not self._unsafe and self._checkpoint is not None
