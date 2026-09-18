@@ -30,7 +30,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 - encrypted persistent ratchet-state vault with atomic multi-store commits and restart continuity tests.
 - signed GhostID/DeviceID-to-libsignal pre-key binding with deterministic protocol-address mapping and identity-change fail-closed tests;
 - bounded local Python-to-libsignal framed RPC with real cross-language PQXDH/restart smoke tests;
-- randomized collision-checked pre-key identifiers while retaining delayed-message private pre-key state.
+- randomized collision-checked pre-key identifiers while retaining delayed-message private pre-key state;\n- documented production ratchet pre-key lifecycle with signed publication generations, one-time bundle pools, last-resort Kyber fallback, monotonic sequence continuity and bounded delayed-key retention.
 
 ### Security
 
