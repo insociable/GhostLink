@@ -1,0 +1,63 @@
+name: ghostlink-public
+
+services:
+  ghostnode:
+    build:
+      context: ../..
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      GHOSTLINK_CONFIG: /config/ghostlink.toml
+      GHOSTLINK_NODE_TOKEN: ${GHOSTLINK_NODE_TOKEN:?Set GHOSTLINK_NODE_TOKEN before starting GhostNode}
+    volumes:
+      - ghostnode_data:/data
+      - ./ghostlink.toml:/config/ghostlink.toml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 10s
+    networks:
+      - backend
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      ghostnode:
+        condition: service_healthy
+    ports:
+      - "443:443/tcp"
+    environment:
+      GHOSTLINK_PUBLIC_HOSTNAME: ${GHOSTLINK_PUBLIC_HOSTNAME:?Set the public GhostNode hostname}
+      GHOSTLINK_ACME_EMAIL: ${GHOSTLINK_ACME_EMAIL:?Set the ACME account email}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+      - edge
+
+networks:
+  backend:
+    internal: true
+  edge:
+
+volumes:
+  ghostnode_data:
+  caddy_data:
+  caddy_config:
