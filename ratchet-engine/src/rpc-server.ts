@@ -414,15 +414,21 @@ class RatchetRpcService {
     const document = requireObject(params, 'establish_session params');
     requireExactFields(
       document,
-      ['remote_device_id', 'material'],
+      ['remote_device_id', 'publication_sequence', 'material'],
       'establish_session params'
     );
 
     const remoteDeviceId = requireDeviceId(document, 'remote_device_id');
+    const publicationSequence = requireIntegerField(
+      document,
+      'publication_sequence',
+      1
+    );
     const bundle = importPreKeyMaterial(document.material);
 
     await this.requireParty().establishSessionWithAddress(
       remoteDeviceId,
+      publicationSequence,
       bundle
     );
     return null;
