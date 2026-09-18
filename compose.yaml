@@ -1,0 +1,25 @@
+name: ghostlink
+
+services:
+  ghostnode:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      GHOSTLINK_CONFIG: /config/ghostlink.toml
+    volumes:
+      - ghostnode_data:/data
+      - ./deploy/oracle/ghostlink.toml:/config/ghostlink.toml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 10s
+
+volumes:
+  ghostnode_data:
