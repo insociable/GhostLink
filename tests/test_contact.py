@@ -4,8 +4,11 @@ import json
 import pytest
 from ghostlink.contact import (
     ContactBundleError,
+    ValidatedContact,
     export_contact_bundle,
+    export_contact_qr_payload,
     import_contact_bundle,
+    import_contact_qr_payload,
 )
 from ghostlink.entity import GhostEntity
 
@@ -109,3 +112,75 @@ def test_contact_bundle_rejects_unknown_fields() -> None:
 
     with pytest.raises(ContactBundleError, match="unknown fields: unexpected"):
         import_contact_bundle(json.dumps(document))
+
+
+
+def test_contact_qr_payload_round_trip_is_public_and_validated() -> None:
+    alice = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+
+    payload = export_contact_qr_payload(alice, alice_device)
+    contact = import_contact_qr_payload(payload)
+
+    assert payload.startswith("ghostlink:contact:1:")
+    assert isinstance(contact, ValidatedContact)
+    assert contact.ghost_id == alice.ghost_id
+    assert contact.device_id == alice_device.device_id
+
+
+def test_contact_qr_payload_contains_only_contact_bundle_public_fields() -> None:
+    alice = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+
+    payload = export_contact_qr_payload(alice, alice_device)
+    encoded = payload.removeprefix("ghostlink:contact:1:")
+    decoded = base64.urlsafe_b64decode(encoded + ("=" * (-len(encoded) % 4)))
+    document = json.loads(decoded)
+
+    assert set(document) == {
+        "version",
+        "ghost_id",
+        "identity_public_key",
+        "device_id",
+        "device_signing_public_key",
+        "device_encryption_public_key",
+        "device_certificate_signature",
+    }
+    assert all("private" not in field for field in document)
+    assert "trust_state" not in document
+
+
+def test_contact_qr_payload_rejects_unsupported_version() -> None:
+    with pytest.raises(
+        ContactBundleError,
+        match="unsupported GhostLink contact QR version",
+    ):
+        import_contact_qr_payload("ghostlink:contact:2:AAAA")
+
+
+def test_contact_qr_payload_rejects_noncanonical_bundle_json() -> None:
+    alice = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    document = json.loads(export_contact_bundle(alice, alice_device))
+    noncanonical = json.dumps(document, indent=2).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(noncanonical).decode("ascii").rstrip("=")
+
+    with pytest.raises(
+        ContactBundleError,
+        match="QR contact bundle must use canonical JSON",
+    ):
+        import_contact_qr_payload(f"ghostlink:contact:1:{encoded}")
+
+
+def test_contact_qr_payload_cannot_import_trust_state() -> None:
+    alice = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    document = json.loads(export_contact_bundle(alice, alice_device))
+    document["trust_state"] = "verified"
+    serialized = json.dumps(document, sort_keys=True, separators=(",", ":"))
+    encoded = base64.urlsafe_b64encode(serialized.encode("utf-8")).decode(
+        "ascii"
+    ).rstrip("=")
+
+    with pytest.raises(ContactBundleError, match="unknown fields: trust_state"):
+        import_contact_qr_payload(f"ghostlink:contact:1:{encoded}")

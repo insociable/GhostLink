@@ -20,6 +20,11 @@ _CONTACT_VERSION = 1
 _MAX_BUNDLE_BYTES = 16_384
 _PUBLIC_KEY_SIZE = 32
 _SIGNATURE_SIZE = 64
+_QR_SCHEME_PREFIX = "ghostlink:contact:"
+_QR_V1_PREFIX = "ghostlink:contact:1:"
+_BASE64URL_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+)
 _EXPECTED_FIELDS = {
     "version",
     "ghost_id",
@@ -36,8 +41,8 @@ class ContactBundleError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class VerifiedContact:
-    """A remote identity and device whose public certificate was verified."""
+class ValidatedContact:
+    """A remote identity and device whose public certificate is cryptographically valid."""
 
     identity_verify_key: VerifyKey
     device: PublicGhostDevice
@@ -51,6 +56,10 @@ class VerifiedContact:
     def device_id(self) -> str:
         """Return the verified remote DeviceID."""
         return self.device.device_id
+
+
+# Compatibility alias for internal callers while #20 migrates terminology.
+VerifiedContact = ValidatedContact
 
 
 def _encode_base64(value: bytes) -> str:
@@ -149,7 +158,7 @@ def export_contact_bundle(
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
-def import_contact_bundle(serialized: str) -> VerifiedContact:
+def import_contact_bundle(serialized: str) -> ValidatedContact:
     """Import and cryptographically verify a public GhostLink contact bundle."""
     document = _parse_document(serialized)
 
@@ -195,7 +204,64 @@ def import_contact_bundle(serialized: str) -> VerifiedContact:
     except ValueError as exc:
         raise ContactBundleError(str(exc)) from exc
 
-    return VerifiedContact(
+    return ValidatedContact(
         identity_verify_key=identity_verify_key,
         device=public_device,
     )
+
+
+def export_contact_qr_payload(
+    entity: GhostEntity,
+    device: EnrolledGhostDevice,
+) -> str:
+    """Encode one canonical public Contact Bundle as QR payload text."""
+    bundle = export_contact_bundle(entity, device).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(bundle).decode("ascii").rstrip("=")
+    return _QR_V1_PREFIX + encoded
+
+
+def import_contact_qr_payload(payload: str) -> ValidatedContact:
+    """Decode and cryptographically validate a versioned public QR payload."""
+    if not isinstance(payload, str):
+        raise ContactBundleError("QR payload must be text")
+    if not payload.startswith(_QR_SCHEME_PREFIX):
+        raise ContactBundleError("invalid GhostLink contact QR prefix")
+    if not payload.startswith(_QR_V1_PREFIX):
+        raise ContactBundleError("unsupported GhostLink contact QR version")
+
+    encoded = payload[len(_QR_V1_PREFIX) :]
+    if not encoded:
+        raise ContactBundleError("QR payload is empty")
+    if any(character not in _BASE64URL_ALPHABET for character in encoded):
+        raise ContactBundleError("QR payload must be unpadded Base64url")
+    if len(encoded) > ((_MAX_BUNDLE_BYTES * 4 + 2) // 3):
+        raise ContactBundleError("QR contact bundle is too large")
+
+    padding = "=" * (-len(encoded) % 4)
+    try:
+        decoded = base64.b64decode(
+            encoded + padding,
+            altchars=b"-_",
+            validate=True,
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise ContactBundleError("QR payload must be valid Base64url") from exc
+
+    if len(decoded) > _MAX_BUNDLE_BYTES:
+        raise ContactBundleError("QR contact bundle is too large")
+
+    try:
+        serialized = decoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContactBundleError("QR contact bundle must be UTF-8") from exc
+
+    try:
+        parsed: object = json.loads(serialized)
+    except json.JSONDecodeError as exc:
+        raise ContactBundleError("QR contact bundle must be valid JSON") from exc
+
+    canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
+    if canonical != serialized:
+        raise ContactBundleError("QR contact bundle must use canonical JSON")
+
+    return import_contact_bundle(serialized)
