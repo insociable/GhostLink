@@ -225,6 +225,9 @@ def _command_profile_upgrade(
     if (
         profile.ratchet_master_key is not None
         and profile.contact_store_key is not None
+        and profile.client_state_id is not None
+        and profile.state_coordination_key is not None
+        and profile.state_revision is not None
     ):
         print("Profile already uses the current local secret format.")
         return 0
@@ -234,7 +237,10 @@ def _command_profile_upgrade(
     _replace_private_file_atomic(path, serialized)
 
     print(f"Profile upgraded atomically: {path}")
-    print("Ratcheted protocol-v3 and contact-store secrets are available.")
+    print(
+        "Ratcheted protocol-v3, contact-store and rollback-coordination "
+        "secrets are available."
+    )
     return 0
 
 

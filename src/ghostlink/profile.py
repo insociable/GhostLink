@@ -21,9 +21,10 @@ from ghostlink.device_certificate import (
 )
 from ghostlink.entity import GhostEntity
 
-_PROFILE_VERSION = 3
+_PROFILE_VERSION = 4
 _LEGACY_PROFILE_VERSION = 1
 _RATCHET_PROFILE_VERSION = 2
+_CONTACT_PROFILE_VERSION = 3
 _MAX_PROFILE_BYTES = 65_536
 _KDF_NAME = "argon2id"
 _CIPHER_NAME = "secretbox"
@@ -32,6 +33,9 @@ _KDF_MEMLIMIT = argon2id.MEMLIMIT_INTERACTIVE
 _PRIVATE_KEY_SIZE = 32
 _RATCHET_MASTER_KEY_SIZE = 32
 _CONTACT_STORE_KEY_SIZE = 32
+_CLIENT_STATE_ID_BYTES = 16
+_STATE_COORDINATION_KEY_SIZE = 32
+_MAX_STATE_REVISION = (1 << 53) - 1
 _SIGNATURE_SIZE = 64
 
 _OUTER_FIELDS = {"version", "kdf", "cipher", "ciphertext"}
@@ -48,6 +52,12 @@ _SECRET_FIELDS_V1 = {
 }
 _SECRET_FIELDS_V2 = _SECRET_FIELDS_V1 | {"ratchet_master_key"}
 _SECRET_FIELDS_V3 = _SECRET_FIELDS_V2 | {"contact_store_key"}
+_SECRET_FIELDS_V4 = _SECRET_FIELDS_V3 | {
+    "client_state_id",
+    "state_coordination_key",
+    "state_revision",
+    "state_previous_digest",
+}
 
 
 class ProfileError(ValueError):
@@ -66,6 +76,10 @@ class LocalProfile:
     device: EnrolledGhostDevice
     ratchet_master_key: bytes | None
     contact_store_key: bytes | None = None
+    client_state_id: str | None = None
+    state_coordination_key: bytes | None = None
+    state_revision: int | None = None
+    state_previous_digest: str | None = None
 
 
 def create_local_profile() -> LocalProfile:
@@ -76,6 +90,10 @@ def create_local_profile() -> LocalProfile:
         device=entity.enroll_device(),
         ratchet_master_key=utils.random(_RATCHET_MASTER_KEY_SIZE),
         contact_store_key=utils.random(_CONTACT_STORE_KEY_SIZE),
+        client_state_id=utils.random(_CLIENT_STATE_ID_BYTES).hex(),
+        state_coordination_key=utils.random(_STATE_COORDINATION_KEY_SIZE),
+        state_revision=1,
+        state_previous_digest=None,
     )
 
 
@@ -98,6 +116,55 @@ def _decode_base64(value: object, field: str, expected_size: int | None = None) 
         )
 
     return decoded
+
+
+def _validate_client_state_id(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != _CLIENT_STATE_ID_BYTES * 2
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ProfileError(
+            "client_state_id must be 128-bit lowercase hexadecimal"
+        )
+    return value
+
+
+def _validate_state_revision(value: object) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 1
+        or value > _MAX_STATE_REVISION
+    ):
+        raise ProfileError(
+            "state_revision must be a positive JSON-safe integer"
+        )
+    return value
+
+
+def _validate_previous_digest(
+    value: object,
+    *,
+    revision: int,
+) -> str | None:
+    if revision == 1:
+        if value is not None:
+            raise ProfileError(
+                "initial profile state must not have a previous digest"
+            )
+        return None
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ProfileError(
+            "state_previous_digest must be 32-byte lowercase hexadecimal"
+        )
+    return value
 
 
 def _require_mapping(value: object, context: str) -> dict[str, object]:
@@ -188,6 +255,25 @@ def _serialize_secret(profile: LocalProfile) -> bytes:
             "profile must contain a 32-byte contact store key before encryption"
         )
 
+    if profile.client_state_id is None:
+        raise ProfileError(
+            "profile must contain a client state ID before encryption"
+        )
+    client_state_id = _validate_client_state_id(profile.client_state_id)
+    if (
+        profile.state_coordination_key is None
+        or not isinstance(profile.state_coordination_key, bytes)
+        or len(profile.state_coordination_key) != _STATE_COORDINATION_KEY_SIZE
+    ):
+        raise ProfileError(
+            "profile must contain a 32-byte state coordination key before encryption"
+        )
+    state_revision = _validate_state_revision(profile.state_revision)
+    state_previous_digest = _validate_previous_digest(
+        profile.state_previous_digest,
+        revision=state_revision,
+    )
+
     # Validate the complete public/private relationship before persisting it.
     PublicGhostDevice.from_certificate(
         profile.device.certificate,
@@ -223,6 +309,12 @@ def _serialize_secret(profile: LocalProfile) -> bytes:
         ),
         "ratchet_master_key": _encode_base64(profile.ratchet_master_key),
         "contact_store_key": _encode_base64(profile.contact_store_key),
+        "client_state_id": client_state_id,
+        "state_coordination_key": _encode_base64(
+            profile.state_coordination_key
+        ),
+        "state_revision": state_revision,
+        "state_previous_digest": state_previous_digest,
     }
 
     return json.dumps(
@@ -238,8 +330,10 @@ def _deserialize_secret(serialized: bytes, version: int) -> LocalProfile:
         expected_fields = _SECRET_FIELDS_V1
     elif version == _RATCHET_PROFILE_VERSION:
         expected_fields = _SECRET_FIELDS_V2
-    else:
+    elif version == _CONTACT_PROFILE_VERSION:
         expected_fields = _SECRET_FIELDS_V3
+    else:
+        expected_fields = _SECRET_FIELDS_V4
     _require_exact_fields(secret, expected_fields, "decrypted profile")
 
     identity_seed = _decode_base64(
@@ -283,13 +377,36 @@ def _deserialize_secret(serialized: bytes, version: int) -> LocalProfile:
     )
     contact_store_key = (
         None
-        if version != _PROFILE_VERSION
+        if version in {_LEGACY_PROFILE_VERSION, _RATCHET_PROFILE_VERSION}
         else _decode_base64(
             secret["contact_store_key"],
             "contact_store_key",
             _CONTACT_STORE_KEY_SIZE,
         )
     )
+    client_state_id = (
+        None
+        if version != _PROFILE_VERSION
+        else _validate_client_state_id(secret["client_state_id"])
+    )
+    state_coordination_key = (
+        None
+        if version != _PROFILE_VERSION
+        else _decode_base64(
+            secret["state_coordination_key"],
+            "state_coordination_key",
+            _STATE_COORDINATION_KEY_SIZE,
+        )
+    )
+    if version == _PROFILE_VERSION:
+        state_revision = _validate_state_revision(secret["state_revision"])
+        state_previous_digest = _validate_previous_digest(
+            secret["state_previous_digest"],
+            revision=state_revision,
+        )
+    else:
+        state_revision = None
+        state_previous_digest = None
 
     entity = GhostEntity(signing_key=SigningKey(identity_seed))
     device = GhostDevice(
@@ -330,6 +447,10 @@ def _deserialize_secret(serialized: bytes, version: int) -> LocalProfile:
         device=enrolled_device,
         ratchet_master_key=ratchet_master_key,
         contact_store_key=contact_store_key,
+        client_state_id=client_state_id,
+        state_coordination_key=state_coordination_key,
+        state_revision=state_revision,
+        state_previous_digest=state_previous_digest,
     )
 
 
@@ -378,6 +499,7 @@ def decrypt_local_profile(serialized: str, password: str) -> LocalProfile:
     if version not in {
         _LEGACY_PROFILE_VERSION,
         _RATCHET_PROFILE_VERSION,
+        _CONTACT_PROFILE_VERSION,
         _PROFILE_VERSION,
     }:
         raise ProfileError("unsupported profile version")
@@ -433,7 +555,7 @@ def decrypt_local_profile(serialized: str, password: str) -> LocalProfile:
 
 
 def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
-    """Upgrade a decrypted v1/v2 profile to the current independent secrets."""
+    """Upgrade a decrypted v1/v2/v3 profile to the current independent secrets."""
     ratchet_master_key = profile.ratchet_master_key
     if (
         ratchet_master_key is not None
@@ -448,7 +570,50 @@ def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
     ):
         raise ProfileError("contact store key has an invalid length")
 
-    if ratchet_master_key is not None and contact_store_key is not None:
+    client_state_id = profile.client_state_id
+    state_coordination_key = profile.state_coordination_key
+    state_revision = profile.state_revision
+    state_previous_digest = profile.state_previous_digest
+
+    has_state_identity = (
+        client_state_id is not None or state_coordination_key is not None
+    )
+    has_checkpoint_metadata = (
+        state_revision is not None or state_previous_digest is not None
+    )
+    if (client_state_id is None) != (state_coordination_key is None):
+        raise ProfileError(
+            "profile state coordination identity is only partially present"
+        )
+    if not has_state_identity and has_checkpoint_metadata:
+        raise ProfileError(
+            "profile checkpoint metadata exists without state coordination identity"
+        )
+    if has_state_identity:
+        if client_state_id is None or state_coordination_key is None:
+            raise ProfileError(
+                "profile state coordination identity is only partially present"
+            )
+        _validate_client_state_id(client_state_id)
+        if len(state_coordination_key) != _STATE_COORDINATION_KEY_SIZE:
+            raise ProfileError("state coordination key has an invalid length")
+        if state_revision is None:
+            raise ProfileError(
+                "profile state coordination identity is missing checkpoint revision"
+            )
+        state_revision = _validate_state_revision(state_revision)
+        state_previous_digest = _validate_previous_digest(
+            state_previous_digest,
+            revision=state_revision,
+        )
+
+    if (
+        ratchet_master_key is not None
+        and contact_store_key is not None
+        and client_state_id is not None
+        and state_coordination_key is not None
+        and state_revision is not None
+    ):
         return profile
 
     return LocalProfile(
@@ -463,5 +628,23 @@ def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
             contact_store_key
             if contact_store_key is not None
             else utils.random(_CONTACT_STORE_KEY_SIZE)
+        ),
+        client_state_id=(
+            client_state_id
+            if client_state_id is not None
+            else utils.random(_CLIENT_STATE_ID_BYTES).hex()
+        ),
+        state_coordination_key=(
+            state_coordination_key
+            if state_coordination_key is not None
+            else utils.random(_STATE_COORDINATION_KEY_SIZE)
+        ),
+        state_revision=(
+            state_revision if state_revision is not None else 1
+        ),
+        state_previous_digest=(
+            state_previous_digest
+            if state_revision is not None
+            else None
         ),
     )
