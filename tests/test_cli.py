@@ -11,8 +11,8 @@ from typing import cast
 
 import ghostlink.cli as cli_module
 from fastapi.testclient import TestClient
-from ghostlink.client import GhostNodeClient, GhostNodeRequestError
 from ghostlink.cli import run
+from ghostlink.client import GhostNodeClient, GhostNodeRequestError
 from ghostlink.contact import export_contact_bundle, import_contact_bundle
 from ghostlink.contact_store import ContactTrustState, load_contact_store
 from ghostlink.entity import GhostEntity
@@ -566,8 +566,7 @@ def test_cli_persists_imported_contact_and_records_human_verification(
     tmp_path: Path,
     capsys,
 ) -> None:
-    password = "contact trust password"
-    password_reader = lambda prompt: password  # noqa: E731
+    password_reader = lambda prompt: "contact trust password"  # noqa: E731
     alice_profile = tmp_path / "alice.ghost"
     bob_profile = tmp_path / "bob.ghost"
     bob_contact = tmp_path / "bob.contact"
@@ -606,7 +605,10 @@ def test_cli_persists_imported_contact_and_records_human_verification(
     imported_output = capsys.readouterr()
     assert "human verification pending" in imported_output.out
 
-    alice = decrypt_local_profile(alice_profile.read_text(), password)
+    alice = decrypt_local_profile(
+        alice_profile.read_text(),
+        "contact trust password",
+    )
     assert alice.contact_store_key is not None
     store_path = Path(f"{alice_profile}.contacts")
     store = load_contact_store(store_path, alice.contact_store_key)
@@ -662,8 +664,7 @@ def test_cli_send_by_contact_id_requires_verified_state_and_blocks_changes(
     def node_client_factory(base_url: str) -> GhostNodeClient:
         return GhostNodeClient(base_url, requester=requester)
 
-    password = "trusted send password"
-    password_reader = lambda prompt: password  # noqa: E731
+    password_reader = lambda prompt: "trusted send password"  # noqa: E731
     alice_profile, _bob_profile, _alice_contact, bob_contact = (
         _create_profiles_and_contacts(
             tmp_path,
@@ -687,7 +688,10 @@ def test_cli_send_by_contact_id_requires_verified_state_and_blocks_changes(
     ) == 0
     capsys.readouterr()
 
-    alice = decrypt_local_profile(alice_profile.read_text(), password)
+    alice = decrypt_local_profile(
+        alice_profile.read_text(),
+        "trusted send password",
+    )
     assert alice.contact_store_key is not None
     store_path = Path(f"{alice_profile}.contacts")
     store = load_contact_store(store_path, alice.contact_store_key)
