@@ -66,7 +66,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] strict HTTP publication orchestration with receipt validation and crash-safe retry;
 - [x] encrypted highest-seen remote publication sequence persistence with rollback rejection before session establishment;
 - [x] authenticated atomic pre-key fetch/pop with per-requester idempotence and target-window anti-drain limiting;
-- [ ] rollback-aware persistent GhostNode SQLite state with shared monotonic witness coordination (ADR-0009 / #86);
+- [x] rollback-aware persistent GhostNode SQLite state with shared monotonic witness coordination (ADR-0009 / #86; reference sidecar witness does not protect whole-volume/VM rollback);
 - [x] sender fetch -> VerifiedContact -> highest-seen -> libsignal session orchestration;
 - [x] rollback-aware client-state coordination with monotonic witness (ADR-0008 / #79; reference SQLite witness remains development-only for whole-snapshot protection);
 - [x] owner-authenticated pool status with automatic replenishment and expiration refresh;

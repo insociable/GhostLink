@@ -421,10 +421,16 @@ class SQLiteV3MessageStore:
         return True
 
 
-def create_v3_message_store(settings: NodeSettings) -> V3MessageStore:
+def create_v3_message_store(
+    settings: NodeSettings,
+    coordinator: RelayStateCoordinator | None = None,
+) -> V3MessageStore:
     if settings.database_path is None:
         return InMemoryV3MessageStore()
-    return SQLiteV3MessageStore(settings.database_path)
+    return SQLiteV3MessageStore(
+        settings.database_path,
+        coordinator=coordinator,
+    )
 
 
 def _require_v3_device_auth(

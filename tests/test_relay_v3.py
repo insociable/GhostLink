@@ -10,9 +10,26 @@ from ghostlink.client import GhostNodeClient, GhostNodeRequestError
 from ghostlink.config import NodeSettings
 from ghostlink.device import EnrolledGhostDevice
 from ghostlink.entity import GhostEntity
-from ghostlink.node import create_app
+from ghostlink.node import create_app, migrate_relay_state
 from ghostlink.ratchet_message import RatchetMessage
 from ghostlink.relay_request_auth import create_relay_request_headers
+
+_RELAY_STATE_ID = "00112233445566778899aabbccddeeff"
+_RELAY_STATE_KEY = bytes(range(32))
+
+
+def _migrated_node_settings(
+    tmp_path: Path,
+    database_name: str = "relay.sqlite3",
+) -> NodeSettings:
+    settings = NodeSettings(
+        database_path=tmp_path / database_name,
+        relay_state_id=_RELAY_STATE_ID,
+        relay_witness_path=tmp_path / "relay-witness.sqlite3",
+        relay_state_coordination_key=_RELAY_STATE_KEY,
+    )
+    migrate_relay_state(settings)
+    return settings
 
 
 def _requester(
@@ -276,7 +293,7 @@ def test_v3_request_replay_is_rejected_after_sqlite_app_restart(
     tmp_path: Path,
 ) -> None:
     bob = GhostEntity.generate().enroll_device()
-    settings = NodeSettings(database_path=tmp_path / "ghostnode.sqlite3")
+    settings = _migrated_node_settings(tmp_path, "ghostnode.sqlite3")
     now = int(time.time())
     path = f"/v3/messages/{bob.device_id}"
     headers = create_relay_request_headers(

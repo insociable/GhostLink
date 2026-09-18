@@ -7,6 +7,8 @@ port = 8000
 log_level = "warning"
 access_log = false
 database_path = "/data/messages.sqlite3"
+relay_witness_path = "/data/relay-witness.sqlite3"
 
-# Relay access token is intentionally not stored in TOML.
-# Set it with the GHOSTLINK_NODE_TOKEN environment variable.
+# Relay access token and relay-state coordination key are intentionally not stored
+# in TOML. Their values are loaded from mounted secret files.
+# relay_state_id is supplied through GHOSTLINK_RELAY_STATE_ID.
