@@ -18,13 +18,21 @@ class NodeSettings:
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: str = "info"
+    database_path: Path | None = None
 
     def __post_init__(self) -> None:
         if not self.host.strip():
             raise ValueError("node.host must not be empty")
         if not 1 <= self.port <= 65535:
             raise ValueError("node.port must be between 1 and 65535")
-        if self.log_level not in {"critical", "error", "warning", "info", "debug", "trace"}:
+        if self.log_level not in {
+            "critical",
+            "error",
+            "warning",
+            "info",
+            "debug",
+            "trace",
+        }:
             raise ValueError("node.log_level is invalid")
 
 
@@ -33,6 +41,21 @@ def _node_section(document: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(section, dict):
         raise ValueError("[node] must be a TOML table")
     return section
+
+
+def _database_path(
+    node: dict[str, Any],
+    config_path: Path,
+) -> Path | None:
+    value = node.get("database_path")
+    if value is None:
+        return None
+
+    path = Path(str(value))
+    if not path.is_absolute():
+        path = config_path.parent / path
+
+    return path
 
 
 def load_settings(path: str | Path | None = None) -> NodeSettings:
@@ -49,4 +72,5 @@ def load_settings(path: str | Path | None = None) -> NodeSettings:
         host=str(node.get("host", "127.0.0.1")),
         port=int(node.get("port", 8000)),
         log_level=str(node.get("log_level", "info")).lower(),
+        database_path=_database_path(node, resolved_path),
     )
