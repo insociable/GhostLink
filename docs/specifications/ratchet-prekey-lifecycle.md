@@ -1,6 +1,6 @@
 # Ratchet pre-key lifecycle
 
-Status: accepted design; prepare/stage/publish/local-commit/fetch/sender bootstrap/replenishment/refresh implemented; GC pending
+Status: accepted design; prepare/stage/publish/local-commit/fetch/sender bootstrap/replenishment/refresh/GC implemented
 
 ## Purpose
 
@@ -308,11 +308,25 @@ A private pre-key record may be deleted only when it is not referenced by:
 - a pending publication candidate;
 - a retired generation still inside the 15-day retention window.
 
-Garbage collection must be deterministic from encrypted lifecycle metadata.
+Garbage collection is deterministic from encrypted lifecycle metadata.
 
-GC is executed through the same serialized durable state transaction as other ratchet-store mutations.
+GC executes through the same serialized durable state transaction as other ratchet-store mutations. A retired generation becomes eligible exactly 15 days after its recorded retirement time. Before that boundary a GC pass is a no-op and does not rewrite the vault.
 
-If lifecycle metadata is missing, inconsistent, or cannot prove that a key is outside every protected generation, GC fails closed and retains the key.
+For each eligible generation the engine builds protected identifier sets from every pending generation, the active generation and every retired generation still inside retention. A pre-key record is removed only when its identifier is not referenced by any protected generation. This also preserves safety if historical generations ever share an identifier.
+
+The durable GC transaction removes:
+
+- eligible retired lifecycle entries;
+- unused EC one-time private records still present;
+- retired signed EC private records;
+- retired one-time and last-resort Kyber private records;
+- Kyber used/base-key replay metadata associated with removed Kyber identifiers.
+
+One-time records already consumed by libsignal may already be absent and are not recreated.
+
+Before deleting serialized private-key records from the in-memory stores, GhostLink overwrites their current byte buffers as a best-effort reduction of residual process-memory exposure. This is not a secure-erasure guarantee: runtime copies, allocator behavior, filesystem history, storage media and whole-vault backups can retain prior bytes.
+
+If lifecycle metadata is missing, inconsistent, the local clock predates a recorded retirement time, or ownership cannot be proven, GC fails closed and retains the key.
 
 The lifecycle must never choose availability over uncertain secret deletion rules by guessing key ownership.
 
@@ -462,11 +476,16 @@ Automatic maintenance is now implemented:
 - a generation with less than 48 hours remaining is refreshed regardless of cooldown;
 - existing pending publication is resumed before relay status is consulted;
 - each replacement uses the existing durable publication workflow;
-- the bounded retired history fails closed at 32 entries rather than accepting a generation that cannot be committed locally.
+- GC runs before maintenance decisions;
+- retired generations remain protected for 15 days after confirmed replacement;
+- expired retired generations and their unprotected EC/Kyber private material are removed atomically from the encrypted vault;
+- Kyber used/base-key metadata is removed with the corresponding retired Kyber record;
+- a no-op GC before retention expiry does not rewrite the vault;
+- clock rollback before a recorded retirement timestamp fails closed;
+- the bounded retired history remains capped at 32 entries after GC rather than accepting a generation that cannot be committed locally.
 
-The following are still pending:
+The following is still pending:
 
-- delayed-key garbage collection;
 - ratcheted message-envelope and CLI cutover.
 
 ## RPC implications
@@ -475,7 +494,7 @@ The current `create_prekey_material` method remains a bootstrap/testing primitiv
 
 The production implementation must expose a lifecycle-level operation that prepares a complete publication generation instead of asking Python to call the single-bundle generator 100 times independently.
 
-Publication acknowledgement and GC must also be explicit lifecycle operations so crash recovery cannot be inferred from process memory.
+Publication acknowledgement and GC are explicit lifecycle operations so crash recovery and retention decisions do not depend on process memory.
 
 The RPC remains local stdio only.
 
