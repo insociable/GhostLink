@@ -77,4 +77,5 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [ ] dependency review and automated vulnerability policy;
 - [ ] reproducible releases;
 - [ ] signed artifacts;
-- [ ] recovery, rotation and device-revocation design.
+- [x] recovery, rotation and device-revocation design (ADR-0010 / #92);
+- [ ] lifecycle-aware profile/contact/relay enforcement implementation (#92).
