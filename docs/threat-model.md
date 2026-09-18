@@ -78,7 +78,9 @@ The current codebase includes:
 - DeviceID-signed protocol-v3 message-relay requests bound to HTTP method, canonical logical path, canonical-body digest, freshness timestamp and random request ID;
 - sender ownership enforcement for v3 submission and recipient ownership enforcement for v3 mailbox list/delete;
 - persistent SQLite request-ID replay rejection across GhostNode restart, with process-local replay protection in in-memory mode;
-- optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity.
+- optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity;
+- relay Bearer-token loading from a secret file rather than token values in argv/environment;
+- reference Oracle Caddy ingress with GhostNode un-published, TCP/443-only public exposure, disabled HTTP access logs and explicit Uvicorn proxy-header distrust.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -91,7 +93,7 @@ Current security gaps still include:
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
 - complete device revocation and recovery design;
 - legacy static-v2 message relay remains bearer-only and diagnostic rather than per-device authenticated;
-- production TLS ingress policy and deployment hardening;
+- live external validation of the reference TLS ingress (real certificate, closed TCP/80 and TCP/8000, external v3 flow) before issue #21 closure;
 - a complete persisted contact-trust / QR verification workflow;
 - independent cryptographic/protocol review.
 

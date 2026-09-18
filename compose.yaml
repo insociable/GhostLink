@@ -9,7 +9,9 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       GHOSTLINK_CONFIG: /config/ghostlink.toml
-      GHOSTLINK_NODE_TOKEN: ${GHOSTLINK_NODE_TOKEN:?Set GHOSTLINK_NODE_TOKEN before starting GhostNode}
+      GHOSTLINK_NODE_TOKEN_FILE: /run/secrets/ghostlink_node_token
+    secrets:
+      - ghostlink_node_token
     volumes:
       - ghostnode_data:/data
       - ./deploy/oracle/ghostlink.toml:/config/ghostlink.toml:ro
@@ -21,6 +23,10 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 10s
+
+secrets:
+  ghostlink_node_token:
+    file: ${GHOSTLINK_NODE_TOKEN_FILE:?Set GHOSTLINK_NODE_TOKEN_FILE to the relay-token file path}
 
 volumes:
   ghostnode_data:

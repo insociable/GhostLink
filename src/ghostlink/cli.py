@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from ghostlink.client import GhostNodeClient, GhostNodeClientError
-from ghostlink.config import NODE_TOKEN_ENV
+from ghostlink.config import load_access_token_from_file
 from ghostlink.contact import (
     ContactBundleError,
     export_contact_bundle,
@@ -51,10 +51,9 @@ _RATCHET_ENGINE_PATH = (
 
 
 def _default_node_client_factory(base_url: str) -> GhostNodeClient:
-    token = os.environ.get(NODE_TOKEN_ENV)
     return GhostNodeClient(
         base_url,
-        access_token=token if token and token.strip() else None,
+        access_token=load_access_token_from_file(),
     )
 
 

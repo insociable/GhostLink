@@ -4,13 +4,14 @@
 host = "127.0.0.1"
 port = 8000
 log_level = "info"
+access_log = true
 
 # Optional persistent ciphertext store.
 # Relative paths are resolved from the directory containing this config file.
 database_path = "data/messages.sqlite3"
 
-# Relay access token is intentionally not stored in TOML.
-# Set it with the GHOSTLINK_NODE_TOKEN environment variable.
+# Relay access token is intentionally not stored in TOML or as an env value.
+# Set GHOSTLINK_NODE_TOKEN_FILE to the path of a private token file.
 
 
 # Ratchet pre-key fetch anti-drain defaults.
