@@ -32,12 +32,19 @@ class ResolvedAddress:
 
 def _hostname(value: str) -> str:
     candidate = value.strip().rstrip(".")
-    if not candidate or candidate != value.strip().rstrip("."):
+    if not candidate:
         raise argparse.ArgumentTypeError("hostname must not be empty")
     if any(character.isspace() for character in candidate):
         raise argparse.ArgumentTypeError("hostname must not contain whitespace")
     if any(marker in candidate for marker in ("://", "/", "\\", "@", ":")):
         raise argparse.ArgumentTypeError("provide a DNS hostname, not a URL or IP literal")
+
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    else:
+        raise argparse.ArgumentTypeError("provide a DNS hostname, not an IP literal")
 
     try:
         ascii_hostname = candidate.encode("idna").decode("ascii").lower()
