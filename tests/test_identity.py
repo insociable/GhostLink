@@ -2,6 +2,7 @@ import pytest
 from ghostlink.identity import (
     Identity,
     derive_ghost_id,
+    derive_identity_fingerprint,
     format_ghost_id_fingerprint,
 )
 
@@ -63,3 +64,34 @@ def test_fingerprint_is_full_grouped_ghost_id_payload() -> None:
 def test_fingerprint_rejects_invalid_ghost_ids(ghost_id: str) -> None:
     with pytest.raises(ValueError):
         format_ghost_id_fingerprint(ghost_id)
+
+
+
+def test_fingerprint_v2_matches_fixed_vector() -> None:
+    public_key = bytes(range(32))
+
+    assert derive_identity_fingerprint(public_key) == (
+        "GLF2:KGNQ-YYSF-5AHS-DIPZ-2T4T-KMJW-OJBY-"
+        "VIS3-7KKD-IIKO-5ZPF-2Y7D-FO4A"
+    )
+
+
+def test_fingerprint_v2_is_stable_and_not_legacy_ghost_id_display() -> None:
+    identity = Identity.generate()
+
+    first = derive_identity_fingerprint(bytes(identity.verify_key))
+    second = derive_identity_fingerprint(bytes(identity.verify_key))
+
+    assert first == second
+    assert first.startswith("GLF2:")
+    assert first.removeprefix("GLF2:") != format_ghost_id_fingerprint(
+        identity.ghost_id
+    )
+
+
+def test_fingerprint_v2_rejects_invalid_public_key_length() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Ed25519 public key must contain exactly 32 bytes",
+    ):
+        derive_identity_fingerprint(b"short")
