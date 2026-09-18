@@ -30,11 +30,13 @@ The format follows Keep a Changelog and Semantic Versioning.
 - encrypted persistent ratchet-state vault with atomic multi-store commits and restart continuity tests.
 - signed GhostID/DeviceID-to-libsignal pre-key binding with deterministic protocol-address mapping and identity-change fail-closed tests;
 - bounded local Python-to-libsignal framed RPC with real cross-language PQXDH/restart smoke tests;
-- randomized collision-checked pre-key identifiers while retaining delayed-message private pre-key state;\n- documented production ratchet pre-key lifecycle with signed publication generations, one-time bundle pools, last-resort Kyber fallback, monotonic sequence continuity and bounded delayed-key retention;
+- randomized collision-checked pre-key identifiers while retaining delayed-message private pre-key state;
+- documented production ratchet pre-key lifecycle with signed publication generations, one-time bundle pools, last-resort Kyber fallback, monotonic sequence continuity and bounded delayed-key retention;
 - ratchet binding v2 with device-signed publication sequence and explicit one-time/fallback bundle roles;
 - lifecycle-aware ratchet vault snapshots with v1 state migration and encrypted pending/active/retired pre-key generation metadata;
 - atomic pending pre-key generation preparation with shared signed EC material, one-time EC/Kyber pairs and a reusable Kyber last-resort fallback bundle;
-- crash-safe DeviceID-signed pre-key publication staging with exact payload recovery and local re-verification after restart.
+- crash-safe DeviceID-signed pre-key publication staging with exact payload recovery and local re-verification after restart;
+- GhostNode cryptographically authenticated pre-key publication with strict per-DeviceID sequencing and atomic SQLite replacement.
 
 ### Security
 
@@ -44,7 +46,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - conflicting reuse of a protocol-v2 message ID is rejected by GhostNode;
 - raw GhostNode port is loopback-bound by default in Compose;
 - container deployment runs as a non-root user with reduced privileges;
-- Compose requires an explicit relay access token.
+- Compose requires an explicit relay access token;
+- ratchet pre-key publication requires proof of control of the target self-certifying DeviceID signing key in addition to relay access control.
 
 ### Known limitations
 
