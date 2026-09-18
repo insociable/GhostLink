@@ -184,6 +184,25 @@ Returns non-secret lifecycle metadata only:
 
 It does not return private pre-key material or private key identifiers. The Python layer strictly validates lifecycle role invariants before using this status for maintenance decisions.
 
+### `garbage_collect_prekeys`
+
+Parameters:
+
+- local current Unix timestamp.
+
+The engine performs one serialized fail-closed retention pass inside the encrypted ratchet state owner.
+
+It:
+
+- protects pending, active and retired generations younger than 15 days;
+- removes only private pre-key identifiers no longer referenced by protected lifecycle state;
+- removes corresponding Kyber used/base-key metadata;
+- updates retired lifecycle metadata and private stores in one durable vault transaction;
+- rejects a local timestamp that predates any recorded retired-generation timestamp;
+- returns only non-secret removal counts.
+
+A pass before the retention boundary is a no-op and does not rewrite the vault. The RPC never returns private pre-key identifiers or private material.
+
 ### `stage_prekey_publication`
 
 Parameters:
@@ -309,7 +328,8 @@ The engine now implements:
 - exact signed publication staging before network use;
 - atomic, idempotent publication acknowledgement commit from pending to active/retired lifecycle state;
 - encrypted per-DeviceID highest-seen remote publication sequence persistence before session establishment;
-- non-secret lifecycle status for deterministic replenishment/refresh decisions.
+- non-secret lifecycle status for deterministic replenishment/refresh decisions;
+- transactional 15-day retired pre-key garbage collection with non-secret result counters.
 
 The detailed formats and lifecycle are specified in:
 
@@ -318,10 +338,7 @@ The detailed formats and lifecycle are specified in:
 
 ## Pre-key lifecycle still pending
 
-Before relay cutover GhostLink still needs:
-
-- 15-day retired-key garbage collection;
-- the explicit ratcheted message-envelope/CLI cutover.
+Before relay cutover GhostLink still needs the explicit ratcheted message-envelope/CLI cutover.
 
 ## Error handling
 
@@ -350,7 +367,8 @@ The repository runs a real Python-to-Node smoke test that:
 11. sends a ratcheted reply;
 12. closes both processes;
 13. reopens both vaults in new processes;
-14. continues the same ratcheted session.
+14. continues the same ratcheted session;
+15. exercises Python-to-Node retired pre-key GC, validates strict result parsing and confirms the collected lifecycle state survives restart.
 
 The Node test suite separately exercises raw RPC validation and the same restart behavior.
 
