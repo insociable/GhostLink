@@ -55,7 +55,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - Oracle public HTTPS reference stack with Caddy, TCP/443-only exposure, internal GhostNode networking and automatic TLS certificate lifecycle.
 - rollback-aware client-state checkpoint primitives plus an authenticated SQLite monotonic-witness reference backend with crash-safe one-step witness recovery;
 - local profile v4 with a random 128-bit client-state ID and independent 32-byte state-coordination key, plus explicit atomic v1/v2/v3 migration;
-- rollback-aware contact-store v2 with explicit legacy migration, monotonic witness reconciliation, rollback/divergence rejection and one-step crash recovery.
+- rollback-aware contact-store v2 with explicit legacy migration, monotonic witness reconciliation, rollback/divergence rejection and one-step crash recovery;
+- rollback-aware replay-state SQLite coordination with explicit legacy migration, atomic prune/accept + revision commits and one-step witness recovery.
 
 ### Removed
 
@@ -89,6 +90,6 @@ The format follows Keep a Changelog and Semantic Versioning.
 - relay database rollback can also roll back persisted protocol-v3 request-replay state;
 - the libsignal ratchet engine and user-facing v3 CLI path provide tested forward-secrecy/post-compromise behavior, but GhostLink remains pre-alpha and unaudited;
 - traffic metadata remains visible to the relay;
-- replay-cache rollback/deletion can weaken replay suppression for still-valid captured messages;
+- the development SQLite monotonic witness can be rolled back together with a whole-filesystem snapshot, so complete whole-device anti-rollback is not claimed;
 - retired-key GC does not guarantee forensic secure erasure from runtime/allocator copies, filesystem snapshots, storage media, backups or restored old vaults;
 - no independent security audit yet.

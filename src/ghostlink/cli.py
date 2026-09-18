@@ -48,7 +48,11 @@ from ghostlink.ratchet_message import (
     decrypt_ratchet_message,
     encrypt_ratchet_message,
 )
-from ghostlink.replay import ReplayCacheError, SQLiteReplayCache
+from ghostlink.replay import (
+    ReplayCacheError,
+    WitnessedSQLiteReplayCache,
+    migrate_replay_cache_to_witness,
+)
 from ghostlink.state_witness import SQLiteMonotonicWitness
 
 PasswordReader = Callable[[str], str]
@@ -290,6 +294,23 @@ def _command_contact_store_upgrade(
     )
     print("Contact store enrolled in rollback-state witness.")
     print(f"Revision: {store.revision}")
+    return 0
+
+
+def _command_replay_state_upgrade(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    profile = _load_profile(profile_path, password_reader)
+    state_id, coordination_key = _require_state_coordination(profile)
+    migrate_replay_cache_to_witness(
+        _replay_state_path(profile_path, args.state),
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=_profile_witness(profile_path, profile),
+    )
+    print("Replay state enrolled in rollback-state witness.")
     return 0
 
 
@@ -632,8 +653,12 @@ def _command_inbox(
     _require_ratchet_key(profile)
     contact = _resolve_message_contact(args, profile_path, profile)
     client = node_client_factory(args.node)
-    replay_cache = SQLiteReplayCache(
-        _replay_state_path(profile_path, args.state)
+    state_id, coordination_key = _require_state_coordination(profile)
+    replay_cache = WitnessedSQLiteReplayCache(
+        _replay_state_path(profile_path, args.state),
+        state_id,
+        coordination_key,
+        _profile_witness(profile_path, profile),
     )
 
     delivered = 0
@@ -730,6 +755,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contact_store_upgrade_parser.add_argument("--profile", required=True)
     contact_store_upgrade_parser.add_argument("--contacts")
+
+    replay_upgrade_parser = subparsers.add_parser(
+        "replay-state-upgrade",
+        help="enroll a legacy replay cache in rollback-state coordination",
+    )
+    replay_upgrade_parser.add_argument("--profile", required=True)
+    replay_upgrade_parser.add_argument("--state")
 
     whoami_parser = subparsers.add_parser(
         "whoami",
@@ -904,6 +936,8 @@ def run(
             return _command_profile_upgrade(args, password_reader)
         if args.command == "contact-store-upgrade":
             return _command_contact_store_upgrade(args, password_reader)
+        if args.command == "replay-state-upgrade":
+            return _command_replay_state_upgrade(args, password_reader)
         if args.command == "whoami":
             return _command_whoami(args, password_reader)
         if args.command == "contact-export":

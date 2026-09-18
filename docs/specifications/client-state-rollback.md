@@ -1,6 +1,6 @@
 # Client-state rollback checkpoints and witness
 
-Status: checkpoint/witness primitives, profile-v4 state identity and contact-store integration implemented; replay and ratchet-vault integration remain under issue #79.
+Status: checkpoint/witness primitives, profile-v4 state identity, contact-store integration and replay-state integration implemented; ratchet-vault integration remains under issue #79.
 
 ## Scope
 
@@ -8,9 +8,9 @@ This specification defines the common checkpoint format and monotonic-witness co
 by ADR-0008.
 
 It does not by itself make the complete GhostLink client rollback-proof. Profile v4
-provides the root state identity and the contact store now adopts this format; replay and
-ratchet-vault state remain to be integrated. Complete whole-snapshot protection additionally
-requires a witness backend outside the restored state domain.
+provides the root state identity, and both contact-trust and replay state now adopt this
+format; ratchet-vault/highest-seen state remains to be integrated. Complete whole-snapshot
+protection additionally requires a witness backend outside the restored state domain.
 
 ## Root material
 
@@ -208,7 +208,11 @@ The contact-trust store is the first runtime component integrated with these che
 Its legacy v1 format requires explicit migration, and normal CLI access uses witness
 reconciliation before trust state is consumed or mutated.
 
-Replay state and ratchet-vault/highest-seen state are not yet integrated.
+Replay state is now integrated: pruning, acceptance and replay checkpoint metadata commit
+inside one SQLite transaction, followed by witness compare-and-set. A crash after the
+SQLite commit may roll the witness forward by exactly one linked revision on restart.
+
+Ratchet-vault/highest-seen state is not yet integrated.
 
 A future production backend must keep witness state outside the rollback domain being
 claimed as protected.

@@ -33,6 +33,7 @@ from ghostlink.ratchet_message import (
     RatchetMessage,
     RatchetMessageReplayError,
 )
+from ghostlink.replay import SQLiteReplayCache
 from nacl import utils
 from nacl.pwhash import argon2id
 from nacl.secret import SecretBox
@@ -614,6 +615,35 @@ def test_cli_requires_explicit_contact_store_rollback_migration(
     ) == 0
     listed = capsys.readouterr()
     assert "Peer" in listed.out
+
+
+def test_cli_requires_explicit_replay_state_rollback_migration(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    password = "replay rollback migration password"  # noqa: S105
+    profile_path = tmp_path / "alice.ghost"
+    replay_path = Path(f"{profile_path}.state.sqlite3")
+
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 0
+    capsys.readouterr()
+
+    legacy = SQLiteReplayCache(replay_path)
+    assert legacy.accept(
+        "device1:" + ("a" * 52),
+        "1" * 32,
+        now=1_000_000,
+    )
+
+    assert run(
+        ["replay-state-upgrade", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 0
+    migrated = capsys.readouterr()
+    assert "Replay state enrolled in rollback-state witness." in migrated.out
 
 
 def test_cli_refuses_to_overwrite_existing_profile(tmp_path: Path, capsys) -> None:

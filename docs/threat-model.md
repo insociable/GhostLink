@@ -94,7 +94,7 @@ These are implemented building blocks, not a production-security certification.
 Current security gaps still include:
 
 - relay database anti-rollback protection;
-- complete client-state anti-rollback is still incomplete: profile-v4 state identity and contact-store witness protection are implemented, while replay and ratchet/highest-seen integration remain under ADR-0008 / issue #79;
+- complete client-state anti-rollback is still incomplete: profile-v4 state identity plus contact-store and replay-state witness protection are implemented, while ratchet/highest-seen integration remains under ADR-0008 / issue #79;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
 - complete device revocation and recovery design;
