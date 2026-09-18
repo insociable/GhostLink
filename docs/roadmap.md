@@ -1,49 +1,60 @@
 # Roadmap
 
+This roadmap distinguishes implemented building blocks from security work that is still required.
+
 ## M0 — Foundation
 
-- repository structure;
-- charter;
-- threat model;
-- ADR process;
-- CI;
-- initial crypto proof of concept.
+- [x] repository structure;
+- [x] charter;
+- [x] threat model;
+- [x] ADR process;
+- [x] CI;
+- [x] initial crypto proof of concept.
 
 ## M1 — Protocol skeleton
 
-- versioned envelope format;
-- message identifiers;
-- timestamps and expiration;
-- replay-protection design;
-- serialization tests.
+- [x] versioned encrypted message envelope;
+- [x] relay message identifiers;
+- [ ] timestamps and expiration;
+- [ ] replay-protection design and implementation;
+- [x] serialization and tamper-rejection tests.
 
 ## M2 — Relay
 
-- minimal authenticated API;
-- ciphertext-only storage;
-- delivery acknowledgement;
-- retention limits;
-- Docker deployment.
+- [ ] authenticated client API;
+- [x] ciphertext-only storage;
+- [x] persistent SQLite storage option;
+- [ ] explicit delivery acknowledgement protocol;
+- [ ] retention limits and quotas;
+- [x] Docker/Compose deployment;
+- [ ] production TLS ingress;
+- [ ] anti-abuse controls.
 
 ## M3 — Two-client demonstration
 
-- local identities;
-- verified contact import;
-- encrypted send and receive;
-- command-line client;
-- end-to-end integration test.
+- [x] persistent encrypted local identities;
+- [x] verified contact import;
+- [x] encrypted send and receive;
+- [x] command-line client;
+- [x] end-to-end integration test;
+- [x] GhostNode HTTP transport.
 
-## M4 — Desktop client
+## M4 — Desktop/mobile client foundations
 
-- PySide6 interface;
-- encrypted local storage;
-- contact verification;
-- packaging for Linux and Windows.
+- [ ] desktop interface;
+- [x] password-encrypted local profile format;
+- [ ] OS keychain / hardware-backed secret integration;
+- [ ] contact fingerprint / QR verification UX;
+- [ ] local conversation history;
+- [ ] packaging for Linux and Windows;
+- [ ] mobile application architecture.
 
 ## M5 — Security hardening
 
-- ratcheting session protocol;
-- external review;
-- dependency review;
-- reproducible releases;
-- signed artifacts.
+- [ ] ratcheting session protocol;
+- [ ] forward secrecy;
+- [ ] external cryptographic review;
+- [ ] dependency review and automated vulnerability policy;
+- [ ] reproducible releases;
+- [ ] signed artifacts;
+- [ ] recovery, rotation and device-revocation design.
