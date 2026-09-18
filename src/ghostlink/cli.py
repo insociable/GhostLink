@@ -92,7 +92,8 @@ def _default_ratchet_engine_factory(
         raise CLIError("Node.js is required for the ratchet engine")
     if not _RATCHET_ENGINE_PATH.is_file():
         raise CLIError(
-            "built ratchet-engine is unavailable; build ratchet-engine before using ratcheted CLI commands"
+            "built ratchet-engine is unavailable; "
+            "build ratchet-engine before using ratcheted CLI commands"
         )
     return RatchetEngineClient(
         [node, str(_RATCHET_ENGINE_PATH)],
