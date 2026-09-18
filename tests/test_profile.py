@@ -5,7 +5,6 @@ import pytest
 from nacl import utils
 from nacl.pwhash import argon2id
 from nacl.secret import SecretBox
-
 from ghostlink.profile import (
     ProfileError,
     ProfileUnlockError,
