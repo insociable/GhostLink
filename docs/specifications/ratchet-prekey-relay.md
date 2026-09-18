@@ -1,6 +1,6 @@
 # GhostNode ratchet pre-key publication relay
 
-Status: publication and authenticated atomic fetch/pop implemented; sender orchestration pending
+Status: publication, authenticated atomic fetch/pop and sender session orchestration implemented
 
 ## Purpose
 
@@ -196,15 +196,18 @@ Old relay-side one-time rows may be discarded after successful replacement becau
 
 The fetch endpoint returns a target-signed binding but does not itself establish target trust.
 
-The application sender must still:
+The application sender now performs this boundary explicitly:
 
-1. parse the returned binding strictly;
-2. verify the binding against its existing `VerifiedContact`;
-3. verify expiration and DeviceID signature;
-4. enforce the locally persisted highest-seen publication sequence;
-5. only then pass the public material into libsignal session establishment.
+1. `GhostNodeClient` signs the fetch using the local enrolled DeviceID;
+2. the response is parsed with exact fields and bounded values;
+3. returned target/requester DeviceIDs must match the local request;
+4. the returned binding must use canonical serialization;
+5. the binding is verified against the existing `VerifiedContact`;
+6. response publication sequence, expiration and bundle role must equal the signed binding;
+7. `RatchetEngineClient` verifies the binding again before RPC;
+8. the encrypted vault enforces the highest-seen publication sequence in the same durable transaction as libsignal session establishment.
 
-That application workflow remains the next milestone.
+No failed fetch, parse, signature, contact, expiration, metadata or rollback check falls back to the static protocol-v2 encryption path.
 
 ## Failure and abuse properties
 
@@ -244,7 +247,8 @@ If the relay returns a malformed or mismatched receipt, the client fails closed 
 - publication authorization is cryptographic for the target DeviceID, but revocation policy is not yet implemented;
 - relay database rollback protection is not implemented;
 - requester authentication and target rate limiting reduce drain but are not Sybil-resistant admission control;
-- sender-side HTTP fetch -> VerifiedContact verification -> libsignal orchestration is not yet wired;
-- replenishment, rotation and GC execution are not implemented.
+- a malicious relay can replay a still-valid one-time binding from the same generation and cause availability/session-bootstrap failure; this is not key transparency;
+- replenishment, rotation and GC execution are not implemented;
+- the user-facing message relay/CLI has not yet cut over to ratcheted envelopes.
 
 GhostLink remains pre-alpha and has not undergone an independent cryptographic/protocol audit.

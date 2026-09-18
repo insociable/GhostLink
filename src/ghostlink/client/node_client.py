@@ -5,14 +5,20 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal, cast
 
-from ghostlink.device import derive_device_id
+from ghostlink.device import EnrolledGhostDevice, derive_device_id
 from ghostlink.message import MESSAGE_VERSION, GhostMessage
+from ghostlink.prekey_fetch import (
+    PreKeyFetchResponse,
+    create_prekey_fetch_request,
+)
 
 _MAX_CIPHERTEXT_BYTES = 1_048_576
 _DEVICE_ID_PREFIX = "device1:"
@@ -21,6 +27,8 @@ _BASE32_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz234567")
 _MESSAGE_ID_LENGTH = 32
 _HEX_ALPHABET = frozenset("0123456789abcdef")
 _PREKEY_PUBLICATION_VERSION = 1
+_PREKEY_FETCH_VERSION = 1
+_MAX_PREKEY_BINDING_BYTES = 32 * 1024
 _MAX_PUBLICATION_SEQUENCE = (1 << 53) - 1
 _MAX_ONE_TIME_PREKEYS = 256
 _MAX_PREKEY_PUBLICATION_BYTES = 1_048_576
@@ -30,6 +38,16 @@ _EXPECTED_PREKEY_RECEIPT_FIELDS = {
     "publication_sequence",
     "expires_at",
     "one_time_count",
+}
+_EXPECTED_PREKEY_FETCH_FIELDS = {
+    "version",
+    "target_device_id",
+    "requester_device_id",
+    "publication_sequence",
+    "expires_at",
+    "bundle_kind",
+    "binding",
+    "remaining_one_time_count",
 }
 _EXPECTED_MESSAGE_FIELDS = {
     "version",
@@ -269,6 +287,68 @@ def _parse_prekey_receipt(value: object | None) -> PreKeyPublicationReceipt:
     )
 
 
+def _parse_prekey_fetch_response(
+    value: object | None,
+) -> PreKeyFetchResponse:
+    document = _require_mapping(value, "pre-key fetch response")
+    if set(document) != _EXPECTED_PREKEY_FETCH_FIELDS:
+        raise GhostNodeProtocolError(
+            "pre-key fetch response fields do not match the protocol"
+        )
+
+    version = _require_bounded_integer(
+        document,
+        "version",
+        minimum=_PREKEY_FETCH_VERSION,
+        maximum=_PREKEY_FETCH_VERSION,
+    )
+    target_device_id = _validate_device_id(
+        _require_text(document, "target_device_id"),
+        "target_device_id",
+    )
+    requester_device_id = _validate_device_id(
+        _require_text(document, "requester_device_id"),
+        "requester_device_id",
+    )
+    publication_sequence = _require_bounded_integer(
+        document,
+        "publication_sequence",
+        minimum=1,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+    expires_at = _require_bounded_integer(
+        document,
+        "expires_at",
+        minimum=1,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+    bundle_kind = _require_text(document, "bundle_kind")
+    if bundle_kind not in {"one_time", "fallback"}:
+        raise GhostNodeProtocolError(
+            "bundle_kind is not a supported pre-key fetch role"
+        )
+    binding = _require_text(document, "binding")
+    if len(binding.encode("utf-8")) > _MAX_PREKEY_BINDING_BYTES:
+        raise GhostNodeProtocolError("binding exceeds the size limit")
+    remaining_one_time_count = _require_bounded_integer(
+        document,
+        "remaining_one_time_count",
+        minimum=0,
+        maximum=_MAX_ONE_TIME_PREKEYS,
+    )
+
+    return PreKeyFetchResponse(
+        version=version,
+        target_device_id=target_device_id,
+        requester_device_id=requester_device_id,
+        publication_sequence=publication_sequence,
+        expires_at=expires_at,
+        bundle_kind=cast(Literal["one_time", "fallback"], bundle_kind),
+        binding=binding,
+        remaining_one_time_count=remaining_one_time_count,
+    )
+
+
 def _parse_message(value: object) -> GhostMessage:
     document = _require_mapping(value, "message")
     if set(document) != _EXPECTED_MESSAGE_FIELDS:
@@ -426,6 +506,50 @@ class GhostNodeClient:
                 _extract_error_detail(body),
             )
         return _parse_prekey_receipt(body)
+
+    def fetch_prekey(
+        self,
+        requester_device: EnrolledGhostDevice,
+        target_device_id: str,
+        *,
+        issued_at: int | None = None,
+        request_id: str | None = None,
+    ) -> PreKeyFetchResponse:
+        """Fetch one target-signed pre-key allocation using requester DeviceID proof."""
+        try:
+            _validate_device_id(target_device_id, "target_device_id")
+        except GhostNodeProtocolError as exc:
+            raise ValueError(str(exc)) from exc
+
+        now = int(time.time()) if issued_at is None else issued_at
+        fetch_request = create_prekey_fetch_request(
+            requester_device,
+            target_device_id,
+            issued_at=now,
+            request_id=request_id,
+        )
+        encoded_device_id = urllib.parse.quote(target_device_id, safe=":")
+        status_code, body = self._request(
+            "POST",
+            f"/v2/prekeys/{encoded_device_id}/fetch",
+            fetch_request.model_dump(),
+        )
+        if status_code != 200:
+            raise GhostNodeRequestError(
+                status_code,
+                _extract_error_detail(body),
+            )
+
+        response = _parse_prekey_fetch_response(body)
+        if response.target_device_id != target_device_id:
+            raise GhostNodeProtocolError(
+                "pre-key fetch target DeviceID does not match the request"
+            )
+        if response.requester_device_id != requester_device.device_id:
+            raise GhostNodeProtocolError(
+                "pre-key fetch requester DeviceID does not match the local device"
+            )
+        return response
 
     def receive(self, recipient_device_id: str) -> list[GhostMessage]:
         """Retrieve encrypted protocol-v2 envelopes for one device."""

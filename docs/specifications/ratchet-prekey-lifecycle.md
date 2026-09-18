@@ -1,6 +1,6 @@
 # Ratchet pre-key lifecycle
 
-Status: accepted design; prepare/stage/publish/local-commit/fetch implemented; sender orchestration/rotation/GC pending
+Status: accepted design; prepare/stage/publish/local-commit/fetch/sender session bootstrap implemented; rotation/GC pending
 
 ## Purpose
 
@@ -439,11 +439,22 @@ Relay fetch/pop and anti-drain controls are now implemented:
 
 This does not provide Sybil-resistant admission. A requester able to create many DeviceIDs can still consume multiple allocations over time.
 
+Sender-side fetch/session orchestration is now implemented:
+
+- the local enrolled DeviceID signs a target-bound fetch request;
+- the HTTP response is parsed with exact fields and strict bounds;
+- target and requester DeviceIDs must match the local request;
+- the fetched binding must be canonical and verify against `VerifiedContact`;
+- relay metadata must match the signed binding;
+- the binding is reverified by `RatchetEngineClient`;
+- highest-seen remote publication continuity and libsignal session creation commit atomically in the encrypted vault;
+- failures never downgrade to static protocol-v2 encryption.
+
 The following are still pending:
 
-- sender HTTP fetch -> VerifiedContact verification -> libsignal establishment;
 - replenishment and rotation decisions;
-- delayed-key garbage collection.
+- delayed-key garbage collection;
+- ratcheted message-envelope and CLI cutover.
 
 ## RPC implications
 

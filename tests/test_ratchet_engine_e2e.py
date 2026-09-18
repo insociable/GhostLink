@@ -18,6 +18,7 @@ from ghostlink.ratchet_binding import (
     sign_ratchet_prekey_binding,
 )
 from ghostlink.ratchet_engine import RatchetEngineClient, RatchetEngineError
+from ghostlink.ratchet_fetch import establish_session_from_relay
 from ghostlink.ratchet_publication import (
     import_ratchet_prekey_publication,
     verify_local_ratchet_prekey_publication,
@@ -375,3 +376,123 @@ def test_remote_publication_sequence_rollback_rejected_after_restart(
                     bob_contact,
                     now=1_100,
                 )
+
+
+
+def test_relay_fetch_establishes_one_time_and_fallback_sessions(
+    tmp_path: Path,
+) -> None:
+    alice = GhostEntity.generate()
+    bob = GhostEntity.generate()
+    charlie = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    bob_device = bob.enroll_device()
+    charlie_device = charlie.enroll_device()
+
+    alice_contact = import_contact_bundle(
+        export_contact_bundle(alice, alice_device)
+    )
+    bob_contact = import_contact_bundle(
+        export_contact_bundle(bob, bob_device)
+    )
+    charlie_contact = import_contact_bundle(
+        export_contact_bundle(charlie, charlie_device)
+    )
+
+    command = [_NODE or "node", str(_ENGINE)]
+    api_client = TestClient(create_app())
+
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        assert timeout > 0
+        parsed = urllib.parse.urlparse(url)
+        response = api_client.request(
+            method,
+            parsed.path,
+            json=payload,
+            headers=headers,
+        )
+        return (
+            response.status_code,
+            response.json() if response.content else None,
+        )
+
+    node = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+    now = int(time.time())
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        tmp_path / "bob-relay-fetch.ratchet",
+        os.urandom(32),
+    ) as bob_engine:
+        receipt = publish_prekey_generation(
+            bob_engine,
+            node,
+            bob_device,
+            one_time_count=1,
+            issued_at=now,
+            lifetime_seconds=3_600,
+            acknowledged_at=now + 1,
+        )
+        assert receipt.one_time_count == 1
+
+        with RatchetEngineClient(
+            command,
+            alice_device,
+            tmp_path / "alice-relay-fetch.ratchet",
+            os.urandom(32),
+        ) as alice_engine:
+            alice_fetch = establish_session_from_relay(
+                alice_engine,
+                node,
+                alice_device,
+                bob_contact,
+                issued_at=now + 1,
+                verification_time=now + 1,
+            )
+            assert alice_fetch.bundle_kind == "one_time"
+            assert alice_fetch.remaining_one_time_count == 0
+
+            alice_message = alice_engine.encrypt(
+                bob_contact,
+                b"one-time session through GhostNode",
+            )
+            assert (
+                bob_engine.decrypt(alice_contact, alice_message)
+                == b"one-time session through GhostNode"
+            )
+
+        with RatchetEngineClient(
+            command,
+            charlie_device,
+            tmp_path / "charlie-relay-fetch.ratchet",
+            os.urandom(32),
+        ) as charlie_engine:
+            charlie_fetch = establish_session_from_relay(
+                charlie_engine,
+                node,
+                charlie_device,
+                bob_contact,
+                issued_at=now + 2,
+                verification_time=now + 2,
+            )
+            assert charlie_fetch.bundle_kind == "fallback"
+            assert charlie_fetch.remaining_one_time_count == 0
+
+            charlie_message = charlie_engine.encrypt(
+                bob_contact,
+                b"fallback session through GhostNode",
+            )
+            assert (
+                bob_engine.decrypt(charlie_contact, charlie_message)
+                == b"fallback session through GhostNode"
+            )

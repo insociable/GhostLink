@@ -57,7 +57,10 @@ The current codebase includes:
 - encrypted client-side highest-seen remote publication sequence persistence, enforced atomically before libsignal session establishment;
 - target-bound requester DeviceID proof for pre-key fetch;
 - atomic/idempotent one-time pre-key allocation with reusable fallback;
-- per-target time-window limiting of new one-time allocations.
+- per-target time-window limiting of new one-time allocations;
+- strict sender-side fetch parsing and response/binding consistency checks;
+- `VerifiedContact` verification before libsignal session establishment;
+- no automatic fallback to static protocol-v2 when ratchet bootstrap fails.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -68,7 +71,6 @@ Before a ratcheted production cutover GhostLink still lacks:
 - relay database anti-rollback protection;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
-- sender-side fetch/VerifiedContact/session orchestration;
 - automated pre-key replenishment and rotation execution;
 - delayed-key garbage collection;
 - complete device revocation and recovery design;
