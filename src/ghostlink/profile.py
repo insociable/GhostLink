@@ -21,18 +21,20 @@ from ghostlink.device_certificate import (
 )
 from ghostlink.entity import GhostEntity
 
-_PROFILE_VERSION = 1
+_PROFILE_VERSION = 2
+_LEGACY_PROFILE_VERSION = 1
 _MAX_PROFILE_BYTES = 65_536
 _KDF_NAME = "argon2id"
 _CIPHER_NAME = "secretbox"
 _KDF_OPSLIMIT = argon2id.OPSLIMIT_INTERACTIVE
 _KDF_MEMLIMIT = argon2id.MEMLIMIT_INTERACTIVE
 _PRIVATE_KEY_SIZE = 32
+_RATCHET_MASTER_KEY_SIZE = 32
 _SIGNATURE_SIZE = 64
 
 _OUTER_FIELDS = {"version", "kdf", "cipher", "ciphertext"}
 _KDF_FIELDS = {"name", "salt", "opslimit", "memlimit"}
-_SECRET_FIELDS = {
+_SECRET_FIELDS_V1 = {
     "identity_signing_seed",
     "device_signing_seed",
     "device_encryption_private_key",
@@ -42,6 +44,7 @@ _SECRET_FIELDS = {
     "device_encryption_public_key",
     "device_certificate_signature",
 }
+_SECRET_FIELDS_V2 = _SECRET_FIELDS_V1 | {"ratchet_master_key"}
 
 
 class ProfileError(ValueError):
@@ -54,10 +57,11 @@ class ProfileUnlockError(ProfileError):
 
 @dataclass(frozen=True, slots=True)
 class LocalProfile:
-    """A local GhostLink identity and its enrolled device."""
+    """A local GhostLink identity, enrolled device and ratchet vault secret."""
 
     entity: GhostEntity
     device: EnrolledGhostDevice
+    ratchet_master_key: bytes | None
 
 
 def create_local_profile() -> LocalProfile:
@@ -66,6 +70,7 @@ def create_local_profile() -> LocalProfile:
     return LocalProfile(
         entity=entity,
         device=entity.enroll_device(),
+        ratchet_master_key=utils.random(_RATCHET_MASTER_KEY_SIZE),
     )
 
 
@@ -160,6 +165,14 @@ def _password_bytes(password: str) -> bytes:
 
 def _serialize_secret(profile: LocalProfile) -> bytes:
     certificate = profile.device.certificate.certificate
+    if (
+        profile.ratchet_master_key is None
+        or not isinstance(profile.ratchet_master_key, bytes)
+        or len(profile.ratchet_master_key) != _RATCHET_MASTER_KEY_SIZE
+    ):
+        raise ProfileError(
+            "profile must contain a 32-byte ratchet master key before encryption"
+        )
 
     # Validate the complete public/private relationship before persisting it.
     PublicGhostDevice.from_certificate(
@@ -194,6 +207,7 @@ def _serialize_secret(profile: LocalProfile) -> bytes:
         "device_certificate_signature": _encode_base64(
             profile.device.certificate.signature
         ),
+        "ratchet_master_key": _encode_base64(profile.ratchet_master_key),
     }
 
     return json.dumps(
@@ -203,9 +217,14 @@ def _serialize_secret(profile: LocalProfile) -> bytes:
     ).encode("utf-8")
 
 
-def _deserialize_secret(serialized: bytes) -> LocalProfile:
+def _deserialize_secret(serialized: bytes, version: int) -> LocalProfile:
     secret = _parse_json_object(serialized, "decrypted profile")
-    _require_exact_fields(secret, _SECRET_FIELDS, "decrypted profile")
+    expected_fields = (
+        _SECRET_FIELDS_V1
+        if version == _LEGACY_PROFILE_VERSION
+        else _SECRET_FIELDS_V2
+    )
+    _require_exact_fields(secret, expected_fields, "decrypted profile")
 
     identity_seed = _decode_base64(
         secret["identity_signing_seed"],
@@ -236,6 +255,15 @@ def _deserialize_secret(serialized: bytes) -> LocalProfile:
         secret["device_certificate_signature"],
         "device_certificate_signature",
         _SIGNATURE_SIZE,
+    )
+    ratchet_master_key = (
+        None
+        if version == _LEGACY_PROFILE_VERSION
+        else _decode_base64(
+            secret["ratchet_master_key"],
+            "ratchet_master_key",
+            _RATCHET_MASTER_KEY_SIZE,
+        )
     )
 
     entity = GhostEntity(signing_key=SigningKey(identity_seed))
@@ -275,6 +303,7 @@ def _deserialize_secret(serialized: bytes) -> LocalProfile:
     return LocalProfile(
         entity=entity,
         device=enrolled_device,
+        ratchet_master_key=ratchet_master_key,
     )
 
 
@@ -320,7 +349,7 @@ def decrypt_local_profile(serialized: str, password: str) -> LocalProfile:
     _require_exact_fields(document, _OUTER_FIELDS, "profile")
 
     version = _require_integer(document, "version")
-    if version != _PROFILE_VERSION:
+    if version not in {_LEGACY_PROFILE_VERSION, _PROFILE_VERSION}:
         raise ProfileError("unsupported profile version")
 
     cipher = _require_text(document, "cipher")
@@ -369,4 +398,19 @@ def decrypt_local_profile(serialized: str, password: str) -> LocalProfile:
             "profile password is incorrect or profile data was modified"
         ) from exc
 
-    return _deserialize_secret(plaintext)
+    return _deserialize_secret(plaintext, version)
+
+
+
+def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
+    """Upgrade one decrypted legacy profile with a fresh ratchet vault key."""
+    if profile.ratchet_master_key is not None:
+        if len(profile.ratchet_master_key) != _RATCHET_MASTER_KEY_SIZE:
+            raise ProfileError("ratchet master key has an invalid length")
+        return profile
+
+    return LocalProfile(
+        entity=profile.entity,
+        device=profile.device,
+        ratchet_master_key=utils.random(_RATCHET_MASTER_KEY_SIZE),
+    )
