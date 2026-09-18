@@ -10,6 +10,7 @@ import {
   MemoryPreKeyLifecycleStore,
   type PreKeyGenerationState,
 } from './prekey-lifecycle-state.js';
+import { MemoryRemotePublicationSequenceStore } from './remote-publication-state.js';
 import {
   createPartyStores,
   MemoryKyberPreKeyStore,
@@ -436,6 +437,10 @@ export class RatchetParty {
       signedPreKey: new MemorySignedPreKeyStore(),
       kyberPreKey: new MemoryKyberPreKeyStore(),
       lifecycle: new MemoryPreKeyLifecycleStore(),
+      remotePublicationSequences:
+        MemoryRemotePublicationSequenceStore.fromState(
+          this.stores.remotePublicationSequences.exportState()
+        ),
     };
 
     return new RatchetParty(
