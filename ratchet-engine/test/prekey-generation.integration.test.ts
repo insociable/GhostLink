@@ -211,3 +211,67 @@ test('publication acknowledgement requires staged matching pending generation', 
 
   bob.close();
 });
+
+
+test('remote publication rollback leaves ratchet state and vault unchanged', async () => {
+  const directory = await temporaryDirectory();
+  const alicePath = join(directory, 'alice-remote-seq.ratchet');
+  const bobPath = join(directory, 'bob-remote-seq.ratchet');
+  const aliceKey = randomBytes(32);
+  const bobKey = randomBytes(32);
+  const aliceDeviceId = 'device1:' + 'a'.repeat(52);
+  const bobDeviceId = 'device1:' + 'b'.repeat(52);
+
+  const alice = await PersistentRatchetParty.open(
+    aliceDeviceId,
+    1,
+    alicePath,
+    aliceKey
+  );
+  const bob = await PersistentRatchetParty.open(
+    bobDeviceId,
+    1,
+    bobPath,
+    bobKey
+  );
+
+  const currentBundle = await bob.createPreKeyBundle();
+  await alice.establishSessionWithAddress(
+    bobDeviceId,
+    2,
+    currentBundle
+  );
+
+  const beforeState = await alice.exportStateForTesting();
+  const beforeFile = await readFile(alicePath);
+
+  const rollbackBundle = await bob.createPreKeyBundle();
+  await assert.rejects(
+    () =>
+      alice.establishSessionWithAddress(
+        bobDeviceId,
+        1,
+        rollbackBundle
+      ),
+    /remote publication sequence regressed/
+  );
+
+  assert.deepEqual(await alice.exportStateForTesting(), beforeState);
+  assert.deepEqual(await readFile(alicePath), beforeFile);
+
+  alice.close();
+  bob.close();
+
+  const reopened = await PersistentRatchetParty.open(
+    aliceDeviceId,
+    1,
+    alicePath,
+    aliceKey
+  );
+  const reopenedState = await reopened.exportStateForTesting();
+  assert.deepEqual(
+    reopenedState.remotePublicationSequences,
+    [[bobDeviceId, 2]]
+  );
+  reopened.close();
+});

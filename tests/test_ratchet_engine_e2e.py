@@ -17,7 +17,7 @@ from ghostlink.ratchet_binding import (
     create_ratchet_prekey_binding,
     sign_ratchet_prekey_binding,
 )
-from ghostlink.ratchet_engine import RatchetEngineClient
+from ghostlink.ratchet_engine import RatchetEngineClient, RatchetEngineError
 from ghostlink.ratchet_publication import (
     import_ratchet_prekey_publication,
     verify_local_ratchet_prekey_publication,
@@ -229,7 +229,6 @@ def test_prekey_publication_staging_survives_restart_exactly(tmp_path: Path) -> 
             )
 
 
-
 def test_full_prekey_publication_flow_survives_engine_restart(
     tmp_path: Path,
 ) -> None:
@@ -300,3 +299,79 @@ def test_full_prekey_publication_flow_survives_engine_restart(
             lifetime_seconds=3_600,
         )
         assert second.publication_sequence == 2
+
+
+def test_remote_publication_sequence_rollback_rejected_after_restart(
+    tmp_path: Path,
+) -> None:
+    alice = GhostEntity.generate()
+    bob = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    bob_device = bob.enroll_device()
+    bob_contact = import_contact_bundle(
+        export_contact_bundle(bob, bob_device),
+    )
+
+    alice_key = os.urandom(32)
+    bob_key = os.urandom(32)
+    alice_vault = tmp_path / "alice-remote-sequence.ratchet"
+    bob_vault = tmp_path / "bob-remote-sequence.ratchet"
+    command = [_NODE or "node", str(_ENGINE)]
+
+    with RatchetEngineClient(
+        command,
+        bob_device,
+        bob_vault,
+        bob_key,
+    ) as bob_engine:
+        first_material = bob_engine.create_prekey_material()
+        current = sign_ratchet_prekey_binding(
+            create_ratchet_prekey_binding(
+                bob_device,
+                first_material,
+                publication_sequence=2,
+                bundle_kind="one_time",
+                issued_at=1_000,
+            ),
+            bob_device,
+        )
+
+        with RatchetEngineClient(
+            command,
+            alice_device,
+            alice_vault,
+            alice_key,
+        ) as alice_engine:
+            alice_engine.establish_session(
+                current,
+                bob_contact,
+                now=1_100,
+            )
+
+        rollback_material = bob_engine.create_prekey_material()
+        rollback = sign_ratchet_prekey_binding(
+            create_ratchet_prekey_binding(
+                bob_device,
+                rollback_material,
+                publication_sequence=1,
+                bundle_kind="one_time",
+                issued_at=1_000,
+            ),
+            bob_device,
+        )
+
+        with RatchetEngineClient(
+            command,
+            alice_device,
+            alice_vault,
+            alice_key,
+        ) as reopened_alice:
+            with pytest.raises(
+                RatchetEngineError,
+                match="remote publication sequence regressed",
+            ):
+                reopened_alice.establish_session(
+                    rollback,
+                    bob_contact,
+                    now=1_100,
+                )

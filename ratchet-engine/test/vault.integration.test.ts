@@ -18,6 +18,9 @@ import {
   RatchetVaultUnlockError,
 } from '../src/vault.js';
 
+const DEVICE_A = 'device1:' + 'a'.repeat(52);
+const DEVICE_B = 'device1:' + 'b'.repeat(52);
+
 async function temporaryDirectory(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'ghostlink-ratchet-'));
 }
@@ -38,18 +41,23 @@ async function establishPersistentPair(directory: string): Promise<{
   const bobPath = join(directory, 'bob.ratchet');
 
   const alice = await PersistentRatchetParty.open(
-    'alice',
+    DEVICE_A,
     1,
     alicePath,
     aliceKey
   );
-  const bob = await PersistentRatchetParty.open('bob', 1, bobPath, bobKey);
+  const bob = await PersistentRatchetParty.open(
+    DEVICE_B,
+    1,
+    bobPath,
+    bobKey
+  );
 
   const bundle = await bob.createPreKeyBundle();
   const bobPreKeyId = bundle.preKeyId();
   const bobKyberPreKeyId = bundle.kyberPreKeyId();
   assert.notEqual(bobPreKeyId, null);
-  await alice.establishSession(bob, bundle);
+  await alice.establishSession(bob, 1, bundle);
 
   const first = await alice.encrypt(bob, 'first');
   assert.equal(await bob.decrypt(alice, first), 'first');
@@ -149,13 +157,13 @@ test('ratcheted session survives full process-style reopen', async () => {
   pair.bob.close();
 
   const alice = await PersistentRatchetParty.open(
-    'alice',
+    DEVICE_A,
     1,
     pair.alicePath,
     pair.aliceKey
   );
   const bob = await PersistentRatchetParty.open(
-    'bob',
+    DEVICE_B,
     1,
     pair.bobPath,
     pair.bobKey
@@ -186,7 +194,7 @@ test('one-time EC and Kyber pre-key consumption survives restart', async () => {
   pair.bob.close();
 
   const bob = await PersistentRatchetParty.open(
-    'bob',
+    DEVICE_B,
     1,
     pair.bobPath,
     pair.bobKey

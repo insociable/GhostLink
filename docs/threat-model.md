@@ -53,7 +53,8 @@ The current codebase includes:
 - GhostNode verification of DeviceID control before accepting a pre-key publication;
 - strict client-side relay receipt validation before local lifecycle commit;
 - exact staged-payload retry after ambiguous network failure;
-- monotonic relay publication sequence checks within the current relay database state.
+- monotonic relay publication sequence checks within the current relay database state;
+- encrypted client-side highest-seen remote publication sequence persistence, enforced atomically before libsignal session establishment.
 
 These are implemented building blocks, not a production-security certification.
 
@@ -61,7 +62,6 @@ These are implemented building blocks, not a production-security certification.
 
 Before a ratcheted production cutover GhostLink still lacks:
 
-- client-side highest-seen remote publication sequence persistence;
 - relay database anti-rollback protection;
 - key transparency;
 - pre-key fetch/pop anti-drain and rate limiting;

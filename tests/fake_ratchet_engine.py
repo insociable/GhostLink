@@ -51,6 +51,13 @@ def dispatch(method: str, params: object) -> object:
     if method == "create_prekey_material":
         return material()
     if method == "establish_session":
+        assert isinstance(params, dict)
+        assert set(params) == {
+            "remote_device_id",
+            "publication_sequence",
+            "material",
+        }
+        assert params["publication_sequence"] == 1
         return None
     if method == "encrypt":
         assert isinstance(params, dict)

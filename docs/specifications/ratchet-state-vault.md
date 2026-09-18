@@ -47,9 +47,10 @@ The encrypted payload contains:
 - Kyber/ML-KEM pre-keys;
 - consumed Kyber pre-key identifiers;
 - base-key reuse tracking required by libsignal;
-- pre-key lifecycle metadata: monotonic publication sequence, pending/active/retired generations, generation key ownership and the exact staged public publication payload needed for crash-safe retry.
+- pre-key lifecycle metadata: monotonic publication sequence, pending/active/retired generations, generation key ownership and the exact staged public publication payload needed for crash-safe retry;
+- highest-seen remote publication sequence per canonical DeviceID.
 
-The encrypted store snapshot is now version 2. Version-1 store snapshots are accepted only as a migration input and are normalized to version 2 with an empty lifecycle state. The outer AES-GCM vault envelope remains version 1, so existing encrypted vaults can be opened and migrated without changing their key or AAD.
+The encrypted store snapshot is now version 3. Version-1 and version-2 store snapshots are accepted as migration inputs and are normalized to version 3. Version 1 receives an empty lifecycle state and both legacy versions receive an empty remote-publication continuity map. The outer AES-GCM vault envelope remains version 1, so existing encrypted vaults can be opened and migrated without changing their key or AAD.
 
 The lifecycle parser bounds generation history, one-time key lists and staged public payload size. It rejects duplicate generation sequences, duplicate one-time key identifiers and a last-resort Kyber identifier reused as a one-time Kyber identifier.
 
@@ -202,8 +203,9 @@ Integration tests cover:
 - persistence of identity trust;
 - byte-for-byte unchanged vault after failed decrypt;
 - serialized concurrent sends;
-- version-1 store-state migration to lifecycle-aware version 2;
-- encrypted-at-rest lifecycle metadata and staged public publication payload;
-- lifecycle role/sequence/identifier invariant rejection.
+- version-1 and version-2 store-state migration to version 3;
+- encrypted-at-rest lifecycle metadata, staged public publication payload and remote publication continuity state;
+- lifecycle role/sequence/identifier invariant rejection;
+- durable highest-seen remote sequence persistence and rollback rejection.
 
 GhostLink remains pre-alpha and has not undergone an independent cryptographic audit.

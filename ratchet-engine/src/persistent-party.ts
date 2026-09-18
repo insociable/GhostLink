@@ -368,12 +368,17 @@ export class PersistentRatchetParty {
 
   async establishSessionWithAddress(
     remoteName: string,
+    publicationSequence: number,
     bundle: SignalClient.PreKeyBundle
   ): Promise<void> {
     const remoteAddress = this.remoteAddress(remoteName);
-    await this.transaction((party) =>
-      party.establishSessionAt(remoteAddress, bundle)
-    );
+    await this.transaction(async (party) => {
+      party.stores.remotePublicationSequences.observe(
+        remoteName,
+        publicationSequence
+      );
+      await party.establishSessionAt(remoteAddress, bundle);
+    });
   }
 
   async encryptBytesTo(
@@ -398,10 +403,13 @@ export class PersistentRatchetParty {
 
   async establishSession(
     remote: PersistentRatchetParty,
+    publicationSequence: number,
     bundle: SignalClient.PreKeyBundle
   ): Promise<void> {
-    await this.transaction((party) =>
-      party.establishSession(remote.inner, bundle)
+    await this.establishSessionWithAddress(
+      remote.address.name(),
+      publicationSequence,
+      bundle
     );
   }
 
