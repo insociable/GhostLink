@@ -74,12 +74,17 @@ jobs:
   container:
     runs-on: ubuntu-latest
     env:
-      GHOSTLINK_NODE_TOKEN: ci-placeholder-token
+      GHOSTLINK_NODE_TOKEN_FILE: /tmp/ghostlink-ci-token
       GHOSTLINK_PUBLIC_HOSTNAME: node.example.com
       GHOSTLINK_ACME_EMAIL: admin@example.com
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Create relay token secret file
+        run: |
+          umask 077
+          printf '%s\n' 'ci-placeholder-token' > "$GHOSTLINK_NODE_TOKEN_FILE"
 
       - name: Validate Compose configuration
         run: docker compose config --quiet
@@ -140,9 +145,22 @@ jobs:
 
       - name: Verify authenticated relay access works
         run: |
-          DEVICE_ID="device1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          RESPONSE="$(curl --fail --silent             --header "Authorization: Bearer $GHOSTLINK_NODE_TOKEN"             "http://127.0.0.1:8000/v2/messages/$DEVICE_ID")"
-          test "$RESPONSE" = "[]"
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          device_id = "device1:" + ("a" * 52)
+          token = Path(os.environ["GHOSTLINK_NODE_TOKEN_FILE"]).read_text().strip()
+          request = urllib.request.Request(
+              f"http://127.0.0.1:8000/v2/messages/{device_id}",
+              headers={"Authorization": f"Bearer {token}"},
+          )
+          with urllib.request.urlopen(request, timeout=5) as response:
+              assert response.status == 200
+              assert json.loads(response.read()) == []
+          PY
 
       - name: Run protocol-v2 E2EE smoke test
         run: docker compose exec -T ghostnode ghostlink node-smoke --node http://127.0.0.1:8000
