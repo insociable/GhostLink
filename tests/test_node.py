@@ -1,7 +1,9 @@
 import base64
+from pathlib import Path
 
 from fastapi.testclient import TestClient
-from ghostlink.node import create_app
+from ghostlink.config import NodeSettings
+from ghostlink.node import SQLiteMessageStore, create_app
 
 
 def create_message_payload() -> dict[str, int | str]:
@@ -88,3 +90,51 @@ def test_unknown_message_cannot_be_deleted() -> None:
 
     assert response.status_code == 404
     assert response.json() == {"detail": "message not found"}
+
+
+def test_sqlite_store_survives_app_recreation(tmp_path: Path) -> None:
+    database_path = tmp_path / "data" / "messages.sqlite3"
+    settings = NodeSettings(database_path=database_path)
+    payload = create_message_payload()
+
+    first_client = TestClient(create_app(settings=settings))
+    create_response = first_client.post("/v1/messages", json=payload)
+
+    assert create_response.status_code == 201
+    stored_message = create_response.json()
+    assert database_path.exists()
+
+    second_client = TestClient(create_app(settings=settings))
+    receive_response = second_client.get("/v1/messages/device1:bob")
+
+    assert receive_response.status_code == 200
+    assert receive_response.json() == [stored_message]
+
+
+def test_sqlite_store_delete_is_persistent(tmp_path: Path) -> None:
+    database_path = tmp_path / "messages.sqlite3"
+    store = SQLiteMessageStore(database_path)
+    client = TestClient(create_app(store=store))
+    payload = create_message_payload()
+
+    create_response = client.post("/v1/messages", json=payload)
+    message_id = create_response.json()["message_id"]
+
+    assert client.delete(f"/v1/messages/{message_id}").status_code == 204
+
+    reloaded_client = TestClient(
+        create_app(store=SQLiteMessageStore(database_path))
+    )
+    assert reloaded_client.get("/v1/messages/device1:bob").json() == []
+
+
+def test_database_path_cannot_be_a_directory(tmp_path: Path) -> None:
+    directory = tmp_path / "database"
+    directory.mkdir()
+
+    try:
+        SQLiteMessageStore(directory)
+    except ValueError as exc:
+        assert "must point to a file" in str(exc)
+    else:
+        raise AssertionError("directory database path should be rejected")
