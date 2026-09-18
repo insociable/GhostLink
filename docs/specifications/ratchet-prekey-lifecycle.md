@@ -1,6 +1,6 @@
 # Ratchet pre-key lifecycle
 
-Status: accepted design; prepare/stage/publish/local-commit implemented; fetch/rotation/GC pending
+Status: accepted design; prepare/stage/publish/local-commit/fetch implemented; sender orchestration/rotation/GC pending
 
 ## Purpose
 
@@ -426,9 +426,22 @@ Sender-side publication continuity is now implemented before fetch/pop exposure:
 
 A rollback of the entire encrypted vault can still restore older continuity state. Preventing that requires external monotonic state or trusted hardware and remains a separate threat-model limitation.
 
+Relay fetch/pop and anti-drain controls are now implemented:
+
+- requester DeviceID control is proven with a target-bound Ed25519-signed fetch request;
+- one authenticated requester consumes at most one one-time binding per target generation;
+- retry/concurrency for the same requester is idempotent;
+- SQLite one-time removal and allocation persistence are atomic;
+- fallback is returned only after the one-time pool is empty;
+- remaining one-time count is returned;
+- new one-time allocations are rate-limited per target and time window;
+- exact publication retry after consumption does not repopulate the pool.
+
+This does not provide Sybil-resistant admission. A requester able to create many DeviceIDs can still consume multiple allocations over time.
+
 The following are still pending:
 
-- atomic relay fetch/pop and anti-drain controls;
+- sender HTTP fetch -> VerifiedContact verification -> libsignal establishment;
 - replenishment and rotation decisions;
 - delayed-key garbage collection.
 
@@ -444,7 +457,7 @@ The RPC remains local stdio only.
 
 ## Relay API implications
 
-The later GhostNode pre-key API must support:
+The GhostNode pre-key API now supports:
 
 - atomic generation replacement;
 - exact-retry idempotency;
@@ -454,7 +467,7 @@ The later GhostNode pre-key API must support:
 - remaining one-time count;
 - active generation sequence and expiration;
 - bounded request sizes and pool sizes;
-- rate limiting and anti-drain controls.
+- requester DeviceID proof plus target-window allocation rate limiting.
 
 GhostNode still stores public signed material only. It never receives private pre-key state.
 
@@ -490,7 +503,7 @@ The relay still controls availability.
 A malicious relay can:
 
 - refuse publication;
-- drain or withhold one-time bindings;
+- ignore honest allocation semantics and drain or withhold one-time bindings;
 - force fallback use;
 - replay a still-valid signed binding;
 - freeze a first-time observer on a still-valid older generation.
