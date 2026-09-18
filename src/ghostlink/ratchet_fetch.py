@@ -35,16 +35,16 @@ def establish_session_from_relay(
     and all response metadata agrees with that binding.
     """
     request_time = int(time.time()) if issued_at is None else issued_at
-    current_time = (
-        request_time
-        if verification_time is None
-        else verification_time
-    )
 
     response = node.fetch_prekey(
         local_device,
         contact.device_id,
         issued_at=request_time,
+    )
+    current_time = (
+        int(time.time())
+        if verification_time is None
+        else verification_time
     )
     signed_binding = import_ratchet_prekey_binding(response.binding)
 
