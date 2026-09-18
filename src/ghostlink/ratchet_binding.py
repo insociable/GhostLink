@@ -112,7 +112,11 @@ class RatchetPreKeyBinding:
             )
         if self.signal_device_id != _SIGNAL_DEVICE_ID:
             raise RatchetBindingError("signal_device_id must equal 1")
-        _validate_identifier(self.registration_id, "registration_id", _MAX_REGISTRATION_ID)
+        _validate_identifier(
+            self.registration_id,
+            "registration_id",
+            _MAX_REGISTRATION_ID,
+        )
         _validate_identifier(
             self.publication_sequence,
             "publication_sequence",
@@ -149,7 +153,9 @@ class RatchetPreKeyBinding:
         if self.bundle_kind == "one_time" and self.pre_key_id is None:
             raise RatchetBindingError("one_time binding requires an EC one-time pre-key")
         if self.bundle_kind == "fallback" and self.pre_key_id is not None:
-            raise RatchetBindingError("fallback binding must not contain an EC one-time pre-key")
+            raise RatchetBindingError(
+                "fallback binding must not contain an EC one-time pre-key"
+            )
 
         _validate_exact_bytes(
             self.signed_pre_key,
