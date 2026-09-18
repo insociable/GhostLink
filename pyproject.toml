@@ -21,6 +21,7 @@ mypy = "^1.10.0"
 httpx = "^0.28.1"
 
 [tool.poetry.scripts]
+ghostlink = "ghostlink.cli:main"
 ghostnode = "ghostlink.node:main"
 
 [build-system]
