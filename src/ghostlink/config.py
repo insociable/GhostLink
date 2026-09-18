@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG_ENV = "GHOSTLINK_CONFIG"
-NODE_TOKEN_ENV = "GHOSTLINK_NODE_TOKEN"
+NODE_TOKEN_ENV = "GHOSTLINK_NODE_TOKEN"  # noqa: S105 -- env var name, not a secret
 
 
 @dataclass(frozen=True, slots=True)
