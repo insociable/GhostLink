@@ -19,6 +19,7 @@ class NodeSettings:
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: str = "info"
+    access_log: bool = True
     database_path: Path | None = None
     access_token: str | None = None
     prekey_fetch_window_seconds: int = 60
@@ -29,6 +30,8 @@ class NodeSettings:
             raise ValueError("node.host must not be empty")
         if not 1 <= self.port <= 65535:
             raise ValueError("node.port must be between 1 and 65535")
+        if not isinstance(self.access_log, bool):
+            raise ValueError("node.access_log must be a boolean")
         if self.log_level not in {
             "critical",
             "error",
@@ -95,6 +98,7 @@ def load_settings(path: str | Path | None = None) -> NodeSettings:
         host=str(node.get("host", "127.0.0.1")),
         port=int(node.get("port", 8000)),
         log_level=str(node.get("log_level", "info")).lower(),
+        access_log=node.get("access_log", True),
         database_path=_database_path(node, resolved_path),
         access_token=access_token,
         prekey_fetch_window_seconds=int(
