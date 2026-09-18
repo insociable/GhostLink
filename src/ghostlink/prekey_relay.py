@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import sqlite3
 import threading
@@ -11,14 +13,15 @@ from pathlib import Path
 from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Header, HTTPException, status
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from ghostlink.config import NodeSettings
-from ghostlink.contact import ContactBundleError, import_contact_bundle
+from ghostlink.device import derive_device_id
 from ghostlink.ratchet_binding import (
     RatchetBindingError,
     export_ratchet_prekey_binding,
-    verify_ratchet_prekey_binding,
 )
 from ghostlink.ratchet_publication import (
     RatchetPreKeyPublication,
@@ -28,7 +31,7 @@ from ghostlink.ratchet_publication import (
 from ghostlink.relay_auth import require_relay_access
 
 _PUBLICATION_REQUEST_VERSION = 1
-_MAX_CONTACT_BUNDLE_BYTES = 16_384
+_DEVICE_SIGNING_PUBLIC_KEY_BYTES = 32
 _MAX_PUBLICATION_BYTES = 1024 * 1024
 
 
@@ -42,7 +45,7 @@ class PreKeyPublicationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     version: int
-    contact_bundle: str
+    device_signing_public_key: str
     publication: str
 
     @field_validator("version")
@@ -52,11 +55,23 @@ class PreKeyPublicationRequest(BaseModel):
             raise ValueError("unsupported pre-key publication request version")
         return value
 
-    @field_validator("contact_bundle")
+    @field_validator("device_signing_public_key")
     @classmethod
-    def validate_contact_bundle_size(cls, value: str) -> str:
-        if not value or len(value.encode("utf-8")) > _MAX_CONTACT_BUNDLE_BYTES:
-            raise ValueError("contact_bundle exceeds the size limit")
+    def validate_device_signing_public_key(cls, value: str) -> str:
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError(
+                "device_signing_public_key must be valid Base64"
+            ) from exc
+        if len(decoded) != _DEVICE_SIGNING_PUBLIC_KEY_BYTES:
+            raise ValueError(
+                "device_signing_public_key must decode to exactly 32 bytes"
+            )
+        if base64.b64encode(decoded).decode("ascii") != value:
+            raise ValueError(
+                "device_signing_public_key must use canonical Base64"
+            )
         return value
 
     @field_validator("publication")
@@ -87,7 +102,6 @@ class RelayPreKeyGeneration:
     publication_sequence: int
     expires_at: int
     publication_payload: str
-    contact_bundle: str
     one_time_bindings: tuple[str, ...]
     fallback_binding: str
 
@@ -170,7 +184,6 @@ class SQLitePreKeyPublicationStore:
                     publication_sequence INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
                     publication_payload TEXT NOT NULL,
-                    contact_bundle TEXT NOT NULL,
                     fallback_binding TEXT NOT NULL
                 )
                 """
@@ -209,8 +222,7 @@ class SQLitePreKeyPublicationStore:
             row[0] == generation.publication_sequence
             and row[1] == generation.expires_at
             and row[2] == generation.publication_payload
-            and row[3] == generation.contact_bundle
-            and row[4] == generation.fallback_binding
+            and row[3] == generation.fallback_binding
             and one_time_bindings == generation.one_time_bindings
         )
 
@@ -223,7 +235,6 @@ class SQLitePreKeyPublicationStore:
                     publication_sequence,
                     expires_at,
                     publication_payload,
-                    contact_bundle,
                     fallback_binding
                 FROM prekey_publications
                 WHERE device_id = ?
@@ -279,14 +290,12 @@ class SQLitePreKeyPublicationStore:
                     publication_sequence,
                     expires_at,
                     publication_payload,
-                    contact_bundle,
                     fallback_binding
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(device_id) DO UPDATE SET
                     publication_sequence = excluded.publication_sequence,
                     expires_at = excluded.expires_at,
                     publication_payload = excluded.publication_payload,
-                    contact_bundle = excluded.contact_bundle,
                     fallback_binding = excluded.fallback_binding
                 """,
                 (
@@ -294,7 +303,6 @@ class SQLitePreKeyPublicationStore:
                     generation.publication_sequence,
                     generation.expires_at,
                     generation.publication_payload,
-                    generation.contact_bundle,
                     generation.fallback_binding,
                 ),
             )
@@ -346,18 +354,21 @@ def _verified_generation(
     now: int,
 ) -> RelayPreKeyGeneration:
     try:
-        contact = import_contact_bundle(request.contact_bundle)
         publication = import_ratchet_prekey_publication(request.publication)
-    except (ContactBundleError, RatchetBindingError) as exc:
+    except RatchetBindingError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 
-    if contact.device_id != route_device_id:
+    signing_public_key = base64.b64decode(
+        request.device_signing_public_key,
+        validate=True,
+    )
+    if derive_device_id(signing_public_key) != route_device_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="route DeviceID does not match certified contact bundle",
+            detail="route DeviceID does not match device signing public key",
         )
 
     if export_ratchet_prekey_publication(publication) != request.publication:
@@ -366,13 +377,35 @@ def _verified_generation(
             detail="publication must use canonical JSON serialization",
         )
 
+    verify_key = VerifyKey(signing_public_key)
     try:
         for signed in (*publication.one_time, publication.fallback):
-            verify_ratchet_prekey_binding(signed, contact, now=now)
-    except RatchetBindingError as exc:
+            binding = signed.binding
+            if binding.device_id != route_device_id:
+                raise RatchetBindingError(
+                    "binding DeviceID does not match publication route"
+                )
+            if binding.signal_address_name != route_device_id:
+                raise RatchetBindingError(
+                    "binding protocol address does not match publication route"
+                )
+            if binding.issued_at > now + 5 * 60:
+                raise RatchetBindingError(
+                    "binding was issued too far in the future"
+                )
+            verify_key.verify(
+                binding.canonical_bytes(),
+                signed.device_signature,
+            )
+    except (BadSignatureError, RatchetBindingError) as exc:
+        detail = (
+            "device signature is invalid"
+            if isinstance(exc, BadSignatureError)
+            else str(exc)
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
+            detail=detail,
         ) from exc
 
     expires_at = publication.fallback.binding.expires_at
@@ -387,7 +420,6 @@ def _verified_generation(
         publication_sequence=publication.publication_sequence,
         expires_at=expires_at,
         publication_payload=request.publication,
-        contact_bundle=request.contact_bundle,
         one_time_bindings=tuple(
             export_ratchet_prekey_binding(binding)
             for binding in publication.one_time
