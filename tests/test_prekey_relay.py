@@ -6,7 +6,9 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from ghostlink.config import NodeSettings
 from ghostlink.contact import export_contact_bundle
+from ghostlink.device import EnrolledGhostDevice
 from ghostlink.entity import GhostEntity
+from ghostlink.node import create_app
 from ghostlink.ratchet_binding import RatchetPreKeyMaterial
 from ghostlink.ratchet_publication import (
     create_ratchet_prekey_publication,
@@ -37,7 +39,7 @@ def material(
 
 def publication_request(
     entity: GhostEntity,
-    device,
+    device: EnrolledGhostDevice,
     *,
     sequence: int,
     issued_at: int | None = None,
@@ -81,7 +83,6 @@ def publication_request(
 
 
 def test_prekey_publication_is_cryptographically_verified_and_acknowledged() -> None:
-    from ghostlink.node import create_app
 
     entity = GhostEntity.generate()
     device = entity.enroll_device()
@@ -97,7 +98,6 @@ def test_prekey_publication_is_cryptographically_verified_and_acknowledged() -> 
 
 
 def test_prekey_publication_rejects_route_device_mismatch() -> None:
-    from ghostlink.node import create_app
 
     entity = GhostEntity.generate()
     device = entity.enroll_device()
@@ -116,7 +116,6 @@ def test_prekey_publication_rejects_route_device_mismatch() -> None:
 
 
 def test_prekey_publication_rejects_structurally_valid_signature_tampering() -> None:
-    from ghostlink.node import create_app
 
     entity = GhostEntity.generate()
     device = entity.enroll_device()
@@ -141,7 +140,6 @@ def test_prekey_publication_rejects_structurally_valid_signature_tampering() -> 
 
 
 def test_prekey_publication_sequence_is_strictly_monotonic_and_idempotent() -> None:
-    from ghostlink.node import create_app
 
     entity = GhostEntity.generate()
     device = entity.enroll_device()
@@ -168,7 +166,6 @@ def test_prekey_publication_sequence_is_strictly_monotonic_and_idempotent() -> N
 
 
 def test_prekey_publication_requires_shared_relay_bearer_when_enabled() -> None:
-    from ghostlink.node import create_app
 
     token = "prekey-relay-secret"  # noqa: S105
     entity = GhostEntity.generate()
@@ -190,7 +187,6 @@ def test_prekey_publication_requires_shared_relay_bearer_when_enabled() -> None:
 
 
 def test_prekey_publication_rejects_already_expired_generation() -> None:
-    from ghostlink.node import create_app
 
     entity = GhostEntity.generate()
     device = entity.enroll_device()
@@ -215,7 +211,6 @@ def test_prekey_publication_rejects_already_expired_generation() -> None:
 def test_prekey_publication_sqlite_replacement_survives_app_recreation(
     tmp_path: Path,
 ) -> None:
-    from ghostlink.node import create_app
 
     database_path = tmp_path / "relay.sqlite3"
     settings = NodeSettings(database_path=database_path)
