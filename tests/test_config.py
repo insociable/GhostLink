@@ -75,7 +75,7 @@ def test_access_token_is_loaded_from_environment(tmp_path: Path, monkeypatch) ->
 
     settings = load_settings(tmp_path / "missing.toml")
 
-    assert settings.access_token == "server-secret"
+    assert settings.access_token == "server-secret"  # noqa: S105
 
 
 def test_blank_access_token_disables_authentication(tmp_path: Path, monkeypatch) -> None:
@@ -88,4 +88,4 @@ def test_blank_access_token_disables_authentication(tmp_path: Path, monkeypatch)
 
 def test_whitespace_access_token_is_rejected() -> None:
     with pytest.raises(ValueError, match="access token"):
-        NodeSettings(access_token="   ")
+        NodeSettings(access_token="   ")  # noqa: S106
