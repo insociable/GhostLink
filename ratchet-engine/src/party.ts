@@ -20,6 +20,16 @@ export interface WireMessage {
   readonly body: Uint8Array;
 }
 
+export interface PreKeyGenerationMaterial {
+  readonly oneTimeBundles: readonly SignalClient.PreKeyBundle[];
+  readonly fallbackBundle: SignalClient.PreKeyBundle;
+  readonly signedPreKeyId: number;
+  readonly lastResortKyberPreKeyId: number;
+  readonly oneTimeKeyIds: readonly (readonly [number, number])[];
+}
+
+const MAX_ONE_TIME_PREKEY_BUNDLES = 256;
+
 function uniqueRandomId(isUsed: (id: number) => boolean): number {
   for (let attempt = 0; attempt < 32; attempt += 1) {
     const id = randomInt(1, MAX_PREKEY_ID + 1);
@@ -115,6 +125,138 @@ export class RatchetParty {
       kyberKeyPair.getPublicKey(),
       kyberSignature
     );
+  }
+
+
+  async createPreKeyGeneration(
+    oneTimeCount: number,
+    timestampMs = Date.now()
+  ): Promise<PreKeyGenerationMaterial> {
+    if (
+      !Number.isSafeInteger(oneTimeCount) ||
+      oneTimeCount <= 0 ||
+      oneTimeCount > MAX_ONE_TIME_PREKEY_BUNDLES
+    ) {
+      throw new Error(
+        `oneTimeCount must be between 1 and ${MAX_ONE_TIME_PREKEY_BUNDLES}`
+      );
+    }
+    if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) {
+      throw new Error('timestampMs must be a non-negative safe integer');
+    }
+
+    const identityKey = await this.stores.identity.getIdentityKey();
+    const registrationId =
+      await this.stores.identity.getLocalRegistrationId();
+
+    const signedPreKeyId = uniqueRandomId((id) =>
+      this.stores.signedPreKey.hasSignedPreKey(id)
+    );
+    const signedPreKey = SignalClient.PrivateKey.generate();
+    const signedPreKeySignature = identityKey.sign(
+      signedPreKey.getPublicKey().serialize()
+    );
+    await this.stores.signedPreKey.saveSignedPreKey(
+      signedPreKeyId,
+      SignalClient.SignedPreKeyRecord.new(
+        signedPreKeyId,
+        timestampMs,
+        signedPreKey.getPublicKey(),
+        signedPreKey,
+        signedPreKeySignature
+      )
+    );
+
+    const lastResortKyberPreKeyId = uniqueRandomId((id) =>
+      this.stores.kyberPreKey.hasKyberPreKey(id)
+    );
+    const lastResortKyberKeyPair = SignalClient.KEMKeyPair.generate();
+    const lastResortKyberSignature = identityKey.sign(
+      lastResortKyberKeyPair.getPublicKey().serialize()
+    );
+    await this.stores.kyberPreKey.saveKyberPreKey(
+      lastResortKyberPreKeyId,
+      SignalClient.KyberPreKeyRecord.new(
+        lastResortKyberPreKeyId,
+        timestampMs,
+        lastResortKyberKeyPair,
+        lastResortKyberSignature
+      )
+    );
+
+    const oneTimeBundles: SignalClient.PreKeyBundle[] = [];
+    const oneTimeKeyIds: Array<readonly [number, number]> = [];
+
+    for (let index = 0; index < oneTimeCount; index += 1) {
+      const preKeyId = uniqueRandomId((id) =>
+        this.stores.preKey.hasPreKey(id)
+      );
+      const preKey = SignalClient.PrivateKey.generate();
+      await this.stores.preKey.savePreKey(
+        preKeyId,
+        SignalClient.PreKeyRecord.new(
+          preKeyId,
+          preKey.getPublicKey(),
+          preKey
+        )
+      );
+
+      const kyberPreKeyId = uniqueRandomId((id) =>
+        this.stores.kyberPreKey.hasKyberPreKey(id)
+      );
+      const kyberKeyPair = SignalClient.KEMKeyPair.generate();
+      const kyberSignature = identityKey.sign(
+        kyberKeyPair.getPublicKey().serialize()
+      );
+      await this.stores.kyberPreKey.saveKyberPreKey(
+        kyberPreKeyId,
+        SignalClient.KyberPreKeyRecord.new(
+          kyberPreKeyId,
+          timestampMs,
+          kyberKeyPair,
+          kyberSignature
+        )
+      );
+
+      oneTimeKeyIds.push([preKeyId, kyberPreKeyId]);
+      oneTimeBundles.push(
+        SignalClient.PreKeyBundle.new(
+          registrationId,
+          this.address.deviceId(),
+          preKeyId,
+          preKey.getPublicKey(),
+          signedPreKeyId,
+          signedPreKey.getPublicKey(),
+          signedPreKeySignature,
+          identityKey.getPublicKey(),
+          kyberPreKeyId,
+          kyberKeyPair.getPublicKey(),
+          kyberSignature
+        )
+      );
+    }
+
+    const fallbackBundle = SignalClient.PreKeyBundle.new(
+      registrationId,
+      this.address.deviceId(),
+      null,
+      null,
+      signedPreKeyId,
+      signedPreKey.getPublicKey(),
+      signedPreKeySignature,
+      identityKey.getPublicKey(),
+      lastResortKyberPreKeyId,
+      lastResortKyberKeyPair.getPublicKey(),
+      lastResortKyberSignature
+    );
+
+    return {
+      oneTimeBundles,
+      fallbackBundle,
+      signedPreKeyId,
+      lastResortKyberPreKeyId,
+      oneTimeKeyIds,
+    };
   }
 
   async establishSessionAt(
