@@ -16,7 +16,8 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 - password-encrypted local profiles;
 - persistent replay protection for authenticated message IDs;
 - ciphertext-only GhostNode relay with optional SQLite persistence;
-- static protocol-v2 messaging used by the current CLI;
+- ratcheted protocol-v3 messaging used by the current `send` / `inbox` CLI runtime;
+- retained static protocol-v2 relay/smoke path for compatibility diagnostics only;
 - a local Node/TypeScript ratchet engine using pinned official `@signalapp/libsignal-client`;
 - encrypted persistent libsignal session and pre-key vault state;
 - signed GhostID/DeviceID-to-libsignal pre-key bindings;
@@ -27,9 +28,9 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 
 ### Runtime status
 
-The current user-facing CLI still sends and receives **static protocol v2** messages.
+The current user-facing `send` and `inbox` commands use **ratcheted protocol v3**.
 
-The ratcheted protocol-v3 transport is implemented and tested, but the CLI cutover is intentionally a separate milestone. There is no automatic downgrade from failed ratcheted messaging to static v2.
+A failed ratchet bootstrap, encrypt or decrypt does not trigger static-v2 messaging. Static protocol v2 remains available only as an explicitly separate relay/diagnostic compatibility path; `node-smoke` identifies itself as a legacy static-v2 smoke test.
 
 ## Security status
 
@@ -56,8 +57,8 @@ See [SECURITY.md](SECURITY.md) and [docs/threat-model.md](docs/threat-model.md) 
 
 | Path | Status |
 | --- | --- |
-| Static message protocol v2 | Implemented; current CLI runtime |
-| Ratcheted message protocol v3 | Implemented/tested; CLI cutover pending |
+| Static message protocol v2 | Implemented; retained legacy relay/diagnostic path |
+| Ratcheted message protocol v3 | Implemented/tested; current `send` / `inbox` CLI runtime |
 | Ratchet pre-key lifecycle | Publication, fetch, continuity, maintenance and GC implemented |
 | Protocol v1 | Removed from runtime |
 
@@ -84,10 +85,14 @@ Specifications:
 
 ## Current CLI quick start
 
-Install dependencies:
+Install Python dependencies and build the pinned local ratchet engine:
 
 ```bash
 poetry install
+cd ratchet-engine
+npm ci
+npm run build
+cd ..
 ```
 
 Create a local encrypted profile:
@@ -116,9 +121,23 @@ Check it:
 poetry run ghostlink node-health --node http://127.0.0.1:8000
 ```
 
-The current `send` / `inbox` CLI commands still exercise static protocol v2 until the explicit v3 cutover.
+Before another user can bootstrap a first ratcheted session to a device, that device must publish/maintain its pre-key pool:
 
-See [docs/m3-cli.md](docs/m3-cli.md) for the current CLI workflow and [deploy/oracle/README.md](deploy/oracle/README.md) for the container deployment runbook.
+```bash
+poetry run ghostlink prekey-sync \
+  --profile alice.ghost \
+  --node http://127.0.0.1:8000
+```
+
+Existing legacy profile-v1 files remain readable, but ratcheted commands require an explicit one-time migration:
+
+```bash
+poetry run ghostlink profile-upgrade --profile alice.ghost
+```
+
+`send` and `inbox` use protocol v3 only. They never silently retry through static protocol v2.
+
+See [docs/m3-cli.md](docs/m3-cli.md) for the current ratcheted CLI workflow and [deploy/oracle/README.md](deploy/oracle/README.md) for the container deployment runbook.
 
 ## Repository layout
 

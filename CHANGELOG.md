@@ -45,7 +45,11 @@ The format follows Keep a Changelog and Semantic Versioning.
 - owner-authenticated pre-key pool status plus fail-closed automatic replenishment/expiration refresh with local lifecycle cross-checks and depletion cooldown;
 - transactional 15-day retired pre-key garbage collection that removes unprotected EC/Kyber private records and associated Kyber replay metadata while preserving pending/active/recent-retired generations;
 - explicitly separate protocol-v3 ratcheted message envelopes and GhostNode `/v3/messages` storage/transport;
-- context-bound libsignal decryption that authenticates relay-visible v3 routing/lifecycle metadata before the ratchet transaction can commit.
+- context-bound libsignal decryption that authenticates relay-visible v3 routing/lifecycle metadata before the ratchet transaction can commit;
+- local profile v2 with an independently random 32-byte ratchet-vault master key inside the existing Argon2id/SecretBox encrypted payload;
+- explicit atomic profile-v1 migration for ratcheted CLI use;
+- durable ratchet-session lookup before bootstrap;
+- `prekey-sync` plus user-facing `send` / `inbox` cutover to protocol v3 across persistent ratchet-engine restarts.
 
 ### Security
 
@@ -62,12 +66,14 @@ The format follows Keep a Changelog and Semantic Versioning.
 - pre-key maintenance treats relay remaining-count data as untrusted operational input: sequence/expiration divergence fails closed and depletion-triggered rotation is cooldown-limited;
 - retired pre-key GC fails closed on ambiguous lifecycle ownership or clock rollback and best-effort zeroizes serialized private-key store buffers before deletion;
 - ratcheted v3 relay metadata tampering fails inside the durable decrypt transaction, restoring the previous ratchet state instead of consuming a modified envelope;
-- static v2 and ratcheted v3 message routes/tables are isolated and there is no automatic protocol downgrade.
+- static v2 and ratcheted v3 message routes/tables are isolated and there is no automatic protocol downgrade;
+- user-facing send/inbox fail closed on ratchet bootstrap/decrypt errors instead of retrying via static v2;
+- the ratchet-vault master key is kept inside encrypted profile v2 and is not passed in argv or environment.
 
 ### Known limitations
 
 - shared relay access control is not per-device cryptographic authentication;
-- the libsignal ratchet engine and ratcheted v3 relay path provide tested forward-secrecy/post-compromise behavior, but the user-facing CLI still uses static protocol v2 until explicit cutover;
+- the libsignal ratchet engine and user-facing v3 CLI path provide tested forward-secrecy/post-compromise behavior, but GhostLink remains pre-alpha and unaudited;
 - traffic metadata remains visible to the relay;
 - replay-cache rollback/deletion can weaken replay suppression for still-valid captured messages;
 - retired-key GC does not guarantee forensic secure erasure from runtime/allocator copies, filesystem snapshots, storage media, backups or restored old vaults;

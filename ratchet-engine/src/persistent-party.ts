@@ -573,6 +573,13 @@ export class PersistentRatchetParty {
     return SignalClient.ProtocolAddress.new(name, SIGNAL_DEVICE_ID);
   }
 
+  async hasSessionWithAddress(remoteName: string): Promise<boolean> {
+    const remoteAddress = this.remoteAddress(remoteName);
+    return this.exclusive(async () =>
+      (await this.inner.stores.session.getSession(remoteAddress)) !== null
+    );
+  }
+
   async establishSessionWithAddress(
     remoteName: string,
     publicationSequence: number,

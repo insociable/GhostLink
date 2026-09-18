@@ -1,6 +1,6 @@
 # GhostNode Ratcheted Relay Protocol v3
 
-Status: implemented; user-facing CLI cutover pending.
+Status: implemented; current user-facing send/inbox relay path.
 
 ## API
 

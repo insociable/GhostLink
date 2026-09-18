@@ -1,6 +1,6 @@
 # GhostLink Ratcheted Message Protocol v3
 
-Status: implemented transport path; CLI cutover pending.
+Status: implemented transport and current user-facing send/inbox CLI path.
 
 ## Purpose
 
@@ -92,7 +92,7 @@ These are implementation limits, not cryptographic constants.
 
 ## Session bootstrap
 
-A sender must already have a verified ratchet session or create one through the implemented flow:
+A sender reuses an existing verified durable ratchet session when present, otherwise it creates one through the implemented flow:
 
 ```text
 GhostNode pre-key fetch

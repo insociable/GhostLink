@@ -319,6 +319,8 @@ class RatchetRpcService {
         return this.commitPreKeyPublication(request.params);
       case 'establish_session':
         return this.establishSession(request.params);
+      case 'has_session':
+        return this.hasSession(request.params);
       case 'encrypt':
         return this.encrypt(request.params);
       case 'decrypt':
@@ -508,6 +510,22 @@ class RatchetRpcService {
       bundle
     );
     return null;
+  }
+
+  private async hasSession(
+    params: unknown
+  ): Promise<Record<string, boolean>> {
+    const document = requireObject(params, 'has_session params');
+    requireExactFields(
+      document,
+      ['remote_device_id'],
+      'has_session params'
+    );
+    return {
+      exists: await this.requireParty().hasSessionWithAddress(
+        requireDeviceId(document, 'remote_device_id')
+      ),
+    };
   }
 
   private async encrypt(params: unknown): Promise<Record<string, unknown>> {

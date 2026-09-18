@@ -61,6 +61,26 @@ class SQLiteReplayCache:
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path, timeout=5.0)
 
+    def has_seen(
+        self,
+        sender_device_id: str,
+        message_id: str,
+    ) -> bool:
+        """Return whether one previously authenticated message ID is retained."""
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT 1
+                    FROM seen_messages
+                    WHERE sender_device_id = ? AND message_id = ?
+                    """,
+                    (sender_device_id, message_id),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ReplayCacheError("unable to read replay cache") from exc
+        return row is not None
+
     def accept(
         self,
         sender_device_id: str,
