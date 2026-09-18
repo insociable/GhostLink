@@ -77,23 +77,50 @@ test('legacy stores state v1 migrates to empty lifecycle state', () => {
 
   const migrated = parsePartyStoresState(legacy);
 
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.deepEqual(migrated.lifecycle, emptyPreKeyLifecycleState());
+  assert.deepEqual(migrated.remotePublicationSequences, []);
 });
 
-test('stores state v2 round-trips lifecycle metadata', () => {
+test('stores state v2 migrates to empty remote publication continuity', () => {
+  const current = exportPartyStores(createPartyStores(4_200));
+  const legacyV2 = {
+    version: 2,
+    session: current.session,
+    identity: current.identity,
+    preKey: current.preKey,
+    signedPreKey: current.signedPreKey,
+    kyberPreKey: current.kyberPreKey,
+    lifecycle: lifecycleFixture(),
+  };
+
+  const migrated = parsePartyStoresState(legacyV2);
+
+  assert.equal(migrated.version, 3);
+  assert.deepEqual(migrated.lifecycle, legacyV2.lifecycle);
+  assert.deepEqual(migrated.remotePublicationSequences, []);
+});
+
+test('stores state v3 round-trips lifecycle and remote continuity metadata', () => {
   const current = exportPartyStores(createPartyStores(4_200));
   const lifecycle = lifecycleFixture();
   const state: PartyStoresState = {
     ...current,
     lifecycle,
+    remotePublicationSequences: [
+      ['device1:' + 'b'.repeat(52), 7],
+    ],
   };
 
   const restored = restorePartyStores(state);
   const roundTrip = exportPartyStores(restored);
 
   assert.deepEqual(roundTrip.lifecycle, lifecycle);
-  assert.equal(roundTrip.version, 2);
+  assert.deepEqual(
+    roundTrip.remotePublicationSequences,
+    state.remotePublicationSequences
+  );
+  assert.equal(roundTrip.version, 3);
 });
 
 test('lifecycle state rejects duplicate one-time key identifiers', () => {
@@ -153,9 +180,11 @@ test('lifecycle metadata and pending public payload are encrypted at rest', asyn
   const vault = new RatchetStateVault(path, randomBytes(32));
   const current = exportPartyStores(createPartyStores(4_200));
   const lifecycle = lifecycleFixture();
+  const remoteDeviceId = 'device1:' + 'b'.repeat(52);
   const state: PartyStoresState = {
     ...current,
     lifecycle,
+    remotePublicationSequences: [[remoteDeviceId, 7]],
   };
 
   await vault.save({ name: 'alice', deviceId: 1 }, state);
@@ -164,10 +193,16 @@ test('lifecycle metadata and pending public payload are encrypted at rest', asyn
   assert.equal(raw.includes('publicationSequence'), false);
   assert.equal(raw.includes('bindings'), false);
   assert.equal(raw.includes('signedPreKeyId'), false);
+  assert.equal(raw.includes(remoteDeviceId), false);
+  assert.equal(raw.includes('remotePublicationSequences'), false);
 
   const loaded = await vault.load({ name: 'alice', deviceId: 1 });
   assert.notEqual(loaded, null);
   assert.deepEqual(loaded?.lifecycle, lifecycle);
+  assert.deepEqual(
+    loaded?.remotePublicationSequences,
+    state.remotePublicationSequences
+  );
 });
 
 
