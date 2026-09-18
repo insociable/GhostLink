@@ -13,3 +13,11 @@ build/
 .idea/
 .vscode/
 .DS_Store
+
+# GhostLink local/generated state
+*.ghost
+*.contact
+*.sqlite3
+ghostlink.toml
+data/
+backups/
