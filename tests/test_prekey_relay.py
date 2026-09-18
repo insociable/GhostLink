@@ -11,11 +11,11 @@ from ghostlink.device import EnrolledGhostDevice
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app
 from ghostlink.prekey_fetch import create_prekey_fetch_request
-from ghostlink.prekey_status import create_prekey_status_request
 from ghostlink.prekey_relay import (
     RelayPreKeyGeneration,
     SQLitePreKeyPublicationStore,
 )
+from ghostlink.prekey_status import create_prekey_status_request
 from ghostlink.ratchet_binding import (
     RatchetPreKeyMaterial,
     import_ratchet_prekey_binding,
