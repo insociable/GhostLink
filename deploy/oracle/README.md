@@ -1,24 +1,32 @@
 # Oracle VM deployment runbook
 
-This runbook deploys the current experimental GhostNode on a fresh Oracle Linux/Ubuntu-style VM using Docker Compose.
+This runbook covers two deliberately separate GhostNode deployment modes:
 
-GhostLink is not yet suitable for sensitive real-world communications.
+- local/administrative testing through host loopback + SSH tunnel;
+- reviewed public HTTPS ingress through Caddy.
 
-## Network stance
+GhostLink remains pre-alpha and is not suitable for sensitive real-world communications.
 
-For the first deployment:
+## Security boundary
 
-- keep SSH restricted to your administrative source addresses where possible;
-- do **not** expose TCP/8000 in the Oracle security list/NSG;
-- the Compose file publishes GhostNode only on `127.0.0.1:8000`;
-- relay operations require a shared Bearer access token;
-- add public HTTPS only after a reverse proxy or tunnel is configured and reviewed.
+The public reference deployment follows these rules:
 
-The shared token is access control for the relay. It is **not** GhostID authentication and does not replace end-to-end encryption.
+- SSH is restricted to administrative source addresses where possible;
+- GhostNode TCP/8000 is never published by the public Compose stack;
+- TCP/80 is not published or required;
+- Caddy is the only public service and publishes TCP/443 only;
+- protocol-v3 message operations still require DeviceID signatures;
+- the shared Bearer token remains an additional coarse control;
+- the Bearer token is stored in a file and mounted as a Docker secret, not placed in argv or environment values;
+- GhostNode does not trust proxy headers for authorization;
+- HTTP access logs are disabled in the Oracle GhostNode profile;
+- no Caddy HTTP access log is enabled.
+
+The external test gate in this document must pass before issue #21 is considered verified.
 
 ## 1. Host preparation
 
-Install Docker Engine and the Docker Compose plugin using the vendor-supported packages for the VM distribution.
+Install Docker Engine and the Docker Compose plugin using vendor-supported packages for the VM distribution.
 
 Verify:
 
@@ -27,7 +35,7 @@ docker --version
 docker compose version
 ```
 
-Add the administrative user to the Docker group only if you accept that Docker access is effectively root-equivalent.
+Docker access is effectively root-equivalent. Restrict membership of the Docker group accordingly.
 
 ## 2. Clone GhostLink
 
@@ -37,68 +45,57 @@ cd GhostLink
 git checkout main
 ```
 
-## 3. Create the GhostNode access token
+## 3. Create the relay Bearer-token file
 
-Compose refuses to start without `GHOSTLINK_NODE_TOKEN`.
-
-Generate a random token into a local `.env` file:
+Create a private local secret directory and generate the token directly into a file:
 
 ```bash
 umask 077
-TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
-printf 'GHOSTLINK_NODE_TOKEN=%s\n' "$TOKEN" > .env
-unset TOKEN
-chmod 600 .env
+mkdir -p .secrets
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > .secrets/ghostlink_node_token
+chmod 600 .secrets/ghostlink_node_token
 ```
 
-The repository ignores `.env`. Never commit this file.
+Do not print the token, place it in shell history, pass it in argv, or store its value in an environment variable.
 
-Anyone who knows this token can use the relay API, so transfer it to client machines only through a trusted channel.
+The repository ignores `.secrets/`.
 
-## 4. Build and start GhostNode
+Compose needs only the **path** of the token file:
 
-Validate the configuration first:
+```bash
+export GHOSTLINK_NODE_TOKEN_FILE="$PWD/.secrets/ghostlink_node_token"
+```
+
+The environment variable contains a filesystem path, not the secret value.
+
+## 4. Loopback-only deployment
+
+The root `compose.yaml` is the retained local/SSH-tunnel mode.
+
+Validate and start it:
 
 ```bash
 docker compose config --quiet
-```
-
-Then build and start:
-
-```bash
 docker compose build --pull
 docker compose up -d
 ```
 
-Check status:
+Check:
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 ghostnode
 curl --fail http://127.0.0.1:8000/health
 ```
 
-Expected health response:
+Expected response:
 
 ```json
 {"status":"ok"}
 ```
 
-The health endpoint is intentionally public. It returns HTTP 503 if the configured relay storage is unavailable. Message relay endpoints are not.
+GhostNode is published only on host loopback in this mode.
 
-## 5. Persistent ciphertext store
-
-The Compose stack mounts the named volume `ghostnode_data` at `/data`.
-
-GhostNode stores its SQLite database at:
-
-```text
-/data/messages.sqlite3
-```
-
-The database contains encrypted envelopes and routing metadata, not plaintext message bodies or client private keys.
-
-## 6. Test from a workstation without exposing port 8000
+## 5. Test loopback mode from a workstation
 
 Create an SSH tunnel:
 
@@ -106,11 +103,13 @@ Create an SSH tunnel:
 ssh -L 8000:127.0.0.1:8000 <user>@<oracle-vm>
 ```
 
-On the workstation, export the same token that is stored in the VM's `.env`:
+On the workstation, create a private local copy of the same relay token through a trusted transfer channel, then point the client to its file:
 
 ```bash
-export GHOSTLINK_NODE_TOKEN='<same-random-token>'
+export GHOSTLINK_NODE_TOKEN_FILE="$HOME/.config/ghostlink/node-token"
 ```
+
+The file itself should be readable only by that user.
 
 Check the node:
 
@@ -118,87 +117,229 @@ Check the node:
 ghostlink node-health --node http://127.0.0.1:8000
 ```
 
-Run a complete ephemeral E2EE round trip:
+The retained static diagnostic smoke can be run explicitly:
 
 ```bash
 ghostlink node-smoke --node http://127.0.0.1:8000
 ```
 
-Expected result:
+This V2 smoke is diagnostic only. User-facing `send` / `inbox` use protocol v3 and never fall back to it automatically.
+
+## 6. Prepare public DNS
+
+Choose a dedicated hostname, for example:
 
 ```text
-GhostNode E2EE smoke test passed
+node.example.net
 ```
 
-The smoke command creates two temporary identities in memory, encrypts a test message locally, sends only ciphertext through GhostNode, retrieves and decrypts it locally, verifies the plaintext, then deletes the relay copy. No profile or contact file is written.
+Create an A record pointing to the Oracle VM public IPv4 address.
 
-Then `ghostlink send` and `ghostlink inbox` automatically send the token in the HTTP Authorization header.
+If an AAAA record is published, IPv6 must be intentionally configured and firewalled as well. Do not publish an unusable AAAA record.
 
-The same SSH tunnel can be used for the first persistent Alice/Bob M3 test.
+Wait until public DNS resolution is correct before starting Caddy certificate issuance.
 
-## 7. Rotate the access token
+## 7. Configure public non-secret settings
 
-Generate a new token and replace the value in `.env`, then recreate the service:
+Create or update a local `.env` containing only non-secret deployment values:
+
+```dotenv
+GHOSTLINK_NODE_TOKEN_FILE=.secrets/ghostlink_node_token
+GHOSTLINK_PUBLIC_HOSTNAME=node.example.net
+GHOSTLINK_ACME_EMAIL=admin@example.net
+```
+
+The token **value** is not stored in `.env`.
+
+## 8. Oracle and host firewall policy
+
+For the public deployment:
+
+- allow TCP/443 from intended public client networks, normally the Internet;
+- keep SSH limited to administrative source addresses;
+- do not allow TCP/80;
+- do not allow TCP/8000;
+- no UDP/443 rule is required by the reference stack because HTTP/3 is disabled.
+
+Apply the same intent to both Oracle Security Lists/NSGs and the host firewall where one is enabled.
+
+Before public start, verify no process is already occupying TCP/443.
+
+## 9. Validate the public stack
+
+Load the non-secret environment values if needed:
 
 ```bash
-docker compose up -d --force-recreate
+set -a
+. ./.env
+set +a
 ```
 
-Update clients with the new token. The old token stops working after the container is recreated.
+Validate Compose:
 
-## 8. Update procedure
+```bash
+docker compose -f deploy/oracle/compose.public.yaml config --quiet
+```
+
+Validate the Caddyfile with the pinned image:
+
+```bash
+docker run --rm \
+  --env GHOSTLINK_PUBLIC_HOSTNAME \
+  --env GHOSTLINK_ACME_EMAIL \
+  --volume "$PWD/deploy/oracle/Caddyfile:/etc/caddy/Caddyfile:ro" \
+  caddy:2.11.4-alpine \
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+## 10. Start public HTTPS
+
+Build GhostNode and start the public stack:
+
+```bash
+docker compose -f deploy/oracle/compose.public.yaml build --pull
+docker compose -f deploy/oracle/compose.public.yaml up -d
+```
+
+Inspect service state:
+
+```bash
+docker compose -f deploy/oracle/compose.public.yaml ps
+docker compose -f deploy/oracle/compose.public.yaml logs --tail=100 caddy
+docker compose -f deploy/oracle/compose.public.yaml logs --tail=100 ghostnode
+```
+
+Do not enable Caddy HTTP access logging merely for routine diagnostics: request paths contain relay metadata such as DeviceIDs.
+
+## 11. Certificate lifecycle
+
+Caddy automatically obtains and renews the public certificate.
+
+The persistent `caddy_data` volume stores ACME account and certificate state. Preserve that volume across container recreation and ordinary application rollback.
+
+The reference Caddy configuration disables the HTTP challenge and uses the TLS-ALPN path on TCP/443, so TCP/80 is not required.
+
+Operators should monitor warning/error logs and periodically re-run the external TLS checks below.
+
+No Certbot cron job is required.
+
+## 12. External validation gate
+
+Run these checks from a machine **outside** the Oracle VM/network.
+
+Resolve the hostname:
+
+```bash
+getent ahosts node.example.net
+```
+
+Verify HTTPS and certificate validation:
+
+```bash
+curl --fail --show-error --silent https://node.example.net/health
+```
+
+Expected body:
+
+```json
+{"status":"ok"}
+```
+
+Inspect certificate validation if needed:
+
+```bash
+openssl s_client \
+  -connect node.example.net:443 \
+  -servername node.example.net \
+  -verify_return_error </dev/null
+```
+
+From the same external machine, verify that TCP/80 and TCP/8000 are not reachable. Use an external port-testing tool appropriate for that workstation/network.
+
+Then configure the client with its local Bearer-token file path:
+
+```bash
+export GHOSTLINK_NODE_TOKEN_FILE="$HOME/.config/ghostlink/node-token"
+```
+
+Run a real protocol-v3 workflow against:
+
+```text
+https://node.example.net
+```
+
+At minimum:
+
+1. `prekey-sync` for the destination device;
+2. `send` from a verified contact/device;
+3. `inbox` on the destination;
+4. confirm no static-v2 fallback occurred.
+
+Only after the certificate, closed-port and v3 tests pass should issue #21 be closed.
+
+## 13. Rotate the relay Bearer token
+
+Generate a replacement directly into a temporary private file, then atomically replace the mounted source:
+
+```bash
+umask 077
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > .secrets/ghostlink_node_token.new
+chmod 600 .secrets/ghostlink_node_token.new
+mv .secrets/ghostlink_node_token.new .secrets/ghostlink_node_token
+```
+
+Recreate GhostNode so the mounted secret is refreshed:
+
+```bash
+docker compose -f deploy/oracle/compose.public.yaml up -d --force-recreate ghostnode
+```
+
+Distribute the new token to authorized clients through a trusted channel and replace their local token files.
+
+## 14. Update procedure
 
 ```bash
 git pull --ff-only
-docker compose build --pull
-docker compose up -d
-docker compose ps
+docker compose -f deploy/oracle/compose.public.yaml config --quiet
+docker compose -f deploy/oracle/compose.public.yaml build --pull
+docker compose -f deploy/oracle/compose.public.yaml up -d
+docker compose -f deploy/oracle/compose.public.yaml ps
 ```
 
-Run the health check after every update.
+Re-run the external HTTPS health check after every update.
 
-## 9. Stop
+## 15. Persistent state and backup
+
+The public stack uses:
+
+- `ghostnode_data` for the relay SQLite database;
+- `caddy_data` for certificate/ACME state;
+- `caddy_config` for Caddy runtime state.
+
+Do not use `docker compose down -v` unless those states are intentionally being destroyed.
+
+A relay-database rollback is security relevant because it can also roll back publication/request-replay state. Ordinary application rollback must preserve the current GhostNode data volume.
+
+For an early-development offline archive, stop the relevant service before copying its volume. A production backup/anti-rollback design remains separate work.
+
+## 16. Rollback
+
+Application/configuration rollback:
+
+1. preserve current `ghostnode_data`, `caddy_data` and `caddy_config`;
+2. check out the previous reviewed Git revision;
+3. restore compatible non-secret deployment configuration;
+4. validate Compose and Caddyfile;
+5. recreate the containers without replacing the data volumes;
+6. verify public certificate validation and `/health`;
+7. verify a v3 authenticated flow.
+
+Do **not** restore an older GhostNode SQLite snapshot as a routine software rollback.
+
+## 17. Stop
 
 ```bash
-docker compose down
+docker compose -f deploy/oracle/compose.public.yaml down
 ```
 
-The named data volume is preserved.
-
-Do not use `docker compose down -v` unless the encrypted relay database is intentionally being destroyed.
-
-## 10. Backup the relay database
-
-Create a backup directory:
-
-```bash
-mkdir -p backups
-```
-
-For an early development node, stop GhostNode before taking a simple volume archive:
-
-```bash
-docker compose stop ghostnode
-docker run --rm \
-  -v ghostlink_ghostnode_data:/data:ro \
-  -v "$PWD/backups:/backup" \
-  alpine \
-  tar -czf /backup/ghostnode-data.tar.gz -C /data .
-docker compose start ghostnode
-```
-
-A later production design should use a documented SQLite online-backup process and encrypted off-host backups.
-
-## 11. Public HTTPS — later step
-
-Do not point mobile/desktop clients at a raw public HTTP GhostNode.
-
-The next infrastructure step is one of:
-
-- Caddy/Nginx with a real TLS certificate;
-- a reviewed Cloudflare Tunnel configuration;
-- another authenticated TLS ingress.
-
-Only TCP/443 should normally need public exposure after that layer exists.
-
-The shared Bearer token remains a coarse access-control mechanism. Per-device authenticated relay access is still future protocol work.
+Persistent volumes are preserved unless `-v` is explicitly added.
