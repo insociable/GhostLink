@@ -122,6 +122,9 @@ jobs:
             caddy:2.11.4-alpine \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
+      - name: Validate external gate utility
+        run: python deploy/oracle/validate_external.py --help > /dev/null
+
       - name: Build GhostNode image
         run: docker compose build
 
