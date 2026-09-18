@@ -1,10 +1,10 @@
-import time
-import urllib.parse
 from collections.abc import Callable
+import time
 from typing import cast
+import urllib.parse
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
 from ghostlink.client.node_client import (
     GhostNodeClient,
