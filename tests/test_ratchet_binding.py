@@ -269,7 +269,7 @@ def test_fallback_binding_requires_absent_ec_one_time_prekey() -> None:
         )
 
 
-@pytest.mark.parametrize("publication_sequence", [0, -1, 1 << 64])
+@pytest.mark.parametrize("publication_sequence", [0, -1, 1 << 53])
 def test_binding_rejects_invalid_publication_sequence(
     publication_sequence: int,
 ) -> None:
