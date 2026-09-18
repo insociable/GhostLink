@@ -1,5 +1,4 @@
 import pytest
-
 from ghostlink.contact import ContactBundleError, export_contact_qr_payload
 from ghostlink.contact_qr import render_contact_qr_svg
 from ghostlink.entity import GhostEntity
