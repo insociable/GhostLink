@@ -16,7 +16,7 @@
     "@signalapp/libsignal-client": "0.102.3"
   },
   "devDependencies": {
-    "@types/node": "24.10.1",
+    "@types/node": "26.5.1",
     "typescript": "6.0.3"
   }
 }
