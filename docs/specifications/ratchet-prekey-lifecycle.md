@@ -484,11 +484,9 @@ Automatic maintenance is now implemented:
 - clock rollback before a recorded retirement timestamp fails closed;
 - the bounded retired history remains capped at 32 entries after GC rather than accepting a generation that cannot be committed locally.
 
-The ratcheted message-v3 envelope and GhostNode v3 transport are implemented.
+The ratcheted message-v3 envelope, GhostNode v3 transport and user-facing CLI send/inbox cutover are implemented.
 
-The following is still pending:
-
-- user-facing CLI send/inbox cutover from static v2 to ratcheted v3.
+The CLI also exposes explicit `prekey-sync` maintenance for making a device reachable before first-contact bootstrap.
 
 ## RPC implications
 
@@ -539,8 +537,10 @@ Implementation is not complete until tests cover:
 17. crash after local prepare resumes the same publication;
 18. crash after relay accept but before local commit retries exactly;
 19. malformed lifecycle metadata fails closed;
-20. static protocol-v2 CLI runtime remains untouched until the later explicit CLI cutover;
-21. ratcheted v3 relay metadata tampering rolls the libsignal transaction back and leaves the original ciphertext decryptable.
+20. ratcheted v3 relay metadata tampering rolls the libsignal transaction back and leaves the original ciphertext decryptable;
+21. real CLI pre-key sync/send/inbox survives separate ratchet-engine process restarts;
+22. later sends reuse an existing durable session without consuming a fresh remote one-time pre-key;
+23. ratchet bootstrap failure emits no static-v2 fallback message.
 
 ## Security notes
 
