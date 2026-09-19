@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-09-18
 
+> Implementation note (current runtime): the v3/libsignal migration described by this ADR is complete for the user-facing network runtime. Static-v2 message relay routes are retired. The forward-secrecy and post-compromise language below describes properties targeted/delegated to the pinned upstream libsignal implementation plus integration-test evidence; it is not an independent GhostLink cryptographic proof.
+
 ## Context
 
 GhostLink protocol v2 authenticates routing/lifecycle metadata, rejects replays, and encrypts messages end-to-end with static device encryption keys.
@@ -162,13 +164,11 @@ The sender persists the highest publication sequence observed for each verified 
 
 Restoring an older valid copy of the entire ratchet vault can still roll this continuity state back. Solving whole-vault rollback requires an external monotonic state or trusted hardware and is not claimed here.
 
-## Existing protocol-v2 envelope
+## Historical protocol-v2 migration boundary
 
-The current GhostLink protocol-v2 static-box encryption path will remain operational until the libsignal migration is proven end-to-end.
+This section records the migration constraint that applied while v3 was being introduced. The user-facing network runtime is now v3-only and the static-v2 message relay routes are retired.
 
-It must not be silently mixed with ratcheted ciphertext under the same envelope semantics.
-
-The migration will introduce an explicit cipher-suite/session marker before ratcheted traffic is accepted by production GhostNode clients.
+Static-v2 ciphertext must not be silently reinterpreted as ratcheted traffic, and a failed v3 operation must not trigger a static-v2 fallback.
 
 ## Failure policy
 
@@ -218,7 +218,7 @@ Advantages:
 
 - no custom Double Ratchet implementation;
 - maintained protocol implementation;
-- forward secrecy and break-in recovery become session properties;
+- forward-secrecy and break-in-recovery behavior is delegated to the pinned libsignal session implementation and covered by integration scenarios;
 - current libsignal provides a path to hybrid classical/post-quantum ratcheting;
 - protocol behavior can be tested against upstream semantics.
 

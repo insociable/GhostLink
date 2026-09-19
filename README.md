@@ -8,7 +8,7 @@
 
 ## Français
 
-GhostLink est un projet **open source de messagerie sécurisée et auto-hébergeable**. Il vise à fournir une communication chiffrée de bout en bout avec une exposition minimale des métadonnées, une gestion explicite de l'identité et des appareils, et une infrastructure de relais qui n'a pas besoin d'accéder au contenu des messages.
+GhostLink est un projet **open source de messagerie chiffrée de bout en bout et auto-hébergeable**. GhostNode n'a pas besoin d'accéder au contenu en clair des messages ; les métadonnées qu'il peut observer et les limites de cette propriété sont documentées explicitement dans le modèle de menace.
 
 Le projet est actuellement en **pré-alpha**. Il est activement développé et testé, mais n'est pas encore destiné à des communications sensibles en production.
 
@@ -25,9 +25,9 @@ Fonctionnalités déjà en place :
 - sessions et prekeys libsignal persistantes et chiffrées ;
 - publication, récupération, rotation et maintenance des prekeys ;
 - relais **GhostNode** ne manipulant que du ciphertext, avec persistance SQLite optionnelle ;
-- protection persistante contre le replay et déduplication des messages ;
+- protection contre le replay et déduplication des messages, persistantes lorsque l'état SQLite correspondant est utilisé ;
 - requêtes v3 signées par DeviceID avec contrôle du timestamp et des identifiants de requête ;
-- contrôle de continuité d'état et protections contre le rollback ;
+- coordination d'état sensible au rollback, avec détection lorsque le witness monotone reste plus récent que l'état restauré ;
 - contacts publics versionnés, export/import par QR code et vérification humaine **Fingerprint v2** ;
 - états de confiance locaux `imported`, `verified` et `changed` ;
 - cycle de vie monotone des appareils ;
@@ -41,7 +41,7 @@ La documentation de sécurité et le modèle de menace restent la référence po
 
 ## English
 
-GhostLink is an **open-source, self-hostable secure messaging project** focused on end-to-end encryption, minimal metadata exposure, explicit identity/device management, and ciphertext-only message relaying.
+GhostLink is an **open-source, self-hostable end-to-end encrypted messaging project**. GhostNode does not need access to message plaintext; relay-visible metadata and the limits of that property are documented explicitly in the threat model.
 
 The project is currently **pre-alpha**. It is under active development and testing, but is not yet intended for production use with sensitive communications.
 
@@ -58,9 +58,9 @@ Implemented building blocks include:
 - encrypted persistent libsignal sessions and pre-key state;
 - pre-key publication, retrieval, rotation and maintenance;
 - ciphertext-only **GhostNode** relay with optional SQLite persistence;
-- persistent replay protection and message deduplication;
+- replay protection and message deduplication, persistent when the corresponding SQLite-backed state is used;
 - DeviceID-signed v3 relay requests with timestamp/request-ID replay protection;
-- rollback-aware state continuity controls;
+- rollback-aware state continuity controls that detect stale state only while the monotonic witness remains newer;
 - versioned public contacts, QR import/export and **Fingerprint v2** human verification;
 - local `imported` / `verified` / `changed` contact trust state;
 - monotonic device lifecycle state;
@@ -81,7 +81,6 @@ The ratcheted messaging path uses the official libsignal implementation and is d
 Important remaining work includes:
 
 - production relay monotonic witnessing outside the relay host/volume snapshot domain;
-- relay enforcement for stale/revoked devices;
 - key transparency;
 - Sybil-resistant abuse controls;
 - independent cryptographic/protocol review;
@@ -89,7 +88,7 @@ Important remaining work includes:
 
 A cryptographically valid contact bundle proves internal consistency. It does not, by itself, prove that a GhostID belongs to the human the user intended to contact.
 
-See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md) and [docs/roadmap.md](docs/roadmap.md).
+See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md), [docs/security-assurance-matrix.md](docs/security-assurance-matrix.md) and [docs/roadmap.md](docs/roadmap.md).
 
 ---
 
@@ -102,7 +101,7 @@ See [SECURITY.md](SECURITY.md), [docs/threat-model.md](docs/threat-model.md) and
 | Ratchet pre-key lifecycle | Publication, fetch, continuity, replenishment/rotation and GC implemented |
 | Static message protocol v2 | Historical local codec only; network runtime retired |
 | Protocol v1 | Removed from runtime |
-| Device recovery | Crash-resumable local transaction implemented; relay stale-device enforcement remains pending |
+| Device recovery / revocation | Crash-resumable recovery, relay lifecycle publication and stale-device rejection implemented; discovery remains relay-scoped rather than global |
 
 Specifications:
 
@@ -122,7 +121,7 @@ Specifications:
 - security by design;
 - open source;
 - self-hosting;
-- minimal metadata;
+- explicit documentation of relay-visible metadata and traffic-analysis limits;
 - documented protocol and security decisions;
 - fail-closed behavior;
 - no custom cryptographic algorithms;

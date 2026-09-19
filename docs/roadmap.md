@@ -44,7 +44,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [ ] desktop interface;
 - [x] password-encrypted local profile format with encrypted ratchet-vault master key and explicit v1 migration;
 - [ ] OS keychain / hardware-backed secret integration;
-- [ ] contact fingerprint / QR verification UX (full fingerprint display implemented; QR/trust state pending);
+- [x] CLI contact fingerprint / QR verification and persisted `imported` / `verified` / `changed` trust-state workflow;
 - [ ] local conversation history;
 - [ ] packaging for Linux and Windows;
 - [ ] mobile application architecture.
@@ -53,7 +53,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 
 - [x] select maintained ratcheting implementation (official libsignal);
 - [x] PQXDH + ratchet-engine bootstrap integration tests;
-- [x] simulated forward-secrecy / post-compromise recovery behavior at engine level;
+- [x] simulated libsignal ratchet forward-secrecy / post-compromise-recovery behavior at engine level (integration evidence, not an independent proof);
 - [x] encrypted persistent libsignal session/pre-key stores;
 - [x] GhostID/DeviceID binding to libsignal identities;
 - [x] local framed Python ↔ libsignal engine RPC + cross-language restart smoke;
@@ -82,6 +82,6 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] lifecycle-aware profile v5 and dedicated profile witness coordination (#92);
 - [x] rollback-linked ratchet reset primitives for DeviceID recovery (#92);
 - [x] explicit crash-resumable device recovery CLI transaction (#92);
-- [x] rollback-protected GhostNode lifecycle registry and stale-device enforcement (#92);
+- [x] rollback-aware GhostNode lifecycle registry and stale-device enforcement while the relay witness remains current (#92);
 - [x] client lifecycle publication before relay use plus fail-closed recovery publish/promote ordering (#92);
 - [x] remote lifecycle refresh/contact update and durable ratchet-session invalidation after peer device replacement (#92).

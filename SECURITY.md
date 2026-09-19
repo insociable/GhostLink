@@ -30,7 +30,13 @@ A cryptographically valid Contact Bundle or QR payload proves public-key/device 
 
 Normal persisted-contact messaging fails closed unless the contact is `verified`. A different GhostID observed for an already verified contact is quarantined as `changed` until the candidate fingerprint is explicitly accepted or rejected.
 
-Profile v3 encrypts independent ratchet-vault and contact-store keys. The current formats authenticate state but do not prevent restoration of an older otherwise-valid client snapshot. Client-state and relay-state anti-rollback remain open hardening work.
+Profile v5 encrypts independent ratchet-vault and contact-store keys and carries rollback-coordination state. Contact, replay, ratchet and profile components, plus persistent relay state, detect stale or divergent snapshots only while their monotonic witness remains newer. The reference SQLite/sidecar witnesses do **not** provide whole-device or whole-VM anti-rollback when the protected state and witness are restored together.
+
+A higher identity-signed lifecycle epoch for the same already verified GhostID can replace the active DeviceID without repeating the human fingerprint comparison. A different GhostID still becomes `changed`.
+
+Device revocation is not global. A GhostNode can reject an old DeviceID only from lifecycle history it has actually learned, and peer refresh depends on the configured relay having learned the newer signed lifecycle. GhostLink currently has no independent key-transparency or globally witnessed lifecycle log.
+
+See `docs/security-assurance-matrix.md` for the current claim-by-claim classification and explicit failure boundaries.
 
 ## Supported versions
 

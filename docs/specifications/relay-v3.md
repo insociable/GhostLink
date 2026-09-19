@@ -67,7 +67,7 @@ Every protocol-v3 message operation requires an Ed25519 request proof from the D
 
 The request carries the public DeviceID signing key. GhostNode derives the self-certifying DeviceID from that key and verifies an operation-specific signature covering method, canonical logical path, authenticated DeviceID, request ID, issuance time and the SHA-256 digest of the canonical JSON body.
 
-Proofs are accepted only within a five-minute clock-skew window. A 128-bit request ID is accepted once per DeviceID; replay state is process-local in in-memory development mode and persisted in a dedicated SQLite table when GhostNode uses SQLite. Replaying the same proof after a persistent GhostNode restart therefore fails closed unless the relay database itself has been rolled back.
+Proofs are accepted only within a five-minute clock-skew window. A 128-bit request ID is accepted once per DeviceID; replay state is process-local in in-memory development mode and persisted in a dedicated SQLite table when GhostNode uses SQLite. Replaying the same proof after a normal persistent GhostNode restart therefore fails closed. Restoring only an older relay database is rejected while the relay witness remains newer; a coherent rollback that restores the protected database and its reference witness together remains outside the protection claim.
 
 Invalid, stale, replayed or ownership-mismatched proofs return a generic HTTP 401 response.
 
