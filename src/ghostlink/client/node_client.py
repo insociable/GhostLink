@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from nacl.signing import VerifyKey
+
 from ghostlink.device import EnrolledGhostDevice, derive_device_id
 from ghostlink.device_lifecycle import (
     DeviceLifecycleError,
