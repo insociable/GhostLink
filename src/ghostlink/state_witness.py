@@ -14,7 +14,7 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 CHECKPOINT_VERSION = 1
 WITNESS_RECORD_VERSION = 1
@@ -76,7 +76,7 @@ def _require_coordination_key(key: bytes) -> bytes:
     return key
 
 
-def _validate_state_id(value: str) -> str:
+def _validate_state_id(value: object) -> str:
     if (
         not isinstance(value, str)
         or len(value) != 32
@@ -89,13 +89,13 @@ def _validate_state_id(value: str) -> str:
     return value
 
 
-def _validate_component(value: str) -> StateComponent:
+def _validate_component(value: object) -> StateComponent:
     if value not in _ALLOWED_COMPONENTS:
         raise StateCheckpointError("unsupported client-state component")
-    return value  # type: ignore[return-value]
+    return cast(StateComponent, value)
 
 
-def _validate_revision(value: int) -> int:
+def _validate_revision(value: object) -> int:
     if (
         not isinstance(value, int)
         or isinstance(value, bool)
@@ -456,8 +456,8 @@ class SQLiteMonotonicWitness:
             record = WitnessRecord(
                 state_id=self.state_id,
                 component=component,
-                revision=revision,  # type: ignore[arg-type]
-                digest=digest,  # type: ignore[arg-type]
+                revision=_validate_revision(revision),
+                digest=_validate_digest(digest),
             )
             validated_mac = _validate_digest(record_mac, "record_mac")
         except StateCheckpointError as exc:

@@ -144,7 +144,7 @@ def test_publication_orchestration_commits_only_after_valid_relay_receipt() -> N
     )
     fake_engine = FakeEngine(payload)
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=_requester(TestClient(create_app())),
     )
 
@@ -204,7 +204,7 @@ def test_publication_orchestration_rejects_mismatched_receipt_without_commit(
         del method, url, request_payload, timeout, headers
         return 200, base_receipt
 
-    node = GhostNodeClient("http://ghostnode.test", requester=requester)
+    node = GhostNodeClient("https://ghostnode.test", requester=requester)
 
     with pytest.raises(GhostNodeProtocolError, match=message):
         publish_prekey_generation(
@@ -247,7 +247,7 @@ def test_publication_orchestration_keeps_pending_after_lost_response_then_retrie
             raise GhostNodeConnectionError("response lost")
         return 200, valid_receipt
 
-    node = GhostNodeClient("http://ghostnode.test", requester=requester)
+    node = GhostNodeClient("https://ghostnode.test", requester=requester)
 
     with pytest.raises(GhostNodeConnectionError):
         publish_prekey_generation(
@@ -290,7 +290,7 @@ def test_node_client_rejects_invalid_prekey_receipt_shape() -> None:
             "unexpected": True,
         }
 
-    node = GhostNodeClient("http://ghostnode.test", requester=requester)
+    node = GhostNodeClient("https://ghostnode.test", requester=requester)
 
     with pytest.raises(GhostNodeProtocolError, match="fields do not match"):
         node.publish_prekeys(
@@ -305,7 +305,7 @@ def test_node_client_rejects_signing_key_not_matching_target_device() -> None:
     device = entity.enroll_device()
     other = GhostEntity.generate().enroll_device()
     payload = _publication(device)
-    node = GhostNodeClient("http://ghostnode.test")
+    node = GhostNodeClient("https://ghostnode.test")
 
     with pytest.raises(ValueError, match="does not derive"):
         node.publish_prekeys(
@@ -330,7 +330,7 @@ def test_node_client_surfaces_prekey_publication_conflict() -> None:
         del method, url, request_payload, timeout, headers
         return 409, {"detail": "publication_sequence conflict"}
 
-    node = GhostNodeClient("http://ghostnode.test", requester=requester)
+    node = GhostNodeClient("https://ghostnode.test", requester=requester)
 
     with pytest.raises(GhostNodeRequestError) as error:
         node.publish_prekeys(

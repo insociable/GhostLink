@@ -49,7 +49,7 @@ def _requester(
 
 def _node(client: TestClient) -> GhostNodeClient:
     return GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=_requester(client),
     )
 
