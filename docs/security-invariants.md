@@ -199,7 +199,9 @@ Any lifecycle, identity, ratchet-witness or persistence failure aborts the comma
 
 **Boundary**
 
-A 404 lifecycle lookup retains current verified state for migration compatibility; it does not prove no rotation happened.
+A 404 lifecycle lookup retains current verified state for migration compatibility; it does not prove no rotation happened. The same limitation applies when the configured relay still exposes only the previously accepted epoch.
+
+After a peer has refreshed to a replacement DeviceID, queued envelopes from the superseded sender DeviceID are skipped rather than decrypted as current-peer traffic. The current CLI does not delete those mismatched-sender envelopes in that path, so they may remain relay-visible until normal relay expiration/cleanup.
 
 ---
 
