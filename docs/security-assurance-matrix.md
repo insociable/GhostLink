@@ -55,15 +55,27 @@ Passing tests demonstrate the stated implementation behavior under their test co
 
 The state/transition rules behind these claims are formalized in `docs/security-invariants.md`.
 
+## Adversarial result: peer unaware of device rotation
+
+Current tests now make the single-relay CLI behavior explicit:
+
+- if the configured relay knows epoch N+1, a persisted verified peer accepts the higher lifecycle under the same pinned GhostID, invalidates the old DeviceID-bound ratchet state before contact persistence, and can bootstrap the replacement DeviceID;
+- if the relay still knows only epoch N, the peer keeps the old verified contact and old session. The existence of a newer device elsewhere is not detectable from that relay view;
+- if lifecycle lookup returns 404, the peer likewise keeps the current verified contact for migration compatibility. This is not evidence that no rotation occurred;
+- if ratchet invalidation fails, the replacement contact is not persisted;
+- if ratchet invalidation succeeds but contact-store persistence fails, the old contact remains while the old session has been removed; retrying the refresh is idempotent and converges to the replacement contact/session;
+- a message queued by the superseded DeviceID before rotation is not delivered as plaintext after the peer learns N+1 because its sender DeviceID no longer matches the refreshed contact. The current CLI leaves that mismatched envelope on the relay rather than deleting it as authenticated peer traffic.
+
+These results preserve the **partial** classification: a peer cannot reject knowledge it never received, and the configured relay is the current discovery source.
+
 ## Consolidation questions still open
 
 The following are intentionally not upgraded to stronger claims until adversarial consolidation is complete:
 
 1. multi-relay lifecycle divergence where relays know different epochs or no history;
-2. exhaustive peer-unaware-of-rotation end-to-end behavior across send, inbox, pre-key bootstrap and stale queued messages;
-3. rollback matrix for every individual component and coherent multi-component snapshot combination;
-4. interruption after every significant `device-recover` step;
-5. impossible/mixed state combinations such as profile N+1 with ratchet N or lifecycle N+1 with stale device-bound state;
-6. concurrency races around lifecycle publication, contact refresh and relay state where applicable.
+2. rollback matrix for every individual component and coherent multi-component snapshot combination;
+3. interruption after every significant `device-recover` step;
+4. impossible/mixed state combinations such as profile N+1 with ratchet N or lifecycle N+1 with stale device-bound state;
+5. concurrency races around lifecycle publication, contact refresh and relay state where applicable.
 
 When one of these cases cannot be distinguished from legitimate state, documentation must say so instead of describing the property as protected.
