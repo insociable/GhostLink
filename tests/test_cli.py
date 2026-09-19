@@ -20,6 +20,7 @@ from ghostlink.contact import (
     import_contact_bundle,
 )
 from ghostlink.contact_store import (
+    ContactTrustError,
     ContactTrustState,
     ContactTrustStore,
     load_contact_store,
@@ -1313,6 +1314,87 @@ def test_cli_send_refreshes_verified_contact_after_remote_device_rotation(
     assert refreshed.lifecycle_epoch == replacement_lifecycle.statement.epoch
     assert old_device_id not in session_state[str(alice_profile)]
     assert replacement.device_id in session_state[str(alice_profile)]
+
+
+def test_contact_refresh_rejects_newer_epoch_with_regressed_issued_at(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+    install_fake_ratchet_operations(monkeypatch)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "regressed lifecycle refresh password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    alice_profile, bob_profile, _alice_contact, bob_contact = (
+        _create_profiles_and_contacts(
+            tmp_path,
+            capsys,
+            password_reader,
+            node_client_factory,
+        )
+    )
+    record_id = _import_and_trust_contact(
+        alice_profile,
+        bob_contact,
+        label="Bob",
+        password=password,
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+        capsys=capsys,
+    )
+
+    alice = decrypt_local_profile(alice_profile.read_text(), password)
+    bob = decrypt_local_profile(bob_profile.read_text(), password)
+    assert alice.contact_store_key is not None
+    assert bob.device_lifecycle is not None
+
+    store_path = Path(f"{alice_profile}.contacts")
+    store = load_contact_store(store_path, alice.contact_store_key)
+    current = store.require_verified_contact(record_id)
+    assert current.lifecycle_issued_at == bob.device_lifecycle.statement.issued_at
+
+    replacement = bob.entity.enroll_device()
+    regressed = create_device_lifecycle_statement(
+        bob.entity,
+        replacement,
+        epoch=bob.device_lifecycle.statement.epoch + 1,
+        issued_at=bob.device_lifecycle.statement.issued_at - 1,
+    )
+    relay_record = SimpleNamespace(
+        identity_public_key=bytes(bob.entity.verify_key),
+        lifecycle=regressed,
+    )
+
+    class MaliciousLifecycleClient:
+        def get_device_lifecycle(self, ghost_id: str):
+            assert ghost_id == bob.entity.ghost_id
+            return relay_record
+
+    sessions = {current.device_id}
+    engine = FakeRatchetEngine(alice, sessions)
+    args = SimpleNamespace(contact_id=record_id, contacts=None)
+
+    with pytest.raises(ContactTrustError, match="issued_at rollback"):
+        cli_module._refresh_message_contact_lifecycle(
+            args,
+            alice_profile,
+            alice,
+            cast(GhostNodeClient, MaliciousLifecycleClient()),
+            cast(RatchetEngineClient, engine),
+            current,
+        )
+
+    restored = load_contact_store(store_path, alice.contact_store_key)
+    unchanged = restored.require_verified_contact(record_id)
+    assert unchanged.device_id == current.device_id
+    assert unchanged.lifecycle_epoch == current.lifecycle_epoch
+    assert unchanged.lifecycle_issued_at == current.lifecycle_issued_at
+    assert sessions == {current.device_id}
 
 
 def test_verified_peer_stays_on_old_device_when_relay_only_knows_old_epoch(
