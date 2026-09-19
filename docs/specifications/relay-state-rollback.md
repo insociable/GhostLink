@@ -11,9 +11,9 @@ snapshot when a monotonic witness remains newer.
 
 It does not claim whole-VM rollback protection with a witness stored on that same VM.
 
-## Protected tables v1
+## Core protected tables v1
 
-The protected table set is exactly:
+The always-present protected table set is:
 
 ```text
 messages_v3
@@ -28,6 +28,19 @@ Indexes are not checkpoint inputs.
 
 Historical tables are excluded.
 
+### Lifecycle extension tables
+
+The device-lifecycle implementation adds two rollback-relevant tables:
+
+```text
+device_lifecycle_v1
+device_lifecycle_devices_v1
+```
+
+They are optional in the v1 canonical payload for upgrade compatibility. A lifecycle table is appended only when it exists **and contains rows**. This preserves the previously witnessed digest when an already enrolled pre-lifecycle database is upgraded and receives empty lifecycle tables.
+
+Once lifecycle rows exist, their logical contents are checkpoint inputs. Restoring them to older/empty state while the witness remains newer changes the derived checkpoint and fails reconciliation.
+
 ## Canonical table order
 
 Tables are serialized in this fixed order:
@@ -38,6 +51,8 @@ Tables are serialized in this fixed order:
 4. `prekey_allocations`
 5. `prekey_fetch_events`
 6. `relay_request_replay_v1`
+7. `device_lifecycle_v1`, when present and non-empty
+8. `device_lifecycle_devices_v1`, when present and non-empty
 
 The canonical document is strict JSON UTF-8 using sorted object keys and compact
 separators. Protected tables are represented as a list in the fixed order below; each
@@ -152,6 +167,33 @@ Sort by:
 device_id, request_id
 ```
 
+### device_lifecycle_v1
+
+Columns:
+
+```text
+ghost_id
+epoch
+issued_at
+active_device_id
+identity_public_key
+statement
+```
+
+Sort by `ghost_id`.
+
+### device_lifecycle_devices_v1
+
+Columns:
+
+```text
+device_id
+ghost_id
+lifecycle_epoch
+```
+
+Sort by `device_id`.
+
 ## Metadata v1
 
 A singleton table named `relay_state_meta_v1` stores:
@@ -189,6 +231,8 @@ Conceptually:
 }
 ```
 
+When lifecycle tables contain rows, their entries are appended after `relay_request_replay_v1` in the order defined above. Empty lifecycle extension tables are omitted for backward-compatible enrollment continuity.
+
 The implementation must emit the exact strict compact representation from validated SQLite
 values.
 
@@ -202,7 +246,8 @@ database and injects that same instance into:
 
 - the v3 message store;
 - the pre-key publication/allocation store;
-- the authenticated-request replay store.
+- the authenticated-request replay store;
+- the device-lifecycle registry store.
 
 Store constructors must not create independent rollback coordinators.
 
@@ -218,7 +263,8 @@ mutation:
 - one-time pre-key allocation/pop;
 - expired allocation pruning;
 - fetch-event pruning/insertion;
-- authenticated request-replay pruning/insertion.
+- authenticated request-replay pruning/insertion;
+- identity-authorized lifecycle publication/update and DeviceID-history insertion.
 
 Idempotent calls that leave canonical protected state unchanged do not advance the relay
 revision.
