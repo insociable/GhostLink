@@ -153,7 +153,7 @@ Writes use a private temporary file plus atomic replace. On POSIX, the accepted 
 is mode `0600`. A crash therefore cannot leave a partially written file accepted as the
 current store.
 
-Contact-store format v2 additionally carries the profile-v4 `client_state_id`, a positive
+Contact-store format v2 carries the `client_state_id` introduced by profile v4 and retained by profile v5, a positive
 component revision and the previous checkpoint digest inside the authenticated ciphertext.
 The exact canonical v2 payload is bound to the `contacts` checkpoint defined by ADR-0008.
 
