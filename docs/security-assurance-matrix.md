@@ -101,12 +101,30 @@ The coherent-restore boundary is exercised directly for profile state, contact s
 
 A profile at revision N+1 with contacts/replay/ratchet at revision N is therefore not inherently corrupt. Each component has its own authenticated lineage and witness row. What fails closed is a mismatch *within* one component's state/witness lineage, not unequal revision numbers across independent components.
 
+## Adversarial result: device recovery interruption matrix
+
+The current recovery transaction has now been exercised across its security-relevant durable boundaries:
+
+| Interruption / durable state | Result on failure | Retry behavior |
+| --- | --- | --- |
+| initial current-lifecycle publication fails | active profile remains N; no pending candidate; relay may still have no lifecycle record | fresh recovery produces N+1 |
+| current lifecycle published, pending-profile creation fails | active profile remains N; no pending candidate; relay knows N | fresh recovery produces N+1 |
+| candidate lifecycle publication fails | active profile remains N; pending candidate N+1 remains; relay remains at N | retry resumes the same candidate |
+| candidate lifecycle is N+1 remotely, pending→active promotion fails | local active profile remains N; pending N+1 remains; relay knows N+1 | retry recognizes the relay's identical pending candidate and promotes N+1 |
+| old ratchet vault archived with a valid ratchet witness but replacement vault absent | pending candidate + old-vault archive remain | replacement vault is recreated from the witnessed predecessor and N+1 completes |
+| pending candidate + old-vault archive but no ratchet witness | inconsistent recovery state | explicit fail closed |
+| ratchet vault presence disagrees with ratchet-witness presence | inconsistent recovery state | explicit fail closed |
+| profile has been promoted to N+1 but directory fsync fails | local/relay candidate N+1 exists; pending path is gone; profile witness can remain at N | next command reconciles the one-step witness gap, then a new recovery request rotates to N+2 |
+| profile has been promoted to N+1 but profile-witness reconciliation fails | local/relay N+1 with witness still N | next command catches the witness up, then a new recovery request rotates to N+2 |
+| final old-vault archive deletion fails after valid N+1 is active | N+1 remains active with leftover archive | retry finalizes the same N+1 device/epoch without another rotation |
+| cleanup archive exists but replacement vault is missing | incomplete finalization state | explicit fail before lifecycle publication/further mutation |
+
+The transaction therefore fails closed on inconsistent artifact/witness combinations and safely resumes recognized pre-promotion states. A late interruption **after active-profile promotion** is different: because promotion removes the pending transaction marker, the next explicit `device-recover` invocation first reconciles the valid N+1 profile/witness state and then starts a new recovery, consuming N+2. This is security-consistent but is not transaction-identity idempotence.
+
+No tested interruption produced silent acceptance of a mixed identity/device state, and no runtime correction was required.
+
 ## Consolidation questions still open
 
-The following are intentionally not upgraded to stronger claims until adversarial consolidation is complete:
-
-1. interruption after every significant `device-recover` step;
-2. semantically impossible mixed states created during interrupted recovery, beyond ordinary independent component revision skew;
-3. concurrency races around lifecycle publication, contact refresh and relay state where applicable.
+The main remaining adversarial consolidation area is concurrency: races around lifecycle publication, contact refresh and relay persistent-state mutation.
 
 When one of these cases cannot be distinguished from legitimate state, documentation must say so instead of describing the property as protected.
