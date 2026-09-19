@@ -618,6 +618,42 @@ def test_profile_device_rotation_advances_lifecycle_and_checkpoint(tmp_path) -> 
         reconcile_profile_witness(profile, witness)
 
 
+def test_profile_and_reference_witness_coherent_rollback_is_not_detected(
+    tmp_path,
+) -> None:
+    profile = create_local_profile()
+    assert profile.client_state_id is not None
+    assert profile.state_coordination_key is not None
+    assert profile.device_lifecycle is not None
+    witness_path = tmp_path / "profile-coherent-rollback-witness.sqlite3"
+    witness = SQLiteMonotonicWitness(
+        witness_path,
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+    current = initialize_profile_witness(profile, witness)
+    witness_at_revision_one = witness_path.read_bytes()
+
+    rotated = rotate_local_profile_device(
+        profile,
+        current,
+        issued_at=profile.device_lifecycle.statement.issued_at + 1,
+    )
+    assert reconcile_profile_witness(rotated, witness).revision == 2
+    assert witness.get("profile").revision == 2
+
+    witness_path.write_bytes(witness_at_revision_one)
+    restored_witness = SQLiteMonotonicWitness(
+        witness_path,
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+
+    restored = reconcile_profile_witness(profile, restored_witness)
+    assert restored.revision == 1
+    assert restored_witness.get("profile").revision == 1
+
+
 def test_profile_device_rotation_requires_verified_current_checkpoint(
     tmp_path,
 ) -> None:
