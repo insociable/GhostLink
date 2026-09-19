@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 from ghostlink.client import GhostNodeClient, GhostNodeRequestError
 from ghostlink.config import NodeSettings
 from ghostlink.device import EnrolledGhostDevice
