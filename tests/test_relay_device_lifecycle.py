@@ -6,7 +6,6 @@ from sqlite3 import connect
 
 import pytest
 from fastapi.testclient import TestClient
-
 from ghostlink.config import NodeSettings
 from ghostlink.device import EnrolledGhostDevice
 from ghostlink.device_lifecycle import (
