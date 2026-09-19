@@ -614,6 +614,69 @@ def test_ratchet_vault_and_reference_witness_coherent_rollback_is_not_detected(
         assert restored_witness.get("ratchet").revision == 2
 
 
+def test_ratchet_vault_and_reference_witness_coherent_restore_is_accepted(
+    tmp_path: Path,
+) -> None:
+    local = GhostEntity.generate().enroll_device()
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "coherent-restore.ratchet"
+    witness_path = tmp_path / "coherent-restore-witness.sqlite3"
+    witness = SQLiteMonotonicWitness(
+        witness_path,
+        state_id,
+        coordination_key,
+    )
+
+    with RatchetEngineClient(
+        command,
+        local,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ) as engine:
+        engine.create_prekey_material()
+        assert witness.get("ratchet").revision == 2
+
+    vault_at_revision_two = vault_path.read_bytes()
+    witness_at_revision_two = witness_path.read_bytes()
+
+    with RatchetEngineClient(
+        command,
+        local,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ) as engine:
+        engine.create_prekey_material()
+        assert witness.get("ratchet").revision == 3
+
+    vault_path.write_bytes(vault_at_revision_two)
+    witness_path.write_bytes(witness_at_revision_two)
+    restored_witness = SQLiteMonotonicWitness(
+        witness_path,
+        state_id,
+        coordination_key,
+    )
+
+    with RatchetEngineClient(
+        command,
+        local,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=restored_witness,
+    ):
+        assert restored_witness.get("ratchet").revision == 2
+
+
 def test_ratchet_vault_recovers_one_step_after_witness_commit_crash(
     tmp_path: Path,
 ) -> None:
