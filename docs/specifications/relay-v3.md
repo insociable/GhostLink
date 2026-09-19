@@ -86,14 +86,14 @@ Once a relay has observed a newer lifecycle epoch, known superseded DeviceIDs ar
 - pre-key publication and owner status;
 - pre-key fetch when either the authenticated requester or target DeviceID is known to be superseded.
 
-Unknown DeviceIDs remain accepted during migration until their GhostID has lifecycle state at that relay. This is intentional compatibility behavior, not a claim of global revocation. A peer or relay that has never learned a newer lifecycle statement cannot infer that an older otherwise-valid device was revoked.
+Unknown DeviceIDs remain accepted during migration. Because the current lifecycle statement names only the active device, a relay that first learns an identity after rotation cannot retroactively map a never-registered older DeviceID to that GhostID. The client must therefore publish lifecycle state before normal relay use and publish the newer state after recovery. This is intentional compatibility behavior, not a claim of global revocation.
 
 Persistent lifecycle rows participate in the shared relay-state rollback checkpoint. Empty lifecycle tables are omitted from the canonical checkpoint payload so an already-enrolled pre-lifecycle database can be upgraded without invalidating its existing witnessed digest; once lifecycle rows exist, rolling them back while the witness remains newer fails closed.
 
 
 The complete wire decision is recorded in [ADR-0004](../adr/0004-device-authenticated-ratchet-relay.md).
 
-Static protocol-v2 message routes are not upgraded by this mechanism. They remain a legacy/diagnostic bearer-only surface and are never used as an automatic fallback from v3.
+Historical static protocol-v2 message routes are retired and are not an alternate path around lifecycle enforcement.
 
 ## Health
 
