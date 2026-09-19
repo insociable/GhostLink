@@ -9,6 +9,20 @@ permissions:
   contents: read
 
 jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+
   quality:
     runs-on: ubuntu-latest
 
@@ -24,6 +38,9 @@ jobs:
 
       - name: Install dependencies
         run: poetry install --no-interaction
+
+      - name: Audit Python dependencies
+        run: poetry run pip-audit
 
       - name: Lint
         run: poetry run ruff check .
@@ -161,4 +178,3 @@ jobs:
 
       - name: Stop GhostNode
         if: always()
-        run: docker compose down -v
