@@ -316,11 +316,12 @@ A relay publication is a complete device-signed generation with a device-scoped 
 **Valid transition**
 
 - exact same generation retry may be idempotent;
-- a strictly newer valid publication sequence may replace the current generation.
+- the exactly next valid publication sequence may replace the current generation.
 
 **Forbidden transition**
 
 - lower sequence;
+- a sequence that skips the exactly-next generation;
 - same sequence with different authenticated state;
 - route DeviceID/signing-key mismatch;
 - already expired generation.
