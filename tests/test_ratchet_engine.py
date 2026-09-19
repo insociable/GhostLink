@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,74 @@ def test_ratchet_engine_rejects_invalid_start_configuration(tmp_path: Path) -> N
             tmp_path / "vault",
             b"x" * 32,
         )
+
+
+def test_ratchet_engine_rejects_invalid_rpc_timeout(tmp_path: Path) -> None:
+    local = GhostEntity.generate().enroll_device()
+    command = [sys.executable, "-u", str(_FAKE_ENGINE)]
+
+    for timeout in (0, -1, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="rpc_timeout"):
+            RatchetEngineClient(
+                command,
+                local,
+                tmp_path / "vault",
+                b"x" * 32,
+                rpc_timeout=timeout,
+            )
+
+
+def test_ratchet_engine_times_out_hung_rpc_and_reaps_child(tmp_path: Path) -> None:
+    local = GhostEntity.generate().enroll_device()
+    hung_command = [
+        sys.executable,
+        "-u",
+        str(_FAKE_ENGINE),
+        "create_prekey_material",
+    ]
+    client = RatchetEngineClient(
+        hung_command,
+        local,
+        tmp_path / "hung.ratchet",
+        b"x" * 32,
+        rpc_timeout=0.2,
+    )
+    started = time.monotonic()
+
+    with pytest.raises(RatchetEngineConnectionError, match="ENGINE_TIMEOUT"):
+        client.create_prekey_material()
+
+    assert time.monotonic() - started < 2
+    assert client._process.poll() is not None
+
+    with pytest.raises(RatchetEngineConnectionError, match="closed"):
+        client.create_prekey_material()
+
+    with RatchetEngineClient(
+        [sys.executable, "-u", str(_FAKE_ENGINE)],
+        local,
+        tmp_path / "hung.ratchet",
+        b"x" * 32,
+        rpc_timeout=1,
+    ) as reopened:
+        assert reopened.create_prekey_material().registration_id == 4200
+
+
+def test_ratchet_engine_close_timeout_reaps_child(tmp_path: Path) -> None:
+    local = GhostEntity.generate().enroll_device()
+    client = RatchetEngineClient(
+        [sys.executable, "-u", str(_FAKE_ENGINE), "close"],
+        local,
+        tmp_path / "close-hung.ratchet",
+        b"x" * 32,
+        rpc_timeout=0.2,
+    )
+
+    with pytest.raises(RatchetEngineConnectionError, match="ENGINE_TIMEOUT"):
+        client.close()
+
+    assert client._process.poll() is not None
+    client.close()
 
 
 def test_python_client_public_api_over_framed_rpc(tmp_path: Path) -> None:

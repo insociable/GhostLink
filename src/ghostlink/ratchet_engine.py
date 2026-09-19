@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import struct
 import subprocess
 import threading
@@ -43,6 +44,7 @@ from ghostlink.state_witness import (
 
 _RPC_VERSION = 1
 _MAX_FRAME_BYTES = 2 * 1024 * 1024
+_DEFAULT_RPC_TIMEOUT_SECONDS = 10.0
 _MAX_PAYLOAD_BYTES = 1024 * 1024
 _SIGNAL_DEVICE_ID = 1
 _MAX_REGISTRATION_ID = 16_380
@@ -797,11 +799,19 @@ class RatchetEngineClient:
         witness: MonotonicWitness | None = None,
         allow_legacy_migration: bool = False,
         recovery_previous_checkpoint: WitnessRecord | None = None,
+        rpc_timeout: float = _DEFAULT_RPC_TIMEOUT_SECONDS,
     ) -> None:
         if not command or any(not part for part in command):
             raise ValueError("command must contain non-empty arguments")
         if len(master_key) != 32:
             raise ValueError("master_key must contain exactly 32 bytes")
+        if (
+            not isinstance(rpc_timeout, int | float)
+            or isinstance(rpc_timeout, bool)
+            or not math.isfinite(rpc_timeout)
+            or rpc_timeout <= 0
+        ):
+            raise ValueError("rpc_timeout must be a finite positive number")
 
         state_values = (state_id, coordination_key, witness)
         configured_count = sum(value is not None for value in state_values)
@@ -865,6 +875,7 @@ class RatchetEngineClient:
         self._witness = witness
         self._vault_checkpoint: ComponentCheckpoint | None = None
         self._witness_pending = False
+        self._rpc_timeout = float(rpc_timeout)
 
         if allow_legacy_migration and witness is not None:
             try:
@@ -1141,13 +1152,22 @@ class RatchetEngineClient:
                 raise
         return result
 
-    def _read_exact(self, size: int) -> bytes:
+    def _read_exact(
+        self,
+        size: int,
+        timed_out: threading.Event | None = None,
+    ) -> bytes:
         chunks: list[bytes] = []
         remaining = size
 
         while remaining:
             chunk = self._stdout.read(remaining)
             if not chunk:
+                if timed_out is not None and timed_out.is_set():
+                    raise RatchetEngineConnectionError(
+                        "ENGINE_TIMEOUT",
+                        "ratchet engine RPC deadline expired",
+                    )
                 raise RatchetEngineConnectionError(
                     "ENGINE_CLOSED",
                     "ratchet engine closed its output unexpectedly",
@@ -1156,6 +1176,14 @@ class RatchetEngineClient:
             remaining -= len(chunk)
 
         return b"".join(chunks)
+
+    def _expire_rpc_request(self, timed_out: threading.Event) -> None:
+        timed_out.set()
+        try:
+            if self._process.poll() is None:
+                self._process.kill()
+        except OSError:
+            pass
 
     def _request(self, method: str, params: object) -> object:
         with self._lock:
@@ -1188,73 +1216,96 @@ class RatchetEngineClient:
                     "ratchet RPC request exceeds the frame limit",
                 )
 
-            try:
-                self._stdin.write(struct.pack(">I", len(payload)))
-                self._stdin.write(payload)
-                self._stdin.flush()
-                length = struct.unpack(">I", self._read_exact(4))[0]
-                if length == 0 or length > _MAX_FRAME_BYTES:
-                    raise RatchetEngineProtocolError(
-                        "PROTOCOL_ERROR",
-                        "ratchet RPC response frame length is invalid",
-                    )
-                raw_response = self._read_exact(length)
-            except (BrokenPipeError, OSError) as exc:
-                raise RatchetEngineConnectionError(
-                    "ENGINE_IO",
-                    "ratchet engine pipe failed",
-                ) from exc
-
-            try:
-                parsed: object = json.loads(raw_response.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise RatchetEngineProtocolError(
-                    "PROTOCOL_ERROR",
-                    "ratchet RPC response is not valid UTF-8 JSON",
-                ) from exc
-
-            response = _require_mapping(parsed, "RPC response")
-            if response.get("id") != request_id:
-                raise RatchetEngineProtocolError(
-                    "PROTOCOL_ERROR",
-                    "ratchet RPC response id does not match request",
-                )
-
-            ok = response.get("ok")
-            if ok is True:
-                _require_exact_fields(
-                    response,
-                    {"id", "ok", "result"},
-                    "successful RPC response",
-                )
-                return response["result"]
-
-            if ok is False:
-                _require_exact_fields(
-                    response,
-                    {"id", "ok", "error"},
-                    "failed RPC response",
-                )
-                error = _require_mapping(response["error"], "RPC error")
-                _require_exact_fields(error, {"code", "message"}, "RPC error")
-                code = error.get("code")
-                message = error.get("message")
-                if (
-                    not isinstance(code, str)
-                    or not code
-                    or not isinstance(message, str)
-                    or not message
-                ):
-                    raise RatchetEngineProtocolError(
-                        "PROTOCOL_ERROR",
-                        "ratchet RPC error fields are invalid",
-                    )
-                raise RatchetEngineError(code, message)
-
-            raise RatchetEngineProtocolError(
-                "PROTOCOL_ERROR",
-                "ratchet RPC response has an invalid ok field",
+            timed_out = threading.Event()
+            timer = threading.Timer(
+                self._rpc_timeout,
+                self._expire_rpc_request,
+                args=(timed_out,),
             )
+            timer.daemon = True
+            timer.start()
+            try:
+                try:
+                    self._stdin.write(struct.pack(">I", len(payload)))
+                    self._stdin.write(payload)
+                    self._stdin.flush()
+                    length = struct.unpack(">I", self._read_exact(4, timed_out))[0]
+                    if length == 0 or length > _MAX_FRAME_BYTES:
+                        raise RatchetEngineProtocolError(
+                            "PROTOCOL_ERROR",
+                            "ratchet RPC response frame length is invalid",
+                        )
+                    raw_response = self._read_exact(length, timed_out)
+                except (BrokenPipeError, OSError) as exc:
+                    if timed_out.is_set():
+                        raise RatchetEngineConnectionError(
+                            "ENGINE_TIMEOUT",
+                            "ratchet engine RPC deadline expired",
+                        ) from exc
+                    raise RatchetEngineConnectionError(
+                        "ENGINE_IO",
+                        "ratchet engine pipe failed",
+                    ) from exc
+
+                try:
+                    parsed: object = json.loads(raw_response.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise RatchetEngineProtocolError(
+                        "PROTOCOL_ERROR",
+                        "ratchet RPC response is not valid UTF-8 JSON",
+                    ) from exc
+
+                response = _require_mapping(parsed, "RPC response")
+                if response.get("id") != request_id:
+                    raise RatchetEngineProtocolError(
+                        "PROTOCOL_ERROR",
+                        "ratchet RPC response id does not match request",
+                    )
+
+                ok = response.get("ok")
+                if ok is True:
+                    _require_exact_fields(
+                        response,
+                        {"id", "ok", "result"},
+                        "successful RPC response",
+                    )
+                    return response["result"]
+
+                if ok is False:
+                    _require_exact_fields(
+                        response,
+                        {"id", "ok", "error"},
+                        "failed RPC response",
+                    )
+                    error = _require_mapping(response["error"], "RPC error")
+                    _require_exact_fields(error, {"code", "message"}, "RPC error")
+                    code = error.get("code")
+                    message = error.get("message")
+                    if (
+                        not isinstance(code, str)
+                        or not code
+                        or not isinstance(message, str)
+                        or not message
+                    ):
+                        raise RatchetEngineProtocolError(
+                            "PROTOCOL_ERROR",
+                            "ratchet RPC error fields are invalid",
+                        )
+                    raise RatchetEngineError(code, message)
+
+                raise RatchetEngineProtocolError(
+                    "PROTOCOL_ERROR",
+                    "ratchet RPC response has an invalid ok field",
+                )
+            finally:
+                timer.cancel()
+                timer.join()
+                if timed_out.is_set():
+                    self._terminate()
+                    raise RatchetEngineConnectionError(
+                        "ENGINE_TIMEOUT",
+                        "ratchet engine RPC deadline expired",
+                    )
 
     def create_prekey_material(self) -> RatchetPreKeyMaterial:
         """Generate and persist fresh public pre-key material."""
