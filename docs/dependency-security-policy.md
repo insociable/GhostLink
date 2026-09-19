@@ -25,6 +25,8 @@ critical advisory is blocking before merge.
 Dependabot checks the Python, npm, Docker and GitHub Actions dependency surfaces
 weekly. Dependabot availability does not replace the blocking CI controls above.
 
+GitHub Actions are referenced by full commit SHA and container base/reference images by OCI digest, with readable version tags/comments retained so Dependabot can propose reviewed updates without relying on mutable tags at execution time.
+
 ## Exception policy
 
 There are no standing advisory ignores. A temporary exception requires a dedicated
