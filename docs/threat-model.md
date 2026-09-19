@@ -49,7 +49,7 @@ The current codebase includes:
 - cryptographically validated public Contact Bundles and versioned public QR payloads;
 - deterministic Fingerprint v2 human verification, persisted separately from bundle validity;
 - encrypted local contact trust states (`imported`, `verified`, `changed`) with verified-identity replacement quarantine;
-- protocol-v2 authenticated encryption and persistent replay suppression;
+- historical/local protocol-v2 authenticated codec and replay primitives; the current network messaging runtime is v3-only;
 - official libsignal PQXDH/session integration with classical and post-quantum ratchet components;
 - encrypted persistent ratchet/pre-key vault state;
 - DeviceID-signed binding-v2 pre-key publications;
@@ -76,14 +76,14 @@ The current codebase includes:
 - canonical v3 routing/lifecycle context encrypted inside libsignal plaintext;
 - transaction-bound context verification that restores ratchet state when relay-visible v3 metadata is modified;
 - replay-cache acceptance after authenticated v3 context validation and before application plaintext is returned;
-- encrypted local profile v4 carrying independently random ratchet-vault, contact-store and state-coordination keys plus a stable client-state identity;
-- explicit atomic profile-v1/v2/v3 -> profile-v4 migration that establishes the stable client-state identity and coordination key required by later witness-integrated stores;
+- encrypted local profile v5 carrying independently random ratchet-vault, contact-store and state-coordination keys, stable client-state identity, monotonic device lifecycle and profile checkpoint lineage;
+- explicit profile-v1/v2/v3/v4 -> profile-v5 migration path, with lifecycle enrollment and witness coordination required before normal lifecycle-aware use;
 - user-facing CLI send/inbox bound to protocol v3, with the historical static-v2 network relay retired;
 - durable-session detection before first-contact bootstrap, preventing unnecessary pre-key consumption on later sends;
 - DeviceID-signed protocol-v3 message-relay requests bound to HTTP method, canonical logical path, canonical-body digest, freshness timestamp and random request ID;
 - sender ownership enforcement for v3 submission and recipient ownership enforcement for v3 mailbox list/delete;
 - persistent SQLite request-ID replay rejection across GhostNode restart, with process-local replay protection in in-memory mode;
-- rollback-protected GhostNode lifecycle registry that retains observed DeviceID history and rejects known superseded devices across v3 message and pre-key routes;
+- rollback-aware GhostNode lifecycle registry that retains observed DeviceID history and rejects known superseded devices across v3 message and pre-key routes while the relay witness remains current;
 - automatic relay lifecycle refresh for persisted human-verified contacts, with monotonic same-GhostID contact replacement and durable purge of ratchet session, cached remote identity and remote pre-key sequence state when the active DeviceID changes;
 - optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity;
 - relay Bearer-token loading from a secret file rather than token values in argv/environment;
@@ -91,6 +91,8 @@ The current codebase includes:
 - a stdlib-only external TLS gate that validates every published A/AAAA address, public certificate/hostname trust, closed TCP/80 and TCP/8000, and the HTTPS health response before live-deployment acceptance.
 
 These are implemented building blocks, not a production-security certification.
+
+The claim-by-claim status and failure boundaries are summarized in `docs/security-assurance-matrix.md`.
 
 ## Current known gaps
 
