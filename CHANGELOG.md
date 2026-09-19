@@ -66,7 +66,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - local profile v5 with persisted signed device lifecycle state, explicit v1-v4 migration, dedicated profile witness enrollment/reconciliation and crash-safe one-step profile witness recovery;
 - rollback-protected GhostNode device-lifecycle registry with identity-authorized monotonic publication/lookup and stale-device enforcement across protocol-v3 messaging and pre-key routes;
 - verified GhostNode lifecycle client plus automatic local lifecycle registration before `prekey-sync`, `send` and `inbox`;
-- relay-aware `device-recover` ordering that registers the current device before rotation, publishes the replacement lifecycle before local profile promotion and remains resumable after ambiguous/interrupted publication.
+- relay-aware `device-recover` ordering that registers the current device before rotation, publishes the replacement lifecycle before local profile promotion and remains resumable after ambiguous/interrupted publication;
+- automatic relay lifecycle refresh for persisted verified contacts before `send`/`inbox`, including same-GhostID monotonic contact replacement and durable invalidation of the superseded DeviceID's libsignal session, cached remote identity and highest-seen pre-key sequence state.
 
 ### Removed
 
@@ -91,6 +92,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 - ratchet-vault, contact-store and state-coordination keys are kept inside the encrypted local profile and are not passed in argv or environment;
 - protocol-v3 submission requires sender DeviceID control, while mailbox list/delete require recipient DeviceID control;
 - once GhostNode has accepted newer identity-signed lifecycle state, known superseded DeviceIDs fail closed on v3 message and pre-key security-sensitive routes;
+- persisted verified contacts consume newer relay lifecycle state monotonically and purge old DeviceID ratchet state before persisting the replacement contact, preventing silent reuse of a superseded session;
 - stale, replayed, tampered or ownership-mismatched v3 request proofs fail with generic authentication errors; optional Bearer access control remains additive;
 - relay Bearer tokens are loaded from mounted/local secret files instead of token values in argv or environment;
 - Oracle public ingress disables GhostNode access logs, leaves Caddy HTTP access logging off and explicitly disables Uvicorn proxy-header trust.

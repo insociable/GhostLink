@@ -1284,6 +1284,75 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
     assert "hello Alice over the persisted ratchet" in alice_inbox.out
 
 
+def test_ratchet_session_invalidation_survives_restart(
+    tmp_path: Path,
+) -> None:
+    alice = GhostEntity.generate()
+    bob = GhostEntity.generate()
+    alice_device = alice.enroll_device()
+    bob_device = bob.enroll_device()
+    bob_contact = import_contact_bundle(
+        export_contact_bundle(bob, bob_device),
+    )
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "invalidate-session.ratchet"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "invalidate-session-witness.sqlite3",
+        state_id,
+        coordination_key,
+    )
+
+    with RatchetEngineClient(
+        command,
+        alice_device,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ) as alice_engine:
+        with RatchetEngineClient(
+            command,
+            bob_device,
+            tmp_path / "invalidate-peer.ratchet",
+            os.urandom(32),
+        ) as bob_engine:
+            material = bob_engine.create_prekey_material()
+            binding = create_ratchet_prekey_binding(
+                bob_device,
+                material,
+                publication_sequence=1,
+                bundle_kind="one_time",
+            )
+            alice_engine.establish_session(
+                sign_ratchet_prekey_binding(binding, bob_device),
+                bob_contact,
+            )
+            assert alice_engine.has_session(bob_contact)
+            before = witness.get("ratchet")
+            assert before is not None
+            assert alice_engine.invalidate_session(bob_contact)
+            assert not alice_engine.has_session(bob_contact)
+            after = witness.get("ratchet")
+            assert after is not None
+            assert after.revision == before.revision + 1
+            assert after.digest != before.digest
+
+    with RatchetEngineClient(
+        command,
+        alice_device,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ) as reopened:
+        assert not reopened.has_session(bob_contact)
+
+
 def test_ratchet_vault_device_recovery_links_to_current_witness(
     tmp_path: Path,
 ) -> None:

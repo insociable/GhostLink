@@ -268,6 +268,17 @@ export class MemorySessionStore extends SignalClient.SessionStore {
     );
   }
 
+  removeSession(address: SignalClient.ProtocolAddress): boolean {
+    const key = addressKey(address);
+    const serialized = this.records.get(key);
+    if (serialized === undefined) {
+      return false;
+    }
+    serialized.fill(0);
+    this.records.delete(key);
+    return true;
+  }
+
   exportState(): Array<[string, string]> {
     return [...this.records].map(([key, value]) => [key, encodeBytes(value)]);
   }
@@ -341,6 +352,17 @@ export class MemoryIdentityKeyStore extends SignalClient.IdentityKeyStore {
     return current === undefined
       ? null
       : SignalClient.PublicKey.deserialize(Buffer.from(current));
+  }
+
+  removeIdentity(address: SignalClient.ProtocolAddress): boolean {
+    const key = addressKey(address);
+    const current = this.trusted.get(key);
+    if (current === undefined) {
+      return false;
+    }
+    current.fill(0);
+    this.trusted.delete(key);
+    return true;
   }
 
   exportState(): PartyStoresState['identity'] {

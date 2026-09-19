@@ -84,6 +84,7 @@ The current codebase includes:
 - sender ownership enforcement for v3 submission and recipient ownership enforcement for v3 mailbox list/delete;
 - persistent SQLite request-ID replay rejection across GhostNode restart, with process-local replay protection in in-memory mode;
 - rollback-protected GhostNode lifecycle registry that retains observed DeviceID history and rejects known superseded devices across v3 message and pre-key routes;
+- automatic relay lifecycle refresh for persisted human-verified contacts, with monotonic same-GhostID contact replacement and durable purge of ratchet session, cached remote identity and remote pre-key sequence state when the active DeviceID changes;
 - optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity;
 - relay Bearer-token loading from a secret file rather than token values in argv/environment;
 - reference Oracle Caddy ingress with GhostNode un-published, TCP/443-only public exposure, disabled HTTP access logs and explicit Uvicorn proxy-header distrust;
@@ -99,7 +100,7 @@ Current security gaps still include:
 - the reference SQLite client-state witness protects contact, replay, and ratchet/highest-seen components only while the witness remains newer; it does not provide whole-device rollback protection against a filesystem snapshot that rolls the witness back too;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
-- automatic remote-peer lifecycle refresh/contact update and ratchet-session invalidation after a peer rotates to a replacement DeviceID;
+- lifecycle discovery still depends on the configured relay having learned the newer identity-signed statement; GhostLink has no independent key-transparency or globally witnessed lifecycle log;
 - live external validation of the reference TLS ingress (real certificate, closed TCP/80 and TCP/8000, external v3 flow) before issue #21 closure;
 - independent cryptographic/protocol review.
 

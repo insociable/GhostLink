@@ -1407,6 +1407,28 @@ class RatchetEngineClient:
             )
         return exists
 
+    def invalidate_session(self, contact: ValidatedContact) -> bool:
+        """Remove persisted ratchet state bound to a superseded remote DeviceID."""
+        result = _require_mapping(
+            self._mutating_request(
+                "invalidate_session",
+                {"remote_device_id": contact.device_id},
+            ),
+            "invalidate_session result",
+        )
+        _require_exact_fields(
+            result,
+            {"invalidated"},
+            "invalidate_session result",
+        )
+        invalidated = result.get("invalidated")
+        if not isinstance(invalidated, bool):
+            raise RatchetEngineProtocolError(
+                "PROTOCOL_ERROR",
+                "invalidate_session invalidated must be a boolean",
+            )
+        return invalidated
+
     def establish_session(
         self,
         signed_binding: SignedRatchetPreKeyBinding,

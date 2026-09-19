@@ -495,3 +495,43 @@ test('remote publication sequence persists and rejects rollback after restart', 
   await alice.close();
   await bob.close();
 });
+
+test('session invalidation purges superseded remote state durably', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ghostlink-rpc-invalidate-'));
+  const aliceKey = randomBytes(32);
+  const bobKey = randomBytes(32);
+  const alicePath = join(directory, 'alice.ratchet');
+  const bobPath = join(directory, 'bob.ratchet');
+
+  let alice = await openEngine(DEVICE_A, alicePath, aliceKey);
+  const bob = await openEngine(DEVICE_B, bobPath, bobKey);
+  const material = await bob.request('create_prekey_material', {});
+
+  await alice.request('establish_session', {
+    remote_device_id: DEVICE_B,
+    publication_sequence: 3,
+    material,
+  });
+  assert.deepEqual(
+    await alice.request('has_session', { remote_device_id: DEVICE_B }),
+    { exists: true }
+  );
+  assert.deepEqual(
+    await alice.request('invalidate_session', { remote_device_id: DEVICE_B }),
+    { invalidated: true }
+  );
+  assert.deepEqual(
+    await alice.request('has_session', { remote_device_id: DEVICE_B }),
+    { exists: false }
+  );
+
+  await alice.close();
+  alice = await openEngine(DEVICE_A, alicePath, aliceKey);
+  assert.deepEqual(
+    await alice.request('has_session', { remote_device_id: DEVICE_B }),
+    { exists: false }
+  );
+
+  await alice.close();
+  await bob.close();
+});
