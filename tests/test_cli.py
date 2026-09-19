@@ -541,6 +541,93 @@ def test_device_recovery_does_not_promote_before_relay_revocation(
     assert revoked.value.status_code == 401
 
 
+def test_device_recovery_retries_after_initial_lifecycle_publication_failure(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    api_client = TestClient(create_app())
+    real_requester = create_test_requester(api_client)
+    failed_once = False
+
+    def failing_requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        nonlocal failed_once
+        path = urllib.parse.urlparse(url).path
+        if (
+            not failed_once
+            and method == "PUT"
+            and path.startswith("/v3/device-lifecycle/")
+        ):
+            failed_once = True
+            return 503, {"detail": "injected initial lifecycle outage"}
+        return real_requester(method, url, payload, timeout, headers)
+
+    def failing_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=failing_requester)
+
+    def healthy_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=real_requester)
+
+    password = "initial lifecycle recovery password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "initial-lifecycle-recovery.ghost"
+    pending_path = Path(f"{profile_path}.device-recovery.pending")
+    node_url = "http://ghostnode.test"
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(profile_path.read_text(), password)
+    assert before.device_lifecycle is not None
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=failing_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "injected initial lifecycle outage" in failed.err
+    assert not pending_path.exists()
+
+    still_active = decrypt_local_profile(profile_path.read_text(), password)
+    assert still_active.device.device_id == before.device.device_id
+    with pytest.raises(GhostNodeRequestError) as missing:
+        healthy_factory(node_url).get_device_lifecycle(before.entity.ghost_id)
+    assert missing.value.status_code == 404
+
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=healthy_factory,
+    ) == 0
+    capsys.readouterr()
+
+    recovered = decrypt_local_profile(profile_path.read_text(), password)
+    assert recovered.device_lifecycle is not None
+    assert (
+        recovered.device_lifecycle.statement.epoch
+        == before.device_lifecycle.statement.epoch + 1
+    )
+
+
 def test_device_recovery_retries_after_pending_profile_write_failure(
     tmp_path: Path,
     capsys,
