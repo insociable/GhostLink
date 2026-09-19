@@ -1658,7 +1658,12 @@ def test_device_recover_cli_resumes_after_old_vault_archive(
         engine.create_prekey_material()
 
     checkpoint = reconcile_profile_witness(active, witness)
-    candidate = rotate_local_profile_device(active, checkpoint, issued_at=123456)
+    assert active.device_lifecycle is not None
+    candidate = rotate_local_profile_device(
+        active,
+        checkpoint,
+        issued_at=active.device_lifecycle.statement.issued_at + 1,
+    )
     pending_path.write_text(
         encrypt_local_profile(candidate, password),
         encoding="utf-8",
