@@ -852,7 +852,7 @@ def test_device_recovery_retry_after_profile_witness_failure_starts_fresh_rotati
     )
 
 
-def test_device_recovery_rejects_archive_without_ratchet_witness(
+def test_device_recovery_rejects_cleanup_archive_without_replacement_vault(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -892,6 +892,74 @@ def test_device_recovery_rejects_archive_without_ratchet_witness(
         active.entity.ghost_id
     )
     assert relay.active_device_id == active.device.device_id
+    assert backup_path.exists()
+
+
+def test_device_recovery_rejects_pending_archive_without_ratchet_witness(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "pending archive witness password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "pending-archive-witness.ghost"
+    pending_path = Path(f"{profile_path}.device-recovery.pending")
+    backup_path = Path(f"{profile_path}.ratchet.device-recovery-old")
+    node_url = "http://ghostnode.test"
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(profile_path.read_text(), password)
+    real_replace = cli_module.os.replace
+
+    def fail_promotion(source, destination) -> None:
+        if Path(source) == pending_path and Path(destination) == profile_path:
+            raise OSError("injected profile promotion failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(cli_module.os, "replace", fail_promotion)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    capsys.readouterr()
+    assert pending_path.exists()
+
+    monkeypatch.setattr(cli_module.os, "replace", real_replace)
+    backup_path.write_bytes(b"orphaned old ratchet archive")
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "device recovery archive exists without ratchet witness" in failed.err
+
+    still_active = decrypt_local_profile(profile_path.read_text(), password)
+    assert still_active.device.device_id == before.device.device_id
+    assert pending_path.exists()
     assert backup_path.exists()
 
 
