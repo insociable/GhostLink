@@ -61,6 +61,7 @@ class ValidatedContact:
     identity_verify_key: VerifyKey
     device: PublicGhostDevice
     lifecycle_epoch: int | None = None
+    lifecycle_issued_at: int | None = None
     lifecycle_statement: str | None = None
 
     @property
@@ -316,6 +317,7 @@ def _import_lifecycle_contact(document: dict[str, object]) -> ValidatedContact:
         identity_verify_key=identity_verify_key,
         device=public_device,
         lifecycle_epoch=lifecycle.statement.epoch,
+        lifecycle_issued_at=lifecycle.statement.issued_at,
         lifecycle_statement=serialized_lifecycle,
     )
 

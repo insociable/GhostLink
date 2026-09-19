@@ -85,12 +85,24 @@ def _require_monotonic_lifecycle_update(
         raise ContactTrustError(
             "lifecycle-aware contact cannot downgrade to a legacy device bundle"
         )
+
+    current_issued_at = current.lifecycle_issued_at
+    candidate_issued_at = candidate.lifecycle_issued_at
+    if current_issued_at is None or candidate_issued_at is None:
+        raise ContactTrustError(
+            "lifecycle-aware contact is missing its signed issued_at"
+        )
+
     if candidate_epoch < current_epoch:
         raise ContactTrustError("contact device lifecycle rollback rejected")
     if candidate_epoch == current_epoch:
         if candidate_bundle != current_bundle:
             raise ContactTrustError("contact device lifecycle equivocation rejected")
         return True
+    if candidate_issued_at < current_issued_at:
+        raise ContactTrustError(
+            "contact device lifecycle issued_at rollback rejected"
+        )
     return False
 
 

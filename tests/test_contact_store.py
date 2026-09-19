@@ -627,6 +627,50 @@ def test_verified_contact_accepts_newer_lifecycle_without_reverification() -> No
     assert updated.current_contact.device_id != verified.current_contact.device_id
 
 
+def test_verified_contact_rejects_newer_epoch_with_regressed_issued_at() -> None:
+    alice = GhostEntity.generate()
+    current_bundle = _lifecycle_bundle(alice, epoch=1, issued_at=200)
+    regressed_bundle = _lifecycle_bundle(alice, epoch=2, issued_at=100)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", current_bundle)
+    verified = store.verify_identity(imported.record_id, _fingerprint(current_bundle))
+
+    with pytest.raises(ContactTrustError, match="issued_at rollback"):
+        store.update_contact_bundle(verified.record_id, regressed_bundle)
+
+    assert store.get(verified.record_id) is verified
+    assert store.get(verified.record_id).current_contact.lifecycle_issued_at == 200
+
+
+def test_imported_contact_rejects_newer_epoch_with_regressed_issued_at() -> None:
+    alice = GhostEntity.generate()
+    current_bundle = _lifecycle_bundle(alice, epoch=1, issued_at=200)
+    regressed_bundle = _lifecycle_bundle(alice, epoch=2, issued_at=100)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", current_bundle)
+
+    with pytest.raises(ContactTrustError, match="issued_at rollback"):
+        store.update_contact_bundle(imported.record_id, regressed_bundle)
+
+    assert store.get(imported.record_id) is imported
+    assert store.get(imported.record_id).current_contact.lifecycle_issued_at == 200
+
+
+def test_verified_contact_accepts_newer_epoch_with_equal_issued_at() -> None:
+    alice = GhostEntity.generate()
+    first_bundle = _lifecycle_bundle(alice, epoch=1, issued_at=200)
+    second_bundle = _lifecycle_bundle(alice, epoch=2, issued_at=200)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", first_bundle)
+    verified = store.verify_identity(imported.record_id, _fingerprint(first_bundle))
+
+    updated = store.update_contact_bundle(verified.record_id, second_bundle)
+
+    assert updated.state is ContactTrustState.VERIFIED
+    assert updated.current_contact.lifecycle_epoch == 2
+    assert updated.current_contact.lifecycle_issued_at == 200
+
+
 def test_verified_contact_rejects_lifecycle_rollback() -> None:
     alice = GhostEntity.generate()
     newer_bundle = _lifecycle_bundle(alice, epoch=3, issued_at=103)
