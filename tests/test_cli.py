@@ -852,6 +852,191 @@ def test_device_recovery_retry_after_profile_witness_failure_starts_fresh_rotati
     )
 
 
+def test_device_recovery_rejects_archive_without_ratchet_witness(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "archive without witness password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "archive-without-witness.ghost"
+    backup_path = Path(f"{profile_path}.ratchet.device-recovery-old")
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    backup_path.write_bytes(b"stale archive")
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            "http://ghostnode.test",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "replacement ratchet vault is missing" in failed.err
+
+    active = decrypt_local_profile(profile_path.read_text(), password)
+    relay = node_client_factory("http://ghostnode.test").get_device_lifecycle(
+        active.entity.ghost_id
+    )
+    assert relay.active_device_id == active.device.device_id
+    assert backup_path.exists()
+
+
+def test_device_recovery_rejects_vault_witness_existence_mismatch(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "vault witness mismatch password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "vault-witness-mismatch.ghost"
+    vault_path = Path(f"{profile_path}.ratchet")
+    pending_path = Path(f"{profile_path}.device-recovery.pending")
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(profile_path.read_text(), password)
+    vault_path.write_bytes(b"unwitnessed ratchet vault")
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            "http://ghostnode.test",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "ratchet vault/witness mismatch" in failed.err
+
+    still_active = decrypt_local_profile(profile_path.read_text(), password)
+    assert still_active.device.device_id == before.device.device_id
+    assert pending_path.exists()
+    assert vault_path.exists()
+
+
+def test_device_recovery_retries_final_cleanup_without_rotating_again(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "cleanup retry password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "cleanup-retry.ghost"
+    vault_path = Path(f"{profile_path}.ratchet")
+    backup_path = Path(f"{profile_path}.ratchet.device-recovery-old")
+    node_url = "http://ghostnode.test"
+
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    active = decrypt_local_profile(profile_path.read_text(), password)
+    assert active.device_lifecycle is not None
+    active_epoch = active.device_lifecycle.statement.epoch
+    vault_path.write_bytes(b"replacement vault placeholder")
+    backup_path.write_bytes(b"old vault placeholder")
+
+    class FakeEngine:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+    monkeypatch.setattr(
+        cli_module,
+        "_create_ratchet_engine",
+        lambda *args, **kwargs: FakeEngine(),
+    )
+    real_unlink = cli_module._unlink_file_durable
+
+    def fail_cleanup(path: Path) -> None:
+        if path == backup_path:
+            raise OSError("injected recovery archive cleanup failure")
+        real_unlink(path)
+
+    monkeypatch.setattr(cli_module, "_unlink_file_durable", fail_cleanup)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "injected recovery archive cleanup failure" in failed.err
+    assert backup_path.exists()
+
+    monkeypatch.setattr(cli_module, "_unlink_file_durable", real_unlink)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    finalized = decrypt_local_profile(profile_path.read_text(), password)
+    assert finalized.device.device_id == active.device.device_id
+    assert finalized.device_lifecycle is not None
+    assert finalized.device_lifecycle.statement.epoch == active_epoch
+    assert not backup_path.exists()
+    assert vault_path.exists()
+
+
 def test_cli_send_refreshes_verified_contact_after_remote_device_rotation(
     tmp_path: Path,
     capsys,
