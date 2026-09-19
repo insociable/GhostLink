@@ -7,6 +7,7 @@ import base64
 import json
 import struct
 import sys
+import time
 
 
 def read_exact(size: int) -> bytes:
@@ -87,6 +88,11 @@ while True:
         break
 
     request_id = request["id"]
+    hang_method = sys.argv[1] if len(sys.argv) > 1 else None
+    if request["method"] == hang_method:
+        while True:
+            time.sleep(3600)
+
     try:
         result = dispatch(request["method"], request["params"])
         write_response({"id": request_id, "ok": True, "result": result})

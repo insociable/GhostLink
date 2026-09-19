@@ -103,6 +103,23 @@ The Python client requires the response ID to match the outstanding request.
 
 Operations on one client are serialized by a local lock; the Node persistent-party layer independently serializes state-mutating ratchet operations.
 
+## Request deadline and child-process failure
+
+Every Python-to-ratchet-engine RPC has a finite deadline. The default is 10 seconds and callers may configure another finite positive timeout for controlled environments/tests.
+
+If the deadline expires while waiting for any response bytes or while processing the outstanding RPC, the Python client:
+
+1. kills the owned ratchet-engine child if it is still running;
+2. reaps the child process;
+3. closes its local pipe handles;
+4. marks that client instance closed;
+5. raises `ENGINE_TIMEOUT`.
+
+The timed-out client MUST NOT be reused. A caller that wants to continue must create a new `RatchetEngineClient`, which reopens the durable vault and re-enters the existing witness/reconciliation checks.
+
+This fail-closed behavior is intentional because a timeout can occur after a mutating request reached the child but before the Python process received its acknowledgement. Continuing on the same process would make the mutation state ambiguous.
+
+
 ## Methods
 
 ### `ping`
