@@ -10,6 +10,11 @@ Python dependencies are installed from `poetry.lock`. The development toolchain
 pins `pip-audit==2.10.1`, and CI runs `poetry run pip-audit` against the installed
 environment. A reported known vulnerability fails the quality job by default.
 
+The audit intentionally uses standard mode rather than `--strict`: GhostLink itself
+is installed as a local editable package and is not published on PyPI, so strict
+mode would fail on that unauditable local distribution even when all third-party
+dependencies are clean. No third-party advisory is ignored for this reason.
+
 The ratchet engine continues to run `npm audit --audit-level=high`. High and
 critical npm advisories are therefore blocking.
 
