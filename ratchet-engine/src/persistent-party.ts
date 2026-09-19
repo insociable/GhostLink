@@ -85,7 +85,9 @@ export class PersistentRatchetParty {
     vaultPath: string,
     masterKey: Uint8Array,
     stateId?: string,
-    allowLegacyMigration = false
+    allowLegacyMigration = false,
+    recoveryPreviousRevision?: number,
+    recoveryPreviousDigest?: string
   ): Promise<PersistentRatchetParty> {
     if (!name) {
       throw new Error('ratchet party name must not be empty');
@@ -99,7 +101,9 @@ export class PersistentRatchetParty {
       vaultPath,
       masterKey,
       stateId,
-      allowLegacyMigration
+      allowLegacyMigration,
+      recoveryPreviousRevision,
+      recoveryPreviousDigest
     );
     const persisted = await vault.load(owner);
 

@@ -795,6 +795,7 @@ class RatchetEngineClient:
         coordination_key: bytes | None = None,
         witness: MonotonicWitness | None = None,
         allow_legacy_migration: bool = False,
+        recovery_previous_checkpoint: ComponentCheckpoint | None = None,
     ) -> None:
         if not command or any(not part for part in command):
             raise ValueError("command must contain non-empty arguments")
@@ -817,6 +818,41 @@ class RatchetEngineClient:
             raise ValueError(
                 "legacy vault migration requires rollback-state coordination"
             )
+        if recovery_previous_checkpoint is not None:
+            if state_id is None or witness is None:
+                raise ValueError(
+                    "ratchet recovery requires rollback-state coordination"
+                )
+            if allow_legacy_migration:
+                raise ValueError(
+                    "ratchet recovery cannot be combined with legacy migration"
+                )
+            if recovery_previous_checkpoint.component != "ratchet":
+                raise ValueError(
+                    "ratchet recovery checkpoint must use component ratchet"
+                )
+            if recovery_previous_checkpoint.state_id != state_id:
+                raise ValueError(
+                    "ratchet recovery checkpoint belongs to another client state"
+                )
+            try:
+                witnessed = witness.get("ratchet")
+            except StateWitnessError as exc:
+                raise RatchetEngineError(
+                    "STATE_WITNESS",
+                    f"unable to read ratchet witness: {exc}",
+                ) from exc
+            if (
+                witnessed is None
+                or witnessed.state_id != recovery_previous_checkpoint.state_id
+                or witnessed.component != recovery_previous_checkpoint.component
+                or witnessed.revision != recovery_previous_checkpoint.revision
+                or witnessed.digest != recovery_previous_checkpoint.digest
+            ):
+                raise RatchetEngineError(
+                    "STATE_WITNESS",
+                    "ratchet recovery checkpoint is not the current witnessed state",
+                )
 
         self._lock = threading.Lock()
         self._next_request_id = 1
@@ -881,6 +917,13 @@ class RatchetEngineClient:
             if state_id is not None:
                 open_params["state_id"] = state_id
                 open_params["allow_legacy_migration"] = allow_legacy_migration
+                if recovery_previous_checkpoint is not None:
+                    open_params["recovery_previous_revision"] = (
+                        recovery_previous_checkpoint.revision
+                    )
+                    open_params["recovery_previous_digest"] = (
+                        recovery_previous_checkpoint.digest
+                    )
 
             opened = self._request("open", open_params)
             if state_id is None:
@@ -905,7 +948,12 @@ class RatchetEngineClient:
                         "unsupported ratchet RPC version",
                     )
                 state_origin = open_document.get("state_origin")
-                if state_origin not in {"created", "migrated", "existing"}:
+                if state_origin not in {
+                    "created",
+                    "migrated",
+                    "recovered",
+                    "existing",
+                }:
                     raise RatchetEngineProtocolError(
                         "PROTOCOL_ERROR",
                         "ratchet open response has invalid state_origin",

@@ -67,7 +67,7 @@ interface VaultEnvelope {
   readonly tag: string;
 }
 
-export type VaultStateOrigin = 'created' | 'migrated' | 'existing';
+export type VaultStateOrigin = 'created' | 'migrated' | 'recovered' | 'existing';
 
 export interface VaultCheckpointMetadata {
   readonly stateId: string;
@@ -328,6 +328,8 @@ export class RatchetStateVault {
   private readonly masterKey: Buffer;
   private readonly stateId: string | null;
   private readonly allowLegacyMigration: boolean;
+  private readonly recoveryPreviousRevision: number | null;
+  private readonly recoveryPreviousDigest: string | null;
   private checkpoint: VaultCheckpointMetadata | null = null;
   private acknowledgedDigest: string | null = null;
   private stateOrigin: VaultStateOrigin | null = null;
@@ -336,7 +338,9 @@ export class RatchetStateVault {
     readonly path: string,
     masterKey: Uint8Array,
     stateId?: string,
-    allowLegacyMigration = false
+    allowLegacyMigration = false,
+    recoveryPreviousRevision?: number,
+    recoveryPreviousDigest?: string
   ) {
     if (!path) {
       throw new RatchetVaultError('vault path must not be empty');
@@ -344,6 +348,42 @@ export class RatchetStateVault {
     this.masterKey = validateMasterKey(masterKey);
     this.stateId = stateId === undefined ? null : requireStateId(stateId);
     this.allowLegacyMigration = allowLegacyMigration;
+
+    const hasRecoveryRevision = recoveryPreviousRevision !== undefined;
+    const hasRecoveryDigest = recoveryPreviousDigest !== undefined;
+    if (hasRecoveryRevision !== hasRecoveryDigest) {
+      throw new RatchetVaultError(
+        'ratchet recovery requires both previous revision and digest'
+      );
+    }
+    if (hasRecoveryRevision) {
+      if (this.stateId === null) {
+        throw new RatchetVaultError(
+          'ratchet recovery requires rollback-state coordination'
+        );
+      }
+      if (allowLegacyMigration) {
+        throw new RatchetVaultError(
+          'ratchet recovery cannot be combined with legacy migration'
+        );
+      }
+      if (
+        !Number.isSafeInteger(recoveryPreviousRevision) ||
+        recoveryPreviousRevision! <= 0 ||
+        recoveryPreviousRevision! >= MAX_REVISION
+      ) {
+        throw new RatchetVaultError(
+          'ratchet recovery previous revision is outside the supported range'
+        );
+      }
+      this.recoveryPreviousRevision = recoveryPreviousRevision!;
+      this.recoveryPreviousDigest = requireCheckpointDigest(
+        recoveryPreviousDigest!
+      );
+    } else {
+      this.recoveryPreviousRevision = null;
+      this.recoveryPreviousDigest = null;
+    }
   }
 
   async exists(): Promise<boolean> {
@@ -385,7 +425,27 @@ export class RatchetStateVault {
   }
 
   async load(expectedOwner: VaultOwner): Promise<PartyStoresState | null> {
-    if (!(await this.exists())) {
+    const exists = await this.exists();
+    if (this.recoveryPreviousRevision !== null) {
+      if (exists) {
+        throw new RatchetVaultError(
+          'ratchet recovery requires the previous vault to be removed after verification'
+        );
+      }
+      if (this.stateId === null || this.recoveryPreviousDigest === null) {
+        throw new RatchetVaultError('ratchet recovery state is incomplete');
+      }
+      this.checkpoint = {
+        stateId: this.stateId,
+        revision: this.recoveryPreviousRevision,
+        previousDigest: null,
+      };
+      this.acknowledgedDigest = this.recoveryPreviousDigest;
+      this.stateOrigin = 'recovered';
+      return null;
+    }
+
+    if (!exists) {
       if (this.stateId !== null) {
         this.stateOrigin = 'created';
       }
