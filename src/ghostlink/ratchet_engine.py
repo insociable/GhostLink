@@ -35,6 +35,7 @@ from ghostlink.state_witness import (
     MonotonicWitness,
     StateCheckpointError,
     StateWitnessError,
+    WitnessRecord,
     derive_checkpoint,
     initialize_witness,
     reconcile_checkpoint,
@@ -795,7 +796,7 @@ class RatchetEngineClient:
         coordination_key: bytes | None = None,
         witness: MonotonicWitness | None = None,
         allow_legacy_migration: bool = False,
-        recovery_previous_checkpoint: ComponentCheckpoint | None = None,
+        recovery_previous_checkpoint: WitnessRecord | None = None,
     ) -> None:
         if not command or any(not part for part in command):
             raise ValueError("command must contain non-empty arguments")

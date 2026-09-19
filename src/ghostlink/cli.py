@@ -39,6 +39,7 @@ from ghostlink.profile import (
     encrypt_local_profile,
     initialize_profile_witness,
     reconcile_profile_witness,
+    rotate_local_profile_device,
     upgrade_local_profile,
 )
 from ghostlink.ratchet_engine import RatchetEngineClient, RatchetEngineError
@@ -55,7 +56,12 @@ from ghostlink.replay import (
     WitnessedSQLiteReplayCache,
     migrate_replay_cache_to_witness,
 )
-from ghostlink.state_witness import SQLiteMonotonicWitness, StateWitnessError
+from ghostlink.state_witness import (
+    ComponentCheckpoint,
+    SQLiteMonotonicWitness,
+    StateWitnessError,
+    WitnessRecord,
+)
 
 PasswordReader = Callable[[str], str]
 NodeClientFactory = Callable[[str], GhostNodeClient]
@@ -96,6 +102,14 @@ def _contact_store_path(profile_path: Path, explicit_path: str | None) -> Path:
 
 def _state_witness_path(profile_path: Path) -> Path:
     return Path(f"{profile_path}.witness.sqlite3")
+
+
+def _device_recovery_pending_profile_path(profile_path: Path) -> Path:
+    return Path(f"{profile_path}.device-recovery.pending")
+
+
+def _device_recovery_ratchet_backup_path(profile_path: Path) -> Path:
+    return Path(f"{profile_path}.ratchet.device-recovery-old")
 
 
 def _require_state_coordination(profile: LocalProfile) -> tuple[str, bytes]:
@@ -149,6 +163,7 @@ def _create_ratchet_engine(
     profile_path: Path,
     *,
     allow_legacy_migration: bool = False,
+    recovery_previous_checkpoint: WitnessRecord | None = None,
 ) -> RatchetEngineClient:
     node = shutil.which("node")
     if node is None:
@@ -168,6 +183,7 @@ def _create_ratchet_engine(
         coordination_key=coordination_key,
         witness=_profile_witness(profile_path, profile),
         allow_legacy_migration=allow_legacy_migration,
+        recovery_previous_checkpoint=recovery_previous_checkpoint,
     )
 
 
@@ -216,6 +232,28 @@ def _replace_private_file_atomic(path: Path, content: str) -> None:
             pass
         temporary.unlink(missing_ok=True)
         raise
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name != "posix":
+        return
+    directory_fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _rename_file_atomic(source: Path, destination: Path) -> None:
+    if destination.exists():
+        raise CLIError(f"recovery artifact already exists: {destination}")
+    os.replace(source, destination)
+    _fsync_directory(destination.parent)
+
+
+def _unlink_file_durable(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    _fsync_directory(path.parent)
 
 
 def _write_new_public_file(path: Path, content: str) -> None:
@@ -313,6 +351,151 @@ def _command_profile_upgrade(
         "Ratcheted protocol-v3, contact-store, lifecycle and "
         "rollback-coordination secrets are available."
     )
+    return 0
+
+
+
+
+def _validate_recovery_candidate(
+    current: LocalProfile,
+    candidate: LocalProfile,
+    current_checkpoint: ComponentCheckpoint,
+) -> None:
+    if candidate.entity.ghost_id != current.entity.ghost_id:
+        raise CLIError("recovery candidate changed GhostID")
+    if bytes(candidate.entity.verify_key) != bytes(current.entity.verify_key):
+        raise CLIError("recovery candidate changed identity key")
+    if candidate.client_state_id != current.client_state_id:
+        raise CLIError("recovery candidate changed client state ID")
+    if candidate.state_coordination_key != current.state_coordination_key:
+        raise CLIError("recovery candidate changed state coordination key")
+    if candidate.ratchet_master_key != current.ratchet_master_key:
+        raise CLIError("recovery candidate changed ratchet master key")
+    if candidate.contact_store_key != current.contact_store_key:
+        raise CLIError("recovery candidate changed contact store key")
+    if current.device_lifecycle is None or candidate.device_lifecycle is None:
+        raise CLIError("device recovery requires lifecycle-aware profiles")
+    if candidate.device.device_id == current.device.device_id:
+        raise CLIError("recovery candidate did not rotate DeviceID")
+    if (
+        candidate.device_lifecycle.statement.epoch
+        != current.device_lifecycle.statement.epoch + 1
+    ):
+        raise CLIError("recovery candidate lifecycle epoch is not exactly next")
+    if candidate.state_revision != current_checkpoint.revision + 1:
+        raise CLIError("recovery candidate profile revision is not exactly next")
+    if candidate.state_previous_digest != current_checkpoint.digest:
+        raise CLIError("recovery candidate profile lineage is invalid")
+
+
+def _command_device_recover(
+    args: argparse.Namespace,
+    password_reader: PasswordReader,
+) -> int:
+    profile_path = Path(args.profile)
+    active, password = _load_profile_with_password(profile_path, password_reader)
+    if active.device_lifecycle is None:
+        raise CLIError(
+            "profile has no device lifecycle state; run profile-upgrade first"
+        )
+
+    witness = _profile_witness(profile_path, active)
+    active_checkpoint = reconcile_profile_witness(active, witness)
+    pending_path = _device_recovery_pending_profile_path(profile_path)
+    vault_path = _ratchet_vault_path(profile_path)
+    backup_path = _device_recovery_ratchet_backup_path(profile_path)
+
+    if pending_path.exists():
+        candidate = decrypt_local_profile(_read_text(pending_path), password)
+        _validate_recovery_candidate(active, candidate, active_checkpoint)
+    elif backup_path.exists():
+        if not vault_path.exists():
+            raise CLIError(
+                "device recovery is incomplete: replacement ratchet vault is missing"
+            )
+        with _create_ratchet_engine(active, profile_path):
+            pass
+        _unlink_file_durable(backup_path)
+        print("Device recovery finalized after interruption.")
+        print(f"GhostID: {active.entity.ghost_id}")
+        print(f"DeviceID: {active.device.device_id}")
+        return 0
+    else:
+        candidate = rotate_local_profile_device(active, active_checkpoint)
+        _write_new_private_file(
+            pending_path,
+            encrypt_local_profile(candidate, password),
+        )
+
+    try:
+        ratchet_record = witness.get("ratchet")
+    except StateWitnessError as exc:
+        raise CLIError(f"unable to read ratchet rollback witness: {exc}") from exc
+
+    if backup_path.exists() and not vault_path.exists():
+        if ratchet_record is None:
+            raise CLIError(
+                "device recovery archive exists without ratchet witness"
+            )
+        _rename_file_atomic(backup_path, vault_path)
+        try:
+            with _create_ratchet_engine(active, profile_path):
+                pass
+        except Exception:
+            _rename_file_atomic(vault_path, backup_path)
+            raise
+        _rename_file_atomic(vault_path, backup_path)
+        try:
+            ratchet_record = witness.get("ratchet")
+        except StateWitnessError as exc:
+            raise CLIError(
+                f"unable to read ratchet rollback witness: {exc}"
+            ) from exc
+
+    if backup_path.exists() and vault_path.exists():
+        with _create_ratchet_engine(candidate, profile_path):
+            pass
+    elif not backup_path.exists():
+        vault_exists = vault_path.exists()
+        if vault_exists != (ratchet_record is not None):
+            raise CLIError(
+                "ratchet vault/witness mismatch; repair or migrate state before recovery"
+            )
+        if vault_exists:
+            with _create_ratchet_engine(active, profile_path):
+                pass
+            ratchet_record = witness.get("ratchet")
+            if ratchet_record is None:
+                raise CLIError("ratchet witness disappeared during recovery")
+            _rename_file_atomic(vault_path, backup_path)
+
+    if backup_path.exists() and not vault_path.exists():
+        if ratchet_record is None:
+            raise CLIError("ratchet recovery requires the current witness record")
+        with _create_ratchet_engine(
+            candidate,
+            profile_path,
+            recovery_previous_checkpoint=ratchet_record,
+        ):
+            pass
+
+    os.replace(pending_path, profile_path)
+    if os.name == "posix":
+        profile_path.chmod(0o600)
+    _fsync_directory(profile_path.parent)
+    reconcile_profile_witness(candidate, witness)
+
+    if backup_path.exists():
+        _unlink_file_durable(backup_path)
+
+    lifecycle = candidate.device_lifecycle
+    if lifecycle is None:
+        raise CLIError("device recovery produced no lifecycle state")
+
+    print("Device recovery completed.")
+    print(f"GhostID: {candidate.entity.ghost_id}")
+    print(f"DeviceID: {candidate.device.device_id}")
+    print(f"Lifecycle epoch: {lifecycle.statement.epoch}")
     return 0
 
 
@@ -820,6 +1003,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upgrade_parser.add_argument("--profile", required=True)
 
+    recovery_parser = subparsers.add_parser(
+        "device-recover",
+        help="rotate the local DeviceID and reset ratchet state crash-safely",
+    )
+    recovery_parser.add_argument("--profile", required=True)
+
     contact_store_upgrade_parser = subparsers.add_parser(
         "contact-store-upgrade",
         help="enroll a legacy contact store in rollback-state coordination",
@@ -1011,6 +1200,8 @@ def run(
             return _command_init(args, password_reader)
         if args.command == "profile-upgrade":
             return _command_profile_upgrade(args, password_reader)
+        if args.command == "device-recover":
+            return _command_device_recover(args, password_reader)
         if args.command == "contact-store-upgrade":
             return _command_contact_store_upgrade(args, password_reader)
         if args.command == "replay-state-upgrade":
