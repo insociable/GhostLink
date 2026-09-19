@@ -123,8 +123,35 @@ The transaction therefore fails closed on inconsistent artifact/witness combinat
 
 No tested interruption produced silent acceptance of a mixed identity/device state, and no runtime correction was required.
 
+## Adversarial result: concurrency and race matrix
+
+The remaining security-sensitive races are now exercised directly:
+
+| Concurrent case | Observed / required result |
+| --- | --- |
+| identical lifecycle publication vs itself | both calls may succeed idempotently; relay checkpoint advances once |
+| two different lifecycle states at the same epoch | exactly one wins; the other is rejected as equivocation/conflict |
+| lifecycle N+1 vs N+2 | final head is the highest accepted epoch; a lower late writer cannot roll it back |
+| stale lifecycle vs newer lifecycle | final head remains newer; stale publication is idempotent-before-newer or rejected-after-newer |
+| same DeviceID claimed by two GhostIDs | exactly one identity can own the DeviceID in that relay registry |
+| lifecycle mutation vs v3 message mutation on one coordinator | serialized; both durable changes are witnessed and coordinator remains healthy |
+| lifecycle mutation vs pre-key mutation on one coordinator | serialized; both durable changes are witnessed and coordinator remains healthy |
+| lifecycle mutation vs authenticated request-replay insertion on one coordinator | serialized; both durable changes are witnessed and coordinator remains healthy |
+| identical same-instance contact lifecycle refreshes | idempotent after process-local serialization |
+| stale vs newer same-instance contact refresh | cannot finish at the stale epoch |
+| two different same-epoch same-instance contact refreshes | exactly one wins after the process-local locking correction |
+| two independent persistent contact writers from one witnessed revision | witness CAS permits at most one successor; an unmatched final file is rejected as divergence on next load |
+
+This pass found one real runtime race: `ContactTrustStore.update_contact_bundle` previously performed the lifecycle check and record replacement without a process-local critical section. Two threads could both validate against the same old record and silently accept different same-epoch devices. The store now uses a process-local re-entrant lock around lifecycle bundle updates, and the adversarial race is covered by repeatable tests.
+
+The boundary remains intentionally narrower than a distributed lock. Separate processes or independent store objects writing the same encrypted contact file are not globally serialized. Atomic file replacement plus witness compare-and-set ensures that only a witnessed successor is trusted; if a losing writer leaves divergent bytes behind, the next load fails closed instead of silently accepting them.
+
+Persistent GhostNode protection is similarly scoped to the normal architecture: one `RelayStateCoordinator` owns the protected stores in one process. Tests demonstrate serialization through that coordinator. GhostLink does not claim distributed consensus or safe active/active multi-process sharing of one relay database and witness.
+
+Existing pre-key tests continue to demonstrate atomic allocation under concurrent requesters; this consolidation did not require a new pre-key synchronization mechanism.
+
 ## Consolidation questions still open
 
-The main remaining adversarial consolidation area is concurrency: races around lifecycle publication, contact refresh and relay persistent-state mutation.
+The adversarial lifecycle, rollback, recovery and concurrency matrices are now covered in the current repository scope. Remaining consolidation work is dependency-policy enforcement plus the final maintainability/security review before external audit.
 
 When one of these cases cannot be distinguished from legitimate state, documentation must say so instead of describing the property as protected.
