@@ -199,7 +199,7 @@ poetry run ghostlink profile-upgrade --profile alice.ghost
 Rotate the DeviceID and rebuild linked local ratchet state through the crash-resumable recovery transaction:
 
 ```bash
-poetry run ghostlink device-recover --profile alice.ghost
+poetry run ghostlink device-recover --profile alice.ghost --node https://your-ghostnode.example
 ```
 
 For the complete CLI workflow, see [docs/m3-cli.md](docs/m3-cli.md). For deployment, see [deploy/oracle/README.md](deploy/oracle/README.md).
