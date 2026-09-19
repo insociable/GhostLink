@@ -10,7 +10,7 @@ packages = [{ include = "ghostlink", from = "src" }]
 [tool.poetry.dependencies]
 python = "^3.12"
 pynacl = "^1.5.0"
-fastapi = "^0.139.0"
+fastapi = ">=0.139,<0.142"
 uvicorn = "^0.51.0"
 segno = "1.6.6"
 
