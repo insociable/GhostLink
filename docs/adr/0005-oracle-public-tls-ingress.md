@@ -46,7 +46,7 @@ Caddy also sanitizes forwarded headers as the first proxy. GhostNode does not ne
 
 ## Decision
 
-The reference direct Oracle HTTPS ingress uses the official Caddy container pinned to the reviewed patch tag `2.11.4-alpine`.
+The reference direct Oracle HTTPS ingress uses the official Caddy `2.11.4-alpine` image pinned to the reviewed OCI digest. The readable tag is retained alongside the digest for update tooling and operator context.
 
 The existing loopback-only `compose.yaml` remains unchanged as the development/SSH-tunnel deployment.
 
