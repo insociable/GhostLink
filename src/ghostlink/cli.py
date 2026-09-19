@@ -11,7 +11,11 @@ import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from ghostlink.client import GhostNodeClient, GhostNodeClientError
+from ghostlink.client import (
+    GhostNodeClient,
+    GhostNodeClientError,
+    GhostNodeRequestError,
+)
 from ghostlink.config import load_access_token_from_file
 from ghostlink.contact import (
     ContactBundleError,
@@ -406,6 +410,7 @@ def _command_device_recover(
     vault_path = _ratchet_vault_path(profile_path)
     backup_path = _device_recovery_ratchet_backup_path(profile_path)
     client = node_client_factory(args.node)
+    active_registered = False
 
     if pending_path.exists():
         candidate = decrypt_local_profile(_read_text(pending_path), password)
@@ -425,13 +430,14 @@ def _command_device_recover(
         return 0
     else:
         _publish_profile_lifecycle(client, active)
+        active_registered = True
         candidate = rotate_local_profile_device(active, active_checkpoint)
         _write_new_private_file(
             pending_path,
             encrypt_local_profile(candidate, password),
         )
 
-    if pending_path.exists():
+    if pending_path.exists() and not active_registered:
         try:
             _publish_profile_lifecycle(client, active)
         except GhostNodeRequestError as exc:
@@ -942,6 +948,7 @@ def _command_inbox(
     _require_ratchet_key(profile)
     contact = _resolve_message_contact(args, profile_path, profile)
     client = node_client_factory(args.node)
+    _publish_profile_lifecycle(client, profile)
     state_id, coordination_key = _require_state_coordination(profile)
     replay_cache = WitnessedSQLiteReplayCache(
         _replay_state_path(profile_path, args.state),
