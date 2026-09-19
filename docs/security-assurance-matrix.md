@@ -152,6 +152,6 @@ Existing pre-key tests continue to demonstrate atomic allocation under concurren
 
 ## Consolidation questions still open
 
-The adversarial lifecycle, rollback, recovery and concurrency matrices are now covered in the current repository scope. Remaining consolidation work is dependency-policy enforcement plus the final maintainability/security review before external audit.
+The adversarial lifecycle, rollback, recovery and concurrency matrices are now covered in the current repository scope. Automated dependency-policy enforcement is now in place; the remaining internal consolidation step is the final maintainability/security review before external audit.
 
 When one of these cases cannot be distinguished from legitimate state, documentation must say so instead of describing the property as protected.
