@@ -88,6 +88,7 @@ The current codebase includes:
 - optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity;
 - relay Bearer-token loading from a secret file rather than token values in argv/environment;
 - client-side rejection of cleartext HTTP for non-loopback GhostNode URLs, preventing bearer credentials from being sent to a remote relay without TLS;
+- rejection of all HTTP redirects in the GhostNode protocol client, preventing authenticated request headers from being forwarded to a redirected target;
 - reference Oracle Caddy ingress with GhostNode un-published, TCP/443-only public exposure, disabled HTTP access logs and explicit Uvicorn proxy-header distrust;
 - a stdlib-only external TLS gate that validates every published A/AAAA address, public certificate/hostname trust, closed TCP/80 and TCP/8000, and the HTTPS health response before live-deployment acceptance.
 

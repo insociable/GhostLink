@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from nacl.signing import VerifyKey
 
@@ -158,6 +158,27 @@ class GhostNodeRequestError(GhostNodeClientError):
         super().__init__(f"GhostNode request failed ({status_code}): {detail}")
 
 
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject every HTTP redirect instead of forwarding GhostLink headers."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            "GhostNode redirects are not allowed",
+            headers,
+            fp,
+        )
+
+
 def _decode_response(raw: bytes) -> object | None:
     if not raw:
         return None
@@ -195,8 +216,9 @@ def _urllib_request(
         method=method,
     )
 
+    opener = urllib.request.build_opener(_RejectRedirectHandler())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
             return response.status, _decode_response(response.read())
     except urllib.error.HTTPError as exc:
         return exc.code, _decode_response(exc.read())
