@@ -309,7 +309,7 @@ def test_full_prekey_publication_flow_survives_engine_restart(
         )
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
     now = int(time.time())
@@ -820,7 +820,7 @@ def test_relay_fetch_establishes_one_time_and_fallback_sessions(
         )
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
     now = int(time.time())
@@ -929,7 +929,7 @@ def test_prekey_maintenance_replenishes_exhausted_relay_pool(
         )
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
     now = int(time.time())
@@ -1115,7 +1115,7 @@ def test_ratchet_v3_relay_round_trip_and_tamper_rollback(
         )
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
     now = int(time.time())
@@ -1266,7 +1266,7 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
     bob_profile = tmp_path / "bob-cli-v3.ghost"
     alice_contact = tmp_path / "alice-cli-v3.contact"
     bob_contact = tmp_path / "bob-cli-v3.contact"
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
 
     for profile_path in (alice_profile, bob_profile):
         assert run_cli(
@@ -1655,7 +1655,7 @@ def test_device_recover_cli_rotates_profile_without_ratchet_state(
 ) -> None:
     api_client = TestClient(create_app())
     node_client_factory = _node_client_factory(api_client)
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     profile_path = tmp_path / "recover-profile-only.ghost"
     password = os.urandom(24).hex()
 
@@ -1727,7 +1727,7 @@ def test_device_recover_cli_resets_existing_ratchet_vault(
 ) -> None:
     api_client = TestClient(create_app())
     node_client_factory = _node_client_factory(api_client)
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     profile_path = tmp_path / "recover-with-ratchet.ghost"
     password = os.urandom(24).hex()
     def password_reader(prompt: str) -> str:
@@ -1813,7 +1813,7 @@ def test_device_recover_cli_resumes_after_old_vault_archive(
 ) -> None:
     api_client = TestClient(create_app())
     node_client_factory = _node_client_factory(api_client)
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     profile_path = tmp_path / "recover-resume.ghost"
     password = os.urandom(24).hex()
 

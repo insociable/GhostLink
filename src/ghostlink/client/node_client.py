@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import json
 import time
 import urllib.error
@@ -49,6 +50,7 @@ _MAX_PREKEY_BINDING_BYTES = 32 * 1024
 _MAX_PUBLICATION_SEQUENCE = (1 << 53) - 1
 _MAX_ONE_TIME_PREKEYS = 256
 _MAX_PREKEY_PUBLICATION_BYTES = 1_048_576
+_MAX_ERROR_DETAIL_CHARS = 512
 _EXPECTED_PREKEY_RECEIPT_FIELDS = {
     "version",
     "device_id",
@@ -121,6 +123,18 @@ class PreKeyPublicationReceipt:
     publication_sequence: int
     expires_at: int
     one_time_count: int
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if hostname is None:
+        return False
+    normalized = hostname.rstrip(".").casefold()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 class GhostNodeClientError(RuntimeError):
@@ -258,7 +272,13 @@ def _extract_error_detail(body: object | None) -> str:
     if isinstance(body, dict):
         detail = body.get("detail")
         if isinstance(detail, str) and detail:
-            return detail
+            sanitized = "".join(
+                character if character.isprintable() else " "
+                for character in detail
+            )
+            sanitized = " ".join(sanitized.split())
+            if sanitized:
+                return sanitized[:_MAX_ERROR_DETAIL_CHARS]
     return "unexpected GhostNode response"
 
 
@@ -592,6 +612,11 @@ class GhostNodeClient:
             raise ValueError("base_url must be an absolute HTTP(S) URL")
         if parsed.username is not None or parsed.password is not None:
             raise ValueError("base_url must not contain embedded credentials")
+        hostname = parsed.hostname
+        if parsed.scheme == "http" and not _is_loopback_host(hostname):
+            raise ValueError(
+                "cleartext HTTP is only allowed for loopback GhostNode URLs"
+            )
         if self.timeout <= 0:
             raise ValueError("timeout must be greater than zero")
         if self.access_token is not None and not self.access_token.strip():

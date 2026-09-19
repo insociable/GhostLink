@@ -312,7 +312,7 @@ def test_cli_two_client_ratcheted_message_workflow(
             node_client_factory,
         )
     )
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     engine_factory = fake_engine_factory(session_state)
 
     assert run(
@@ -414,7 +414,7 @@ def test_cli_prekey_sync_runs_ratchet_maintenance(
             "--profile",
             str(profile_path),
             "--node",
-            "http://ghostnode.test",
+            "https://ghostnode.test",
         ],
         password_reader=password_reader,
         node_client_factory=node_client_factory,
@@ -427,7 +427,7 @@ def test_cli_prekey_sync_runs_ratchet_maintenance(
     assert "published_initial" in captured.out
 
     lifecycle = node_client_factory(
-        "http://ghostnode.test"
+        "https://ghostnode.test"
     ).get_device_lifecycle(profile.entity.ghost_id)
     assert lifecycle.active_device_id == profile.device.device_id
     assert profile.device_lifecycle is not None
@@ -465,7 +465,7 @@ def test_device_recovery_does_not_promote_before_relay_revocation(
 
     password_reader = lambda prompt: "recovery relay password"  # noqa: E731
     profile_path = tmp_path / "relay-recovery.ghost"
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
 
     assert run(
         ["init", "--profile", str(profile_path)],
@@ -577,7 +577,7 @@ def test_device_recovery_retries_after_initial_lifecycle_publication_failure(
     password_reader = lambda prompt: password  # noqa: E731
     profile_path = tmp_path / "initial-lifecycle-recovery.ghost"
     pending_path = Path(f"{profile_path}.device-recovery.pending")
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     assert run(
         ["init", "--profile", str(profile_path)],
         password_reader=password_reader,
@@ -642,7 +642,7 @@ def test_device_recovery_retries_after_pending_profile_write_failure(
     password = "pending write recovery password"  # noqa: S105
     password_reader = lambda prompt: password  # noqa: E731
     profile_path = tmp_path / "pending-write-recovery.ghost"
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     assert run(
         ["init", "--profile", str(profile_path)],
         password_reader=password_reader,
@@ -718,7 +718,7 @@ def test_device_recovery_resumes_same_candidate_after_profile_promotion_failure(
     password_reader = lambda prompt: password  # noqa: E731
     profile_path = tmp_path / "promotion-failure-recovery.ghost"
     pending_path = Path(f"{profile_path}.device-recovery.pending")
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     assert run(
         ["init", "--profile", str(profile_path)],
         password_reader=password_reader,
@@ -790,7 +790,7 @@ def test_device_recovery_retry_after_post_promotion_fsync_starts_fresh_rotation(
     password = "post promotion fsync password"  # noqa: S105
     password_reader = lambda prompt: password  # noqa: E731
     profile_path = tmp_path / "post-promotion-fsync.ghost"
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     assert run(
         ["init", "--profile", str(profile_path)],
         password_reader=password_reader,
@@ -866,7 +866,7 @@ def test_device_recovery_retry_after_profile_witness_failure_starts_fresh_rotati
     password = "profile witness recovery password"  # noqa: S105
     password_reader = lambda prompt: password  # noqa: E731
     profile_path = tmp_path / "profile-witness-recovery.ghost"
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     assert run(
         ["init", "--profile", str(profile_path)],
         password_reader=password_reader,
@@ -966,7 +966,7 @@ def test_device_recovery_rejects_cleanup_archive_without_replacement_vault(
             "--profile",
             str(profile_path),
             "--node",
-            "http://ghostnode.test",
+            "https://ghostnode.test",
         ],
         password_reader=password_reader,
         node_client_factory=node_client_factory,
@@ -977,7 +977,7 @@ def test_device_recovery_rejects_cleanup_archive_without_replacement_vault(
     active = decrypt_local_profile(profile_path.read_text(), password)
     assert active.entity.ghost_id
     with pytest.raises(GhostNodeRequestError) as missing_lifecycle:
-        node_client_factory("http://ghostnode.test").get_device_lifecycle(
+        node_client_factory("https://ghostnode.test").get_device_lifecycle(
             active.entity.ghost_id
         )
     assert missing_lifecycle.value.status_code == 404
@@ -1000,7 +1000,7 @@ def test_device_recovery_rejects_pending_archive_without_ratchet_witness(
     profile_path = tmp_path / "pending-archive-witness.ghost"
     pending_path = Path(f"{profile_path}.device-recovery.pending")
     backup_path = Path(f"{profile_path}.ratchet.device-recovery-old")
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     assert run(
         ["init", "--profile", str(profile_path)],
         password_reader=password_reader,
@@ -1081,7 +1081,7 @@ def test_device_recovery_rejects_vault_witness_existence_mismatch(
             "--profile",
             str(profile_path),
             "--node",
-            "http://ghostnode.test",
+            "https://ghostnode.test",
         ],
         password_reader=password_reader,
         node_client_factory=node_client_factory,
@@ -1111,7 +1111,7 @@ def test_device_recovery_retries_final_cleanup_without_rotating_again(
     profile_path = tmp_path / "cleanup-retry.ghost"
     vault_path = Path(f"{profile_path}.ratchet")
     backup_path = Path(f"{profile_path}.ratchet.device-recovery-old")
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
 
     assert run(
         ["init", "--profile", str(profile_path)],
@@ -1217,7 +1217,7 @@ def test_cli_send_refreshes_verified_contact_after_remote_device_rotation(
             node_client_factory,
         )
     )
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
 
     assert run(
         [
@@ -1347,7 +1347,7 @@ def test_verified_peer_stays_on_old_device_when_relay_only_knows_old_epoch(
         node_client_factory=node_client_factory,
         capsys=capsys,
     )
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     relay = node_client_factory(node_url)
     bob = decrypt_local_profile(bob_profile.read_text(), password)
     assert bob.device_lifecycle is not None
@@ -1429,7 +1429,7 @@ def test_verified_peer_keeps_current_contact_when_relay_has_no_lifecycle(
     )
     bob = decrypt_local_profile(bob_profile.read_text(), password)
     session_state[str(alice_profile)] = {bob.device.device_id}
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
 
     with pytest.raises(GhostNodeRequestError) as missing:
         node_client_factory(node_url).get_device_lifecycle(bob.entity.ghost_id)
@@ -1496,7 +1496,7 @@ def test_remote_rotation_invalidation_failure_keeps_old_contact_and_session(
     )
     bob = decrypt_local_profile(bob_profile.read_text(), password)
     assert bob.device_lifecycle is not None
-    relay = node_client_factory("http://ghostnode.test")
+    relay = node_client_factory("https://ghostnode.test")
     relay.publish_device_lifecycle(
         bytes(bob.entity.verify_key),
         bob.device_lifecycle,
@@ -1533,7 +1533,7 @@ def test_remote_rotation_invalidation_failure_keeps_old_contact_and_session(
         "--contact-id",
         record_id,
         "--node",
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         "must fail before contact persistence",
     ]
     assert run(
@@ -1610,7 +1610,7 @@ def test_remote_rotation_contact_save_failure_is_resumable_after_invalidation(
     )
     bob = decrypt_local_profile(bob_profile.read_text(), password)
     assert bob.device_lifecycle is not None
-    relay = node_client_factory("http://ghostnode.test")
+    relay = node_client_factory("https://ghostnode.test")
     relay.publish_device_lifecycle(
         bytes(bob.entity.verify_key),
         bob.device_lifecycle,
@@ -1643,7 +1643,7 @@ def test_remote_rotation_contact_save_failure_is_resumable_after_invalidation(
         "--contact-id",
         record_id,
         "--node",
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         "retry after partial refresh",
     ]
     assert run(
@@ -1714,7 +1714,7 @@ def test_stale_queued_message_is_skipped_after_peer_learns_rotation(
         node_client_factory=node_client_factory,
         capsys=capsys,
     )
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
     engine_factory = fake_engine_factory(session_state)
 
     assert run(
@@ -1834,7 +1834,7 @@ def test_cli_does_not_fall_back_to_static_v2_when_bootstrap_fails(
             "--contact",
             str(bob_contact),
             "--node",
-            "http://ghostnode.test",
+            "https://ghostnode.test",
             "must not downgrade",
         ],
         password_reader=password_reader,
@@ -1852,7 +1852,7 @@ def test_cli_does_not_fall_back_to_static_v2_when_bootstrap_fails(
     )
     assert api_client.get(f"/v2/messages/{bob.device.device_id}").status_code == 404
     assert node_client_factory(
-        "http://ghostnode.test"
+        "https://ghostnode.test"
     ).receive_ratchet(bob.device) == []
 
 
@@ -1879,7 +1879,7 @@ def test_cli_suppresses_authenticated_v3_replay_before_second_decrypt(
         )
     )
     engine_factory = fake_engine_factory(session_state)
-    node_url = "http://ghostnode.test"
+    node_url = "https://ghostnode.test"
 
     assert run(
         [
@@ -2266,7 +2266,7 @@ def test_cli_send_by_contact_id_requires_verified_state_and_blocks_changes(
             "--contact-id",
             record.record_id,
             "--node",
-            "http://ghostnode.test",
+            "https://ghostnode.test",
             "not yet trusted",
         ],
         password_reader=password_reader,
@@ -2301,7 +2301,7 @@ def test_cli_send_by_contact_id_requires_verified_state_and_blocks_changes(
             "--contact-id",
             record.record_id,
             "--node",
-            "http://ghostnode.test",
+            "https://ghostnode.test",
             "trusted message",
         ],
         password_reader=password_reader,
@@ -2342,7 +2342,7 @@ def test_cli_send_by_contact_id_requires_verified_state_and_blocks_changes(
             "--contact-id",
             record.record_id,
             "--node",
-            "http://ghostnode.test",
+            "https://ghostnode.test",
             "must fail closed",
         ],
         password_reader=password_reader,

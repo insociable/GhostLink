@@ -67,7 +67,7 @@ def _node(
     access_token: str | None = None,
 ) -> GhostNodeClient:
     return GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         access_token=access_token,
         requester=_requester(client),
     )

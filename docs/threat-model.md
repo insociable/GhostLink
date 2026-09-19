@@ -87,6 +87,7 @@ The current codebase includes:
 - automatic relay lifecycle refresh for persisted human-verified contacts, with monotonic same-GhostID contact replacement and durable purge of ratchet session, cached remote identity and remote pre-key sequence state when the active DeviceID changes;
 - optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity;
 - relay Bearer-token loading from a secret file rather than token values in argv/environment;
+- client-side rejection of cleartext HTTP for non-loopback GhostNode URLs, preventing bearer credentials from being sent to a remote relay without TLS;
 - reference Oracle Caddy ingress with GhostNode un-published, TCP/443-only public exposure, disabled HTTP access logs and explicit Uvicorn proxy-header distrust;
 - a stdlib-only external TLS gate that validates every published A/AAAA address, public certificate/hostname trust, closed TCP/80 and TCP/8000, and the HTTPS health response before live-deployment acceptance.
 

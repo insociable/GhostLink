@@ -197,7 +197,7 @@ Rate limiting, quotas, Sybil-resistant admission and abuse controls remain separ
 
 ## TLS
 
-Request signatures do not replace TLS.
+Request signatures do not replace TLS. The current client refuses cleartext HTTP for non-loopback GhostNode URLs; HTTP remains available only for local loopback / SSH-tunnel operation.
 
 A passive observer still sees transport metadata, and active network attackers can still deny service.
 

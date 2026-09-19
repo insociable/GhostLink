@@ -32,9 +32,11 @@ Publication, fetch and status operations use their documented DeviceID/request p
 
 ## Response validation
 
-The client validates absolute HTTP(S) base URLs without embedded credentials, expected status codes, exact response fields, canonical DeviceIDs and message IDs, bounded integers and canonical Base64 ciphertext.
+The client validates absolute HTTP(S) base URLs without embedded credentials. Cleartext HTTP is accepted only for loopback targets (`127.0.0.1`, `::1`, or `localhost`) used by local development or an SSH tunnel; non-loopback GhostNode URLs require HTTPS. It also validates expected status codes, exact response fields, canonical DeviceIDs and message IDs, bounded integers and canonical Base64 ciphertext.
 
 Current ratcheted message parsing is version-pinned to protocol v3.
+
+Relay-provided error details are bounded and stripped of terminal control characters before they become user-visible exceptions. Malicious-relay availability remains outside the guarantee; mailbox retrieval is currently unpaginated.
 
 ## Security status
 

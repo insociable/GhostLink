@@ -165,7 +165,7 @@ def _setup_relay(
     )
     assert published.status_code == 200
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=_requester(api_client),
     )
     return api_client, node, alice_device, bob_device, bob_contact, now
@@ -259,7 +259,7 @@ def test_sender_fetch_rejects_relay_metadata_mismatch_before_engine(
         return status_code, modified
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
 
@@ -316,7 +316,7 @@ def test_sender_fetch_rejects_binding_from_unverified_device_before_engine() -> 
         return status_code, modified
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
 
@@ -369,7 +369,7 @@ def test_sender_fetch_rejects_noncanonical_binding_before_engine() -> None:
         return status_code, modified
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
 
@@ -426,7 +426,7 @@ def test_node_client_fetch_retry_after_lost_response_reuses_allocation() -> None
         return response.status_code, body
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
 
@@ -476,7 +476,7 @@ def test_node_client_rejects_unknown_prekey_fetch_response_fields() -> None:
         }
 
     node = GhostNodeClient(
-        "http://ghostnode.test",
+        "https://ghostnode.test",
         requester=requester,
     )
 
