@@ -1,8 +1,8 @@
 import base64
 import shutil
-import sqlite3
 import time
 from pathlib import Path
+from sqlite3 import connect
 
 import pytest
 from fastapi.testclient import TestClient
@@ -361,7 +361,7 @@ def test_empty_lifecycle_tables_are_backward_compatible_with_enrolled_digest(
 ) -> None:
     settings = _migrated_settings(tmp_path)
 
-    with sqlite3.connect(settings.database_path) as connection:
+    with connect(settings.database_path) as connection:
         connection.execute("DROP TABLE device_lifecycle_devices_v1")
         connection.execute("DROP TABLE device_lifecycle_v1")
 
