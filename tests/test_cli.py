@@ -370,6 +370,13 @@ def test_cli_prekey_sync_runs_ratchet_maintenance(
     assert calls == [profile.device.device_id]
     assert "published_initial" in captured.out
 
+    lifecycle = node_client_factory(
+        "http://ghostnode.test"
+    ).get_device_lifecycle(profile.entity.ghost_id)
+    assert lifecycle.active_device_id == profile.device.device_id
+    assert profile.device_lifecycle is not None
+    assert lifecycle.epoch == profile.device_lifecycle.statement.epoch
+
 
 def test_cli_does_not_fall_back_to_static_v2_when_bootstrap_fails(
     tmp_path: Path,
