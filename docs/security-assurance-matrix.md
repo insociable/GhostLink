@@ -53,6 +53,8 @@ The classification above is grounded in executable tests and the current protoco
 
 Passing tests demonstrate the stated implementation behavior under their test conditions. They do not replace an independent protocol or cryptographic audit.
 
+The state/transition rules behind these claims are formalized in `docs/security-invariants.md`.
+
 ## Consolidation questions still open
 
 The following are intentionally not upgraded to stronger claims until adversarial consolidation is complete:
