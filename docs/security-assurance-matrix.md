@@ -68,14 +68,27 @@ Current tests now make the single-relay CLI behavior explicit:
 
 These results preserve the **partial** classification: a peer cannot reject knowledge it never received, and the configured relay is the current discovery source.
 
+## Adversarial result: multi-relay revocation matrix
+
+Independent relays do not share lifecycle knowledge. Tests with one GhostID rotating from Device A / epoch N to Device B / epoch N+1 confirm:
+
+| Relay view | Device A | Device B | Lifecycle lookup |
+| --- | --- | --- | --- |
+| Relay A observed N then N+1 | rejected as known stale | accepted as active | N+1 |
+| Relay B observed only N | accepted as locally active | accepted as an unrelated/unknown DeviceID | N |
+| Relay C observed no lifecycle | accepted as unknown | accepted as unknown | 404 |
+
+Relay B cannot infer that Device B belongs to the same GhostID until it receives identity-authorized lifecycle N+1. Relay C cannot infer either association. Therefore lifecycle revocation is intentionally **relay-scoped**, not globally discoverable.
+
+A persistent restoration test also confirms the rollback boundary: restoring the relay database **and** its reference witness together to the same older N snapshot is accepted as internally consistent. Restoring only the older protected database while the witness remains newer is covered separately and fails closed.
+
 ## Consolidation questions still open
 
 The following are intentionally not upgraded to stronger claims until adversarial consolidation is complete:
 
-1. multi-relay lifecycle divergence where relays know different epochs or no history;
-2. rollback matrix for every individual component and coherent multi-component snapshot combination;
-3. interruption after every significant `device-recover` step;
-4. impossible/mixed state combinations such as profile N+1 with ratchet N or lifecycle N+1 with stale device-bound state;
-5. concurrency races around lifecycle publication, contact refresh and relay state where applicable.
+1. rollback matrix for every individual component and coherent multi-component snapshot combination;
+2. interruption after every significant `device-recover` step;
+3. impossible/mixed state combinations such as profile N+1 with ratchet N or lifecycle N+1 with stale device-bound state;
+4. concurrency races around lifecycle publication, contact refresh and relay state where applicable.
 
 When one of these cases cannot be distinguished from legitimate state, documentation must say so instead of describing the property as protected.
