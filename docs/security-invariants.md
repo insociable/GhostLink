@@ -455,6 +455,18 @@ The component is rejected. There is no ordinary automatic witness reset/adoption
 
 `state_witness.py` and the component-specific profile/contact/replay/ratchet integration.
 
+## STATE-2B — Initial private profile publication is durably ordered
+
+New encrypted profiles and device-recovery pending profiles are created exclusively. The
+file is flushed and fsynced before the parent directory is fsynced on POSIX. A synchronous
+failure before completion removes the new target and the operation fails.
+
+Existing profile replacement remains a separate temporary-file + fsync + atomic-replace +
+directory-fsync path.
+
+Fault-injection tests cover file-fsync and directory-fsync failures. No claim is made that
+these tests reproduce every physical power-cut or storage reordering mode.
+
 ## STATE-3 — Security-relevant component mutations advance exact lineage
 
 A successor checkpoint increments revision exactly once and sets `previous_digest` to the current authenticated checkpoint digest.

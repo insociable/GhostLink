@@ -248,6 +248,16 @@ and explicit profile migration enrolls legacy v4-or-earlier state. Security-rele
 profile successors must increment the profile revision, link `state_previous_digest` to the
 current checkpoint and durably replace the encrypted profile before witness compare-and-set.
 
+Initial private profile files and device-recovery pending profiles use exclusive `O_EXCL`
+creation, flush and `fsync` the file contents, then `fsync` the parent directory on POSIX.
+A synchronous write/fsync failure removes the just-created target before returning failure.
+Existing-profile promotion continues to use temporary-file write, file fsync, atomic
+replacement and parent-directory fsync.
+
+These tests exercise injected write/fsync failures and restart behavior. They do not
+constitute proof against every physical power-cut, storage-controller or filesystem
+reordering behavior.
+
 A future production backend must keep witness state outside the rollback domain being
 claimed as protected.
 
