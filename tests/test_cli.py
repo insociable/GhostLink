@@ -1099,3 +1099,33 @@ def test_cli_contact_update_qr_quarantines_verified_identity_change(
     assert changed.pinned_ghost_id == alice.ghost_id
     assert changed.candidate_contact is not None
     assert changed.candidate_contact.ghost_id == replacement.ghost_id
+
+
+def test_cli_contact_export_uses_lifecycle_aware_bundle(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    password = "lifecycle export password"  # noqa: S105
+    profile_path = tmp_path / "alice-lifecycle.ghost"
+    contact_path = tmp_path / "alice-lifecycle.contact"
+
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=lambda prompt: password,
+    ) == 0
+    capsys.readouterr()
+
+    assert run(
+        [
+            "contact-export",
+            "--profile",
+            str(profile_path),
+            "--output",
+            str(contact_path),
+        ],
+        password_reader=lambda prompt: password,
+    ) == 0
+
+    contact = import_contact_bundle(contact_path.read_text(encoding="utf-8"))
+    assert contact.lifecycle_epoch == 1
+    assert contact.lifecycle_statement is not None
