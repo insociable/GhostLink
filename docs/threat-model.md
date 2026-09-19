@@ -45,6 +45,7 @@ The current codebase includes:
 
 - self-certifying GhostID and DeviceID identifiers;
 - identity-signed device authorization certificates;
+- identity-signed monotonic device lifecycle statements for stable-GhostID device replacement;
 - cryptographically validated public Contact Bundles and versioned public QR payloads;
 - deterministic Fingerprint v2 human verification, persisted separately from bundle validity;
 - encrypted local contact trust states (`imported`, `verified`, `changed`) with verified-identity replacement quarantine;
@@ -82,6 +83,7 @@ The current codebase includes:
 - DeviceID-signed protocol-v3 message-relay requests bound to HTTP method, canonical logical path, canonical-body digest, freshness timestamp and random request ID;
 - sender ownership enforcement for v3 submission and recipient ownership enforcement for v3 mailbox list/delete;
 - persistent SQLite request-ID replay rejection across GhostNode restart, with process-local replay protection in in-memory mode;
+- rollback-protected GhostNode lifecycle registry that retains observed DeviceID history and rejects known superseded devices across v3 message and pre-key routes;
 - optional shared Bearer access control composed as an additional layer rather than accepted as DeviceID identity;
 - relay Bearer-token loading from a secret file rather than token values in argv/environment;
 - reference Oracle Caddy ingress with GhostNode un-published, TCP/443-only public exposure, disabled HTTP access logs and explicit Uvicorn proxy-header distrust;
@@ -97,7 +99,7 @@ Current security gaps still include:
 - the reference SQLite client-state witness protects contact, replay, and ratchet/highest-seen components only while the witness remains newer; it does not provide whole-device rollback protection against a filesystem snapshot that rolls the witness back too;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
-- complete device revocation and recovery design;
+- complete lifecycle distribution/orchestration so relays learn the pre-recovery device mapping before a later rotation must revoke it;
 - live external validation of the reference TLS ingress (real certificate, closed TCP/80 and TCP/8000, external v3 flow) before issue #21 closure;
 - independent cryptographic/protocol review.
 
@@ -111,7 +113,7 @@ GhostNode necessarily observes relay metadata including DeviceIDs, timing and ci
 
 For protocol-v3 messages it additionally observes the libsignal ciphertext framing type. V3 routing/lifecycle fields are duplicated as an authenticated context inside the libsignal ciphertext; modifying those external fields causes context-bound decryption to fail and roll the ratchet transaction back.
 
-Protocol-v3 request authentication additionally exposes the public signing key corresponding to the already-visible DeviceID plus a per-request timestamp and random request ID. The proof authorizes the relay operation; it does not hide routing metadata or provide traffic-analysis resistance. Restoring an older relay database can also restore older request-replay state, so request authentication does not solve relay anti-rollback.
+Protocol-v3 request authentication additionally exposes the public signing key corresponding to the already-visible DeviceID plus a per-request timestamp and random request ID. The proof authorizes the relay operation; it does not hide routing metadata or provide traffic-analysis resistance. Persistent request-replay and lifecycle state participate in the shared relay rollback checkpoint, subject to the documented whole-snapshot witness limitation.
 
 The ratchet pre-key publication endpoint additionally exposes:
 
@@ -123,7 +125,7 @@ The ratchet pre-key fetch endpoint additionally exposes requester DeviceID -> ta
 
 The owner status endpoint exposes when a DeviceID checks its own active sequence, expiration and remaining pool count. A malicious relay can falsify the remaining count, so that value is treated only as a cooldown-limited operational trigger, not as authenticated lifecycle state.
 
-Publication does not require sending the long-term GhostID identity public key or full device certificate to GhostNode.
+Pre-key publication does not require sending the long-term GhostID identity public key or full device certificate to GhostNode. Device-lifecycle publication intentionally exposes the public identity key, active device certificate and signed lifecycle statement so the relay can verify identity-authorized replacement.
 
 GhostLink does not currently provide global traffic-correlation resistance.
 
