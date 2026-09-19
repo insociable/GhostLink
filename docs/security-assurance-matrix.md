@@ -82,13 +82,31 @@ Relay B cannot infer that Device B belongs to the same GhostID until it receives
 
 A persistent restoration test also confirms the rollback boundary: restoring the relay database **and** its reference witness together to the same older N snapshot is accepted as internally consistent. Restoring only the older protected database while the witness remains newer is covered separately and fails closed.
 
+## Adversarial result: rollback and restoration matrix
+
+The current rollback-aware components now share an explicit tested matrix:
+
+| State / witness relation | Result |
+| --- | --- |
+| current component state + matching current witness | accepted |
+| older component state + newer witness | rejected as rollback |
+| same revision + different authenticated payload | rejected as divergence |
+| component exactly one revision ahead + valid previous digest | witness may catch up exactly one revision |
+| component more than one revision ahead | rejected as a gap |
+| enrolled component + missing witness | fail closed |
+| protected state and reference witness both restored coherently to the same older snapshot | accepted as internally consistent; rollback is not detectable |
+| different components at different valid revisions | accepted; revisions are component-local, not a global transaction counter |
+
+The coherent-restore boundary is exercised directly for profile state, contact store, replay cache, ratchet vault and persistent relay state. This confirms that the reference SQLite/sidecar witnesses provide **component rollback detection only while the witness remains outside the restored snapshot**. They do not provide whole-filesystem, whole-volume or whole-VM rollback protection.
+
+A profile at revision N+1 with contacts/replay/ratchet at revision N is therefore not inherently corrupt. Each component has its own authenticated lineage and witness row. What fails closed is a mismatch *within* one component's state/witness lineage, not unequal revision numbers across independent components.
+
 ## Consolidation questions still open
 
 The following are intentionally not upgraded to stronger claims until adversarial consolidation is complete:
 
-1. rollback matrix for every individual component and coherent multi-component snapshot combination;
-2. interruption after every significant `device-recover` step;
-3. impossible/mixed state combinations such as profile N+1 with ratchet N or lifecycle N+1 with stale device-bound state;
-4. concurrency races around lifecycle publication, contact refresh and relay state where applicable.
+1. interruption after every significant `device-recover` step;
+2. semantically impossible mixed states created during interrupted recovery, beyond ordinary independent component revision skew;
+3. concurrency races around lifecycle publication, contact refresh and relay state where applicable.
 
 When one of these cases cannot be distinguished from legitimate state, documentation must say so instead of describing the property as protected.

@@ -146,6 +146,45 @@ def test_witnessed_replay_cache_detects_database_rollback(tmp_path: Path) -> Non
         )
 
 
+def test_replay_database_and_reference_witness_coherent_rollback_is_not_detected(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "replay.sqlite3"
+    witness_path = tmp_path / "replay-witness.sqlite3"
+    witness = _replay_witness(tmp_path)
+    cache = WitnessedSQLiteReplayCache(
+        path,
+        _STATE_ID,
+        _COORDINATION_KEY,
+        witness,
+    )
+    assert cache.accept(ALICE_DEVICE_ID, MESSAGE_ID, now=1_000_000)
+    state_at_revision_two = path.read_bytes()
+    witness_at_revision_two = witness_path.read_bytes()
+
+    second_message_id = "2" * 32
+    assert cache.accept(
+        ALICE_DEVICE_ID,
+        second_message_id,
+        now=1_000_001,
+    )
+    assert witness.get("replay").revision == 3
+
+    path.write_bytes(state_at_revision_two)
+    witness_path.write_bytes(witness_at_revision_two)
+    restored_witness = _replay_witness(tmp_path)
+    restored = WitnessedSQLiteReplayCache(
+        path,
+        _STATE_ID,
+        _COORDINATION_KEY,
+        restored_witness,
+    )
+
+    assert restored.has_seen(ALICE_DEVICE_ID, MESSAGE_ID)
+    assert not restored.has_seen(ALICE_DEVICE_ID, second_message_id)
+    assert restored_witness.get("replay").revision == 2
+
+
 def test_witnessed_replay_cache_detects_same_revision_divergence(
     tmp_path: Path,
 ) -> None:

@@ -469,6 +469,48 @@ def test_witness_compare_and_set_requires_exact_next_revision(
         )
 
 
+def test_shared_witness_allows_independent_component_revisions(
+    tmp_path: Path,
+) -> None:
+    witness = _witness(tmp_path)
+    profile_v1 = create_initial_checkpoint(
+        KEY,
+        STATE_ID,
+        "profile",
+        b"profile-v1",
+    )
+    contacts_v1 = create_initial_checkpoint(
+        KEY,
+        STATE_ID,
+        "contacts",
+        b"contacts-v1",
+    )
+    initialize_witness(
+        witness,
+        profile_v1,
+        coordination_key=KEY,
+        payload=b"profile-v1",
+    )
+    initialize_witness(
+        witness,
+        contacts_v1,
+        coordination_key=KEY,
+        payload=b"contacts-v1",
+    )
+
+    profile_v2 = advance_checkpoint(KEY, profile_v1, b"profile-v2")
+    assert _reconcile(witness, profile_v2, b"profile-v2") == "witness_advanced"
+
+    assert _reconcile(witness, contacts_v1, b"contacts-v1") == "current"
+    assert witness.get("profile").revision == 2
+    assert witness.get("contacts").revision == 1
+
+    contacts_v2 = advance_checkpoint(KEY, contacts_v1, b"contacts-v2")
+    assert _reconcile(witness, contacts_v2, b"contacts-v2") == "witness_advanced"
+    assert witness.get("profile").revision == 2
+    assert witness.get("contacts").revision == 2
+
+
 def test_witness_database_can_scope_multiple_client_states(
     tmp_path: Path,
 ) -> None:

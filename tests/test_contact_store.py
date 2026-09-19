@@ -376,6 +376,65 @@ def test_witnessed_contact_store_detects_rollback(tmp_path) -> None:
         )
 
 
+def test_contact_store_and_reference_witness_coherent_rollback_is_not_detected(
+    tmp_path,
+) -> None:
+    path = tmp_path / "contacts.sec"
+    witness_path = tmp_path / "contact-witness.sqlite3"
+    key = utils.random(SecretBox.KEY_SIZE)
+    witness = _contact_witness(tmp_path)
+    _alice, bundle = _identity_bundle()
+
+    store = new_witnessed_contact_store(_STATE_ID)
+    store.add_contact("Alice", bundle)
+    save_contact_store_witnessed(
+        path,
+        key,
+        store,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    state_at_revision_one = path.read_bytes()
+    witness_at_revision_one = witness_path.read_bytes()
+
+    loaded = load_contact_store_witnessed(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    loaded.verify_identity(
+        loaded.list_records()[0].record_id,
+        _fingerprint(bundle),
+    )
+    save_contact_store_witnessed(
+        path,
+        key,
+        loaded,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+    assert witness.get("contacts").revision == 2
+
+    path.write_bytes(state_at_revision_one)
+    witness_path.write_bytes(witness_at_revision_one)
+    restored_witness = _contact_witness(tmp_path)
+    restored = load_contact_store_witnessed(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=restored_witness,
+    )
+
+    assert restored.revision == 1
+    assert restored.list_records()[0].state is ContactTrustState.IMPORTED
+    assert restored_witness.get("contacts").revision == 1
+
+
 def test_witnessed_contact_store_detects_same_revision_divergence(tmp_path) -> None:
     path = tmp_path / "contacts.sec"
     key = utils.random(SecretBox.KEY_SIZE)
