@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import stat
 import time
 import urllib.parse
 from collections.abc import Callable
@@ -542,6 +543,64 @@ def test_device_recovery_does_not_promote_before_relay_revocation(
     assert revoked.value.status_code == 401
 
 
+def test_new_private_file_fsyncs_file_and_parent_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    path = tmp_path / "durable-private.ghost"
+    real_fsync = cli_module.os.fsync
+    synced: list[str] = []
+
+    def record_fsync(descriptor: int) -> None:
+        mode = cli_module.os.fstat(descriptor).st_mode
+        synced.append("directory" if stat.S_ISDIR(mode) else "file")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(cli_module.os, "fsync", record_fsync)
+    cli_module._write_new_private_file(path, "encrypted-profile")
+
+    assert path.read_text(encoding="utf-8") == "encrypted-profile"
+    assert synced[0] == "file"
+    if cli_module.os.name == "posix":
+        assert synced[-1] == "directory"
+    with pytest.raises(FileExistsError):
+        cli_module._write_new_private_file(path, "replacement")
+    assert path.read_text(encoding="utf-8") == "encrypted-profile"
+
+
+def test_init_removes_profile_after_private_file_fsync_failure(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    password = "durable init password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "durable-init.ghost"
+    real_fsync = cli_module.os.fsync
+
+    def fail_regular_file_fsync(descriptor: int) -> None:
+        if stat.S_ISREG(cli_module.os.fstat(descriptor).st_mode):
+            raise OSError("injected private file fsync failure")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(cli_module.os, "fsync", fail_regular_file_fsync)
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "injected private file fsync failure" in failed.err
+    assert not profile_path.exists()
+
+    monkeypatch.setattr(cli_module.os, "fsync", real_fsync)
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+    assert profile_path.is_file()
+
+
 def test_device_recovery_retries_after_initial_lifecycle_publication_failure(
     tmp_path: Path,
     capsys,
@@ -704,6 +763,80 @@ def test_device_recovery_retries_after_pending_profile_write_failure(
     )
 
 
+def test_device_recovery_removes_pending_after_directory_fsync_failure(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "pending fsync recovery password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "pending-fsync-recovery.ghost"
+    pending_path = Path(f"{profile_path}.device-recovery.pending")
+    node_url = "https://ghostnode.test"
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(profile_path.read_text(), password)
+    real_fsync_directory = cli_module._fsync_directory
+
+    def fail_directory_fsync(path: Path) -> None:
+        del path
+        raise OSError("injected pending directory fsync failure")
+
+    monkeypatch.setattr(cli_module, "_fsync_directory", fail_directory_fsync)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "injected pending directory fsync failure" in failed.err
+    assert not pending_path.exists()
+
+    unchanged = decrypt_local_profile(profile_path.read_text(), password)
+    assert unchanged.device.device_id == before.device.device_id
+    relay = node_client_factory(node_url).get_device_lifecycle(
+        before.entity.ghost_id
+    )
+    assert relay.active_device_id == before.device.device_id
+
+    monkeypatch.setattr(
+        cli_module,
+        "_fsync_directory",
+        real_fsync_directory,
+    )
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    recovered = decrypt_local_profile(profile_path.read_text(), password)
+    assert recovered.device.device_id != before.device.device_id
+
+
 def test_device_recovery_resumes_same_candidate_after_profile_promotion_failure(
     tmp_path: Path,
     capsys,
@@ -801,10 +934,14 @@ def test_device_recovery_retry_after_post_promotion_fsync_starts_fresh_rotation(
     before = decrypt_local_profile(profile_path.read_text(), password)
     assert before.device_lifecycle is not None
     real_fsync = cli_module._fsync_directory
+    fsync_calls = 0
 
     def fail_fsync(path: Path) -> None:
-        del path
-        raise OSError("injected post-promotion fsync failure")
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 2:
+            raise OSError("injected post-promotion fsync failure")
+        real_fsync(path)
 
     monkeypatch.setattr(cli_module, "_fsync_directory", fail_fsync)
     assert run(

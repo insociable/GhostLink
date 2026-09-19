@@ -201,10 +201,32 @@ def _default_ratchet_engine_factory(
 
 
 def _write_new_private_file(path: Path, content: str) -> None:
+    """Create one private file exclusively and durably."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     descriptor = os.open(path, flags, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(content)
+    try:
+        handle = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = -1
+        with handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _fsync_directory(path.parent)
+    except Exception:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            _fsync_directory(path.parent)
+        except OSError:
+            pass
+        raise
 
 
 def _replace_private_file_atomic(path: Path, content: str) -> None:
