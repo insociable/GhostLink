@@ -3,13 +3,14 @@ import os
 import shutil
 import time
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from ghostlink.cli import run as run_cli
-from ghostlink.client.node_client import GhostNodeClient
+from ghostlink.client.node_client import GhostNodeClient, GhostNodeRequestError
 from ghostlink.contact import export_contact_bundle, import_contact_bundle
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app
@@ -51,6 +52,35 @@ pytestmark = pytest.mark.skipif(
     _NODE is None or not _ENGINE.exists(),
     reason="built ratchet-engine and Node.js are required for cross-language smoke",
 )
+
+
+def _node_client_factory(
+    api_client: TestClient,
+) -> Callable[[str], GhostNodeClient]:
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        assert timeout > 0
+        path = urllib.parse.urlparse(url).path
+        response = api_client.request(
+            method,
+            path,
+            json=payload,
+            headers=headers,
+        )
+        return (
+            response.status_code,
+            response.json() if response.content else None,
+        )
+
+    def factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    return factory
 
 
 def test_python_to_node_ratchet_round_trip_survives_restart(tmp_path: Path) -> None:
@@ -1427,6 +1457,9 @@ def test_ratchet_vault_device_recovery_refuses_stale_checkpoint(
 def test_device_recover_cli_rotates_profile_without_ratchet_state(
     tmp_path: Path,
 ) -> None:
+    api_client = TestClient(create_app())
+    node_client_factory = _node_client_factory(api_client)
+    node_url = "http://ghostnode.test"
     profile_path = tmp_path / "recover-profile-only.ghost"
     password = os.urandom(24).hex()
 
@@ -1445,8 +1478,15 @@ def test_device_recover_cli_rotates_profile_without_ratchet_state(
     assert before.device_lifecycle is not None
 
     assert run_cli(
-        ["device-recover", "--profile", str(profile_path)],
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
         password_reader=password_reader,
+        node_client_factory=node_client_factory,
     ) == 0
 
     after = decrypt_local_profile(
@@ -1477,10 +1517,21 @@ def test_device_recover_cli_rotates_profile_without_ratchet_state(
     assert profile_record is not None
     assert profile_record.revision == after.state_revision
 
+    relay = node_client_factory(node_url)
+    relay_lifecycle = relay.get_device_lifecycle(after.entity.ghost_id)
+    assert relay_lifecycle.active_device_id == after.device.device_id
+    assert relay_lifecycle.epoch == after.device_lifecycle.statement.epoch
+    with pytest.raises(GhostNodeRequestError) as revoked:
+        relay.prekey_status(before.device)
+    assert revoked.value.status_code == 401
+
 
 def test_device_recover_cli_resets_existing_ratchet_vault(
     tmp_path: Path,
 ) -> None:
+    api_client = TestClient(create_app())
+    node_client_factory = _node_client_factory(api_client)
+    node_url = "http://ghostnode.test"
     profile_path = tmp_path / "recover-with-ratchet.ghost"
     password = os.urandom(24).hex()
     def password_reader(prompt: str) -> str:
@@ -1521,8 +1572,15 @@ def test_device_recover_cli_resets_existing_ratchet_vault(
     assert old_ratchet is not None
 
     assert run_cli(
-        ["device-recover", "--profile", str(profile_path)],
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
         password_reader=password_reader,
+        node_client_factory=node_client_factory,
     ) == 0
 
     after = decrypt_local_profile(
@@ -1557,6 +1615,9 @@ def test_device_recover_cli_resets_existing_ratchet_vault(
 def test_device_recover_cli_resumes_after_old_vault_archive(
     tmp_path: Path,
 ) -> None:
+    api_client = TestClient(create_app())
+    node_client_factory = _node_client_factory(api_client)
+    node_url = "http://ghostnode.test"
     profile_path = tmp_path / "recover-resume.ghost"
     password = os.urandom(24).hex()
 
@@ -1597,7 +1658,12 @@ def test_device_recover_cli_resumes_after_old_vault_archive(
         engine.create_prekey_material()
 
     checkpoint = reconcile_profile_witness(active, witness)
-    candidate = rotate_local_profile_device(active, checkpoint, issued_at=123456)
+    assert active.device_lifecycle is not None
+    candidate = rotate_local_profile_device(
+        active,
+        checkpoint,
+        issued_at=active.device_lifecycle.statement.issued_at + 1,
+    )
     pending_path.write_text(
         encrypt_local_profile(candidate, password),
         encoding="utf-8",
@@ -1609,8 +1675,15 @@ def test_device_recover_cli_resumes_after_old_vault_archive(
     assert old_ratchet is not None
 
     assert run_cli(
-        ["device-recover", "--profile", str(profile_path)],
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
         password_reader=password_reader,
+        node_client_factory=node_client_factory,
     ) == 0
 
     recovered = decrypt_local_profile(

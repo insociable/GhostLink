@@ -11,7 +11,11 @@ import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from ghostlink.client import GhostNodeClient, GhostNodeClientError
+from ghostlink.client import (
+    GhostNodeClient,
+    GhostNodeClientError,
+    GhostNodeRequestError,
+)
 from ghostlink.config import load_access_token_from_file
 from ghostlink.contact import (
     ContactBundleError,
@@ -391,6 +395,7 @@ def _validate_recovery_candidate(
 def _command_device_recover(
     args: argparse.Namespace,
     password_reader: PasswordReader,
+    node_client_factory: NodeClientFactory,
 ) -> int:
     profile_path = Path(args.profile)
     active, password = _load_profile_with_password(profile_path, password_reader)
@@ -404,6 +409,8 @@ def _command_device_recover(
     pending_path = _device_recovery_pending_profile_path(profile_path)
     vault_path = _ratchet_vault_path(profile_path)
     backup_path = _device_recovery_ratchet_backup_path(profile_path)
+    client = node_client_factory(args.node)
+    active_registered = False
 
     if pending_path.exists():
         candidate = decrypt_local_profile(_read_text(pending_path), password)
@@ -413,6 +420,7 @@ def _command_device_recover(
             raise CLIError(
                 "device recovery is incomplete: replacement ratchet vault is missing"
             )
+        _publish_profile_lifecycle(client, active)
         with _create_ratchet_engine(active, profile_path):
             pass
         _unlink_file_durable(backup_path)
@@ -421,11 +429,25 @@ def _command_device_recover(
         print(f"DeviceID: {active.device.device_id}")
         return 0
     else:
+        _publish_profile_lifecycle(client, active)
+        active_registered = True
         candidate = rotate_local_profile_device(active, active_checkpoint)
         _write_new_private_file(
             pending_path,
             encrypt_local_profile(candidate, password),
         )
+
+    if pending_path.exists() and not active_registered:
+        try:
+            _publish_profile_lifecycle(client, active)
+        except GhostNodeRequestError as exc:
+            if exc.status_code != 409:
+                raise
+            relay = client.get_device_lifecycle(active.entity.ghost_id)
+            if relay.lifecycle != candidate.device_lifecycle:
+                raise CLIError(
+                    "relay lifecycle conflicts with the pending recovery"
+                ) from exc
 
     try:
         ratchet_record = witness.get("ratchet")
@@ -478,6 +500,8 @@ def _command_device_recover(
             recovery_previous_checkpoint=ratchet_record,
         ):
             pass
+
+    _publish_profile_lifecycle(client, candidate)
 
     os.replace(pending_path, profile_path)
     if os.name == "posix":
@@ -828,6 +852,21 @@ def _resolve_message_contact(
     return import_contact_bundle(_read_text(Path(args.contact)))
 
 
+def _publish_profile_lifecycle(
+    client: GhostNodeClient,
+    profile: LocalProfile,
+) -> None:
+    lifecycle = profile.device_lifecycle
+    if lifecycle is None:
+        raise CLIError(
+            "profile has no device lifecycle state; run profile-upgrade first"
+        )
+    client.publish_device_lifecycle(
+        bytes(profile.entity.verify_key),
+        lifecycle,
+    )
+
+
 def _command_node_health(
     args: argparse.Namespace,
     node_client_factory: NodeClientFactory,
@@ -850,6 +889,7 @@ def _command_prekey_sync(
     profile = _load_profile(profile_path, password_reader)
     _require_ratchet_key(profile)
     client = node_client_factory(args.node)
+    _publish_profile_lifecycle(client, profile)
 
     with ratchet_engine_factory(profile, profile_path) as engine:
         result = maintain_prekeys(engine, client, profile.device)
@@ -873,6 +913,7 @@ def _command_send(
     contact = _resolve_message_contact(args, profile_path, profile)
     plaintext = args.message.encode("utf-8")
     client = node_client_factory(args.node)
+    _publish_profile_lifecycle(client, profile)
 
     with ratchet_engine_factory(profile, profile_path) as engine:
         maintain_prekeys(engine, client, profile.device)
@@ -907,6 +948,7 @@ def _command_inbox(
     _require_ratchet_key(profile)
     contact = _resolve_message_contact(args, profile_path, profile)
     client = node_client_factory(args.node)
+    _publish_profile_lifecycle(client, profile)
     state_id, coordination_key = _require_state_coordination(profile)
     replay_cache = WitnessedSQLiteReplayCache(
         _replay_state_path(profile_path, args.state),
@@ -1005,9 +1047,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     recovery_parser = subparsers.add_parser(
         "device-recover",
-        help="rotate the local DeviceID and reset ratchet state crash-safely",
+        help="rotate DeviceID, publish relay lifecycle and reset ratchet state crash-safely",
     )
     recovery_parser.add_argument("--profile", required=True)
+    recovery_parser.add_argument("--node", required=True)
 
     contact_store_upgrade_parser = subparsers.add_parser(
         "contact-store-upgrade",
@@ -1201,7 +1244,11 @@ def run(
         if args.command == "profile-upgrade":
             return _command_profile_upgrade(args, password_reader)
         if args.command == "device-recover":
-            return _command_device_recover(args, password_reader)
+            return _command_device_recover(
+                args,
+                password_reader,
+                node_client_factory,
+            )
         if args.command == "contact-store-upgrade":
             return _command_contact_store_upgrade(args, password_reader)
         if args.command == "replay-state-upgrade":

@@ -64,7 +64,9 @@ The format follows Keep a Changelog and Semantic Versioning.
 - rollback-linked ratchet-vault recovery that creates fresh libsignal state for a replacement DeviceID only from the current witnessed ratchet checkpoint;
 - explicit crash-resumable `device-recover` CLI transaction that rotates DeviceID/lifecycle state, archives verified old ratchet state, builds a fresh linked vault and atomically promotes the replacement profile;
 - local profile v5 with persisted signed device lifecycle state, explicit v1-v4 migration, dedicated profile witness enrollment/reconciliation and crash-safe one-step profile witness recovery;
-- rollback-protected GhostNode device-lifecycle registry with identity-authorized monotonic publication/lookup and stale-device enforcement across protocol-v3 messaging and pre-key routes.
+- rollback-protected GhostNode device-lifecycle registry with identity-authorized monotonic publication/lookup and stale-device enforcement across protocol-v3 messaging and pre-key routes;
+- verified GhostNode lifecycle client plus automatic local lifecycle registration before `prekey-sync`, `send` and `inbox`;
+- relay-aware `device-recover` ordering that registers the current device before rotation, publishes the replacement lifecycle before local profile promotion and remains resumable after ambiguous/interrupted publication.
 
 ### Removed
 

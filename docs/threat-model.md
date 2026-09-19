@@ -99,7 +99,7 @@ Current security gaps still include:
 - the reference SQLite client-state witness protects contact, replay, and ratchet/highest-seen components only while the witness remains newer; it does not provide whole-device rollback protection against a filesystem snapshot that rolls the witness back too;
 - key transparency;
 - Sybil-resistant admission/abuse controls beyond requester proof and target-window rate limiting;
-- complete lifecycle distribution/orchestration so relays learn the pre-recovery device mapping before a later rotation must revoke it;
+- automatic remote-peer lifecycle refresh/contact update and ratchet-session invalidation after a peer rotates to a replacement DeviceID;
 - live external validation of the reference TLS ingress (real certificate, closed TCP/80 and TCP/8000, external v3 flow) before issue #21 closure;
 - independent cryptographic/protocol review.
 
