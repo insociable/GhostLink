@@ -440,9 +440,13 @@ A successor checkpoint increments revision exactly once and sets `previous_diges
 
 Mixing a valid contact/replay/ratchet checkpoint from another client-state identity is not valid local state.
 
+Component revision numbers are local to each component. Profile revision 2 and contact/replay/ratchet revision 1 can be valid simultaneously when every component matches its own authenticated witness lineage. GhostLink does not treat unequal component revision numbers as a global inconsistency.
+
 ## STATE-5 — Reference witness rollback with the protected state is structurally undetectable
 
-This is a documented non-guarantee, not an implementation bug hidden by wording. A stronger whole-device claim requires a witness outside the rollback domain.
+This is a documented non-guarantee, not an implementation bug hidden by wording. Tests now exercise coherent older restoration for profile state, contact store, replay cache, ratchet vault and relay state: when the protected state and its reference witness are both restored to the same older valid point, reconciliation accepts them as internally consistent.
+
+A stronger whole-device claim requires a witness outside the rollback domain.
 
 ---
 
