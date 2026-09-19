@@ -24,6 +24,14 @@ GhostLink will not:
 The ratchet engine pins `@signalapp/libsignal-client` exactly. Cryptographic dependency upgrades require a dedicated review PR and test run.
 
 
+## Dependency vulnerability policy
+
+Python environments are audited with the pinned pip-audit development dependency, npm dependencies retain a blocking high-severity audit, and pull requests run GitHub dependency review for newly introduced high/critical advisories. Weekly Dependabot checks cover Python, npm, Docker and GitHub Actions dependency surfaces.
+
+No vulnerability is ignored by default. Any temporary exception must identify the advisory, document exposure and rationale, and state an explicit removal condition. Automated scanners are defense-in-depth and do not replace source review, protocol review or an independent audit.
+
+See `docs/dependency-security-policy.md` for the exact policy and limitations.
+
 ## Contact and local-state trust boundary
 
 A cryptographically valid Contact Bundle or QR payload proves public-key/device consistency only; it does not prove the human identity of the peer. Human verification is an explicit local Fingerprint v2 action and is persisted separately as `imported`, `verified`, or `changed`.
