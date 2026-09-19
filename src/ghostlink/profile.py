@@ -19,12 +19,31 @@ from ghostlink.device_certificate import (
     GhostDeviceCertificate,
     SignedGhostDeviceCertificate,
 )
+from ghostlink.device_lifecycle import (
+    DeviceLifecycleError,
+    SignedDeviceLifecycleStatement,
+    create_device_lifecycle_statement,
+    export_device_lifecycle_statement,
+    import_device_lifecycle_statement,
+    verify_device_lifecycle_statement,
+)
 from ghostlink.entity import GhostEntity
+from ghostlink.state_witness import (
+    ComponentCheckpoint,
+    MonotonicWitness,
+    StateCheckpointError,
+    StateWitnessError,
+    create_initial_checkpoint,
+    derive_checkpoint,
+    initialize_witness,
+    reconcile_checkpoint,
+)
 
-_PROFILE_VERSION = 4
+_PROFILE_VERSION = 5
 _LEGACY_PROFILE_VERSION = 1
 _RATCHET_PROFILE_VERSION = 2
 _CONTACT_PROFILE_VERSION = 3
+_ROLLBACK_PROFILE_VERSION = 4
 _MAX_PROFILE_BYTES = 65_536
 _KDF_NAME = "argon2id"
 _CIPHER_NAME = "secretbox"
@@ -58,6 +77,7 @@ _SECRET_FIELDS_V4 = _SECRET_FIELDS_V3 | {
     "state_revision",
     "state_previous_digest",
 }
+_SECRET_FIELDS_V5 = _SECRET_FIELDS_V4 | {"device_lifecycle"}
 
 
 class ProfileError(ValueError):
@@ -80,20 +100,28 @@ class LocalProfile:
     state_coordination_key: bytes | None = None
     state_revision: int | None = None
     state_previous_digest: str | None = None
+    device_lifecycle: SignedDeviceLifecycleStatement | None = None
 
 
 def create_local_profile() -> LocalProfile:
-    """Generate a fresh local identity and one enrolled device."""
+    """Generate a fresh local identity and one enrolled lifecycle-aware device."""
     entity = GhostEntity.generate()
+    device = entity.enroll_device()
+    lifecycle = create_device_lifecycle_statement(
+        entity,
+        device,
+        epoch=1,
+    )
     return LocalProfile(
         entity=entity,
-        device=entity.enroll_device(),
+        device=device,
         ratchet_master_key=utils.random(_RATCHET_MASTER_KEY_SIZE),
         contact_store_key=utils.random(_CONTACT_STORE_KEY_SIZE),
         client_state_id=utils.random(_CLIENT_STATE_ID_BYTES).hex(),
         state_coordination_key=utils.random(_STATE_COORDINATION_KEY_SIZE),
         state_revision=1,
         state_previous_digest=None,
+        device_lifecycle=lifecycle,
     )
 
 
@@ -288,6 +316,24 @@ def _serialize_secret(profile: LocalProfile) -> bytes:
     ):
         raise ProfileError("device encryption key does not match certificate")
 
+    lifecycle = profile.device_lifecycle
+    if lifecycle is None:
+        raise ProfileError(
+            "profile must contain device lifecycle state before encryption"
+        )
+    try:
+        lifecycle_device = verify_device_lifecycle_statement(
+            lifecycle,
+            profile.entity.verify_key,
+        )
+    except DeviceLifecycleError as exc:
+        raise ProfileError(str(exc)) from exc
+    if lifecycle_device.device_id != profile.device.device_id:
+        raise ProfileError(
+            "device lifecycle state does not match active profile device"
+        )
+    lifecycle_serialized = export_device_lifecycle_statement(lifecycle)
+
     secret = {
         "identity_signing_seed": _encode_base64(bytes(profile.entity.signing_key)),
         "device_signing_seed": _encode_base64(
@@ -315,6 +361,7 @@ def _serialize_secret(profile: LocalProfile) -> bytes:
         ),
         "state_revision": state_revision,
         "state_previous_digest": state_previous_digest,
+        "device_lifecycle": lifecycle_serialized,
     }
 
     return json.dumps(
@@ -332,8 +379,10 @@ def _deserialize_secret(serialized: bytes, version: int) -> LocalProfile:
         expected_fields = _SECRET_FIELDS_V2
     elif version == _CONTACT_PROFILE_VERSION:
         expected_fields = _SECRET_FIELDS_V3
-    else:
+    elif version == _ROLLBACK_PROFILE_VERSION:
         expected_fields = _SECRET_FIELDS_V4
+    else:
+        expected_fields = _SECRET_FIELDS_V5
     _require_exact_fields(secret, expected_fields, "decrypted profile")
 
     identity_seed = _decode_base64(
@@ -384,21 +433,25 @@ def _deserialize_secret(serialized: bytes, version: int) -> LocalProfile:
             _CONTACT_STORE_KEY_SIZE,
         )
     )
+    has_rollback_state = version in {
+        _ROLLBACK_PROFILE_VERSION,
+        _PROFILE_VERSION,
+    }
     client_state_id = (
-        None
-        if version != _PROFILE_VERSION
-        else _validate_client_state_id(secret["client_state_id"])
+        _validate_client_state_id(secret["client_state_id"])
+        if has_rollback_state
+        else None
     )
     state_coordination_key = (
-        None
-        if version != _PROFILE_VERSION
-        else _decode_base64(
+        _decode_base64(
             secret["state_coordination_key"],
             "state_coordination_key",
             _STATE_COORDINATION_KEY_SIZE,
         )
+        if has_rollback_state
+        else None
     )
-    if version == _PROFILE_VERSION:
+    if has_rollback_state:
         state_revision = _validate_state_revision(secret["state_revision"])
         state_previous_digest = _validate_previous_digest(
             secret["state_previous_digest"],
@@ -442,6 +495,22 @@ def _deserialize_secret(serialized: bytes, version: int) -> LocalProfile:
     except ValueError as exc:
         raise ProfileError(str(exc)) from exc
 
+    device_lifecycle: SignedDeviceLifecycleStatement | None = None
+    if version == _PROFILE_VERSION:
+        raw_lifecycle = _require_text(secret, "device_lifecycle")
+        try:
+            device_lifecycle = import_device_lifecycle_statement(raw_lifecycle)
+            lifecycle_device = verify_device_lifecycle_statement(
+                device_lifecycle,
+                entity.verify_key,
+            )
+        except DeviceLifecycleError as exc:
+            raise ProfileError(str(exc)) from exc
+        if lifecycle_device.device_id != enrolled_device.device_id:
+            raise ProfileError(
+                "device lifecycle state does not match active profile device"
+            )
+
     return LocalProfile(
         entity=entity,
         device=enrolled_device,
@@ -451,6 +520,7 @@ def _deserialize_secret(serialized: bytes, version: int) -> LocalProfile:
         state_coordination_key=state_coordination_key,
         state_revision=state_revision,
         state_previous_digest=state_previous_digest,
+        device_lifecycle=device_lifecycle,
     )
 
 
@@ -500,6 +570,7 @@ def decrypt_local_profile(serialized: str, password: str) -> LocalProfile:
         _LEGACY_PROFILE_VERSION,
         _RATCHET_PROFILE_VERSION,
         _CONTACT_PROFILE_VERSION,
+        _ROLLBACK_PROFILE_VERSION,
         _PROFILE_VERSION,
     }:
         raise ProfileError("unsupported profile version")
@@ -555,7 +626,7 @@ def decrypt_local_profile(serialized: str, password: str) -> LocalProfile:
 
 
 def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
-    """Upgrade a decrypted v1/v2/v3 profile to the current independent secrets."""
+    """Upgrade a decrypted legacy profile to the current lifecycle-aware format."""
     ratchet_master_key = profile.ratchet_master_key
     if (
         ratchet_master_key is not None
@@ -574,6 +645,20 @@ def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
     state_coordination_key = profile.state_coordination_key
     state_revision = profile.state_revision
     state_previous_digest = profile.state_previous_digest
+    device_lifecycle = profile.device_lifecycle
+
+    if device_lifecycle is not None:
+        try:
+            lifecycle_device = verify_device_lifecycle_statement(
+                device_lifecycle,
+                profile.entity.verify_key,
+            )
+        except DeviceLifecycleError as exc:
+            raise ProfileError(str(exc)) from exc
+        if lifecycle_device.device_id != profile.device.device_id:
+            raise ProfileError(
+                "device lifecycle state does not match active profile device"
+            )
 
     has_state_identity = (
         client_state_id is not None or state_coordination_key is not None
@@ -613,8 +698,28 @@ def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
         and client_state_id is not None
         and state_coordination_key is not None
         and state_revision is not None
+        and device_lifecycle is not None
     ):
         return profile
+
+    if (
+        device_lifecycle is None
+        and state_revision is not None
+        and state_revision != 1
+    ):
+        raise ProfileError(
+            "legacy rollback-aware profile must be at revision 1 before lifecycle migration"
+        )
+
+    lifecycle = (
+        device_lifecycle
+        if device_lifecycle is not None
+        else create_device_lifecycle_statement(
+            profile.entity,
+            profile.device,
+            epoch=1,
+        )
+    )
 
     return LocalProfile(
         entity=profile.entity,
@@ -647,4 +752,133 @@ def upgrade_local_profile(profile: LocalProfile) -> LocalProfile:
             if state_revision is not None
             else None
         ),
+        device_lifecycle=lifecycle,
+    )
+
+
+def derive_profile_checkpoint(profile: LocalProfile) -> ComponentCheckpoint:
+    """Derive the authenticated rollback checkpoint for a current profile."""
+    state_id = profile.client_state_id
+    coordination_key = profile.state_coordination_key
+    revision = profile.state_revision
+    if state_id is None or coordination_key is None or revision is None:
+        raise ProfileError("profile has no complete rollback-state metadata")
+
+    payload = _serialize_secret(profile)
+    try:
+        return derive_checkpoint(
+            coordination_key,
+            state_id=state_id,
+            component="profile",
+            revision=revision,
+            previous_digest=profile.state_previous_digest,
+            payload=payload,
+        )
+    except StateCheckpointError as exc:
+        raise ProfileError(f"profile checkpoint is invalid: {exc}") from exc
+
+
+def initialize_profile_witness(
+    profile: LocalProfile,
+    witness: MonotonicWitness,
+) -> ComponentCheckpoint:
+    """Explicitly enroll a revision-1 lifecycle-aware profile in its witness."""
+    state_id = profile.client_state_id
+    coordination_key = profile.state_coordination_key
+    if state_id is None or coordination_key is None:
+        raise ProfileError("profile has no rollback-state identity")
+    if profile.state_revision != 1 or profile.state_previous_digest is not None:
+        raise ProfileError(
+            "profile witness initialization requires revision 1"
+        )
+
+    payload = _serialize_secret(profile)
+    try:
+        checkpoint = create_initial_checkpoint(
+            coordination_key,
+            state_id,
+            "profile",
+            payload,
+        )
+        if witness.get("profile") is not None:
+            raise ProfileError("profile monotonic witness is already initialized")
+        initialize_witness(
+            witness,
+            checkpoint,
+            coordination_key=coordination_key,
+            payload=payload,
+        )
+    except (StateCheckpointError, StateWitnessError) as exc:
+        raise ProfileError(
+            f"profile rollback witness initialization failed: {exc}"
+        ) from exc
+    return checkpoint
+
+
+def reconcile_profile_witness(
+    profile: LocalProfile,
+    witness: MonotonicWitness,
+) -> ComponentCheckpoint:
+    """Fail closed when a lifecycle-aware profile is stale or divergent."""
+    coordination_key = profile.state_coordination_key
+    if coordination_key is None:
+        raise ProfileError("profile has no rollback-state coordination key")
+    checkpoint = derive_profile_checkpoint(profile)
+    payload = _serialize_secret(profile)
+    try:
+        reconcile_checkpoint(
+            witness,
+            checkpoint,
+            coordination_key=coordination_key,
+            payload=payload,
+        )
+    except (StateCheckpointError, StateWitnessError) as exc:
+        raise ProfileError(
+            f"profile rollback verification failed: {exc}"
+        ) from exc
+    return checkpoint
+
+
+def rotate_local_profile_device(
+    profile: LocalProfile,
+    current_checkpoint: ComponentCheckpoint,
+    *,
+    issued_at: int | None = None,
+) -> LocalProfile:
+    """Create the next profile revision with a fresh identity-authorized device."""
+    derived = derive_profile_checkpoint(profile)
+    if current_checkpoint != derived:
+        raise ProfileError(
+            "profile device rotation requires the current verified checkpoint"
+        )
+    if current_checkpoint.revision >= _MAX_STATE_REVISION:
+        raise ProfileError("profile checkpoint revision is exhausted")
+
+    lifecycle = profile.device_lifecycle
+    if lifecycle is None:
+        raise ProfileError(
+            "profile must be lifecycle-aware before device rotation"
+        )
+    next_epoch = lifecycle.statement.epoch + 1
+    new_device = profile.entity.enroll_device()
+    try:
+        new_lifecycle = create_device_lifecycle_statement(
+            profile.entity,
+            new_device,
+            epoch=next_epoch,
+            issued_at=issued_at,
+        )
+    except DeviceLifecycleError as exc:
+        raise ProfileError(str(exc)) from exc
+
+    return LocalProfile(
+        entity=profile.entity,
+        device=new_device,
+        ratchet_master_key=profile.ratchet_master_key,
+        contact_store_key=profile.contact_store_key,
+        client_state_id=profile.client_state_id,
+        state_coordination_key=profile.state_coordination_key,
+        state_revision=current_checkpoint.revision + 1,
+        state_previous_digest=current_checkpoint.digest,
+        device_lifecycle=new_lifecycle,
     )

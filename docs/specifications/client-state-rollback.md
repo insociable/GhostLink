@@ -1,13 +1,13 @@
 # Client-state rollback checkpoints and witness
 
-Status: checkpoint/witness primitives, profile-v4 state identity, contact-store, replay-state, and ratchet-vault/highest-seen integration implemented. The reference SQLite witness remains development-only.
+Status: checkpoint/witness primitives plus profile-v5, contact-store, replay-state, and ratchet-vault/highest-seen integration implemented. The reference SQLite witness remains development-only.
 
 ## Scope
 
 This specification defines the common checkpoint format and monotonic-witness contract used
 by ADR-0008.
 
-Profile v4 provides the root state identity and authenticated profile checkpoint metadata.
+Profile v5 provides the root state identity, authenticated profile checkpoint metadata and persisted monotonic device lifecycle state.
 Contact trust, replay state, and the ratchet/highest-seen vault now adopt this checkpoint
 format and reconcile against the monotonic witness before ordinary use.
 
@@ -221,10 +221,11 @@ vault ciphertext, while Python independently computes the checkpoint over the ex
 serialized encrypted vault bytes and advances the witness. The engine refuses another
 state-changing vault operation until Python acknowledges the current checkpoint digest.
 
-Profile v4 currently has no routine security-relevant mutation after creation/migration.
-Its stable state identity binds all integrated components; any future password/key/profile
-mutation that changes security state must also advance the reserved `profile` witness
-component before being enabled.
+Profile v5 is itself coordinated by the reserved `profile` witness component. Fresh
+profiles initialize that record, normal lifecycle-aware CLI loads reconcile it before use,
+and explicit profile migration enrolls legacy v4-or-earlier state. Security-relevant
+profile successors must increment the profile revision, link `state_previous_digest` to the
+current checkpoint and durably replace the encrypted profile before witness compare-and-set.
 
 A future production backend must keep witness state outside the rollback domain being
 claimed as protected.
