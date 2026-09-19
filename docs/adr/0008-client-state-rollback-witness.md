@@ -4,6 +4,8 @@
 - Date: 2026-09-18
 - Tracks: #79
 
+> Implementation note (current runtime): profile v5 supersedes profile v4 while retaining the client-state identity, coordination key and checkpoint model introduced by this ADR. The v5 profile additionally carries monotonic device lifecycle state under ADR-0010.
+
 ## Context
 
 GhostLink already authenticates or encrypts its sensitive local state, but authenticated
