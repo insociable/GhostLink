@@ -12,7 +12,9 @@ The client exposes:
 - `delete_ratchet(...)`;
 - `publish_prekeys(...)`;
 - `fetch_prekey(...)`;
-- `prekey_status(...)`.
+- `prekey_status(...)`;
+- `publish_device_lifecycle(...)`;
+- `get_device_lifecycle(...)`.
 
 The historical static-v2 `send`, `receive` and `delete` message methods have been removed.
 
@@ -36,6 +38,6 @@ Current ratcheted message parsing is version-pinned to protocol v3.
 
 ## Security status
 
-GhostNode remains outside the end-to-end trust boundary. Relay/client anti-rollback, key transparency, abuse controls, device revocation/recovery and independent review remain open hardening areas.
+GhostNode remains outside the end-to-end trust boundary. Client and relay rollback detection, plus relay-scoped device revocation/recovery, are implemented with the witness and lifecycle limitations documented in the threat model. Key transparency/global lifecycle discovery, Sybil-resistant abuse controls, production-grade external witnessing and independent review remain open hardening areas.
 
 The retired `/v2/messages...` surface is not a fallback or compatibility path.
