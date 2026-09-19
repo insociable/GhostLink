@@ -86,10 +86,11 @@ Once a relay has observed a newer lifecycle epoch, known superseded DeviceIDs ar
 - pre-key publication and owner status;
 - pre-key fetch when either the authenticated requester or target DeviceID is known to be superseded.
 
-Unknown DeviceIDs remain accepted during migration. Because the current lifecycle statement names only the active device, a relay that first learns an identity after rotation cannot retroactively map a never-registered older DeviceID to that GhostID. The client must therefore publish lifecycle state before normal relay use and publish the newer state after recovery. This is intentional compatibility behavior, not a claim of global revocation.
+Unknown DeviceIDs remain accepted during migration. Because the current lifecycle statement names only the active device, a relay that first learns an identity after rotation cannot retroactively map a never-registered older DeviceID to that GhostID.
+
+The current CLI therefore publishes its signed lifecycle before `prekey-sync`, `send` and `inbox`. `device-recover` first ensures the current device is registered, prepares the replacement locally, publishes the newer lifecycle to GhostNode, and only then promotes the replacement profile. If remote publication fails or is ambiguous, the old profile remains active and the pending recovery can be resumed. This closes the local registration gap for the configured relay, but does not by itself update another user's persisted contact record to the replacement DeviceID.
 
 Persistent lifecycle rows participate in the shared relay-state rollback checkpoint. Empty lifecycle tables are omitted from the canonical checkpoint payload so an already-enrolled pre-lifecycle database can be upgraded without invalidating its existing witnessed digest; once lifecycle rows exist, rolling them back while the witness remains newer fails closed.
-
 
 The complete wire decision is recorded in [ADR-0004](../adr/0004-device-authenticated-ratchet-relay.md).
 
