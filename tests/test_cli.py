@@ -1029,6 +1029,109 @@ def test_remote_rotation_contact_save_failure_is_resumable_after_invalidation(
     assert replacement.device_id in session_state[str(alice_profile)]
 
 
+def test_stale_queued_message_is_skipped_after_peer_learns_rotation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+    session_state: dict[str, set[str]] = {}
+    install_fake_ratchet_operations(monkeypatch)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "stale queued message password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    alice_profile, bob_profile, alice_contact, bob_contact = (
+        _create_profiles_and_contacts(
+            tmp_path,
+            capsys,
+            password_reader,
+            node_client_factory,
+        )
+    )
+    alice_record_id = _import_and_trust_contact(
+        bob_profile,
+        alice_contact,
+        label="Alice",
+        password=password,
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+        capsys=capsys,
+    )
+    node_url = "http://ghostnode.test"
+    engine_factory = fake_engine_factory(session_state)
+
+    assert run(
+        [
+            "send",
+            "--profile",
+            str(alice_profile),
+            "--contact",
+            str(bob_contact),
+            "--node",
+            node_url,
+            "queued before Alice rotates",
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+        ratchet_engine_factory=engine_factory,
+    ) == 0
+    capsys.readouterr()
+
+    alice = decrypt_local_profile(alice_profile.read_text(), password)
+    bob = decrypt_local_profile(bob_profile.read_text(), password)
+    assert alice.device_lifecycle is not None
+    old_alice_device_id = alice.device.device_id
+    session_state[str(bob_profile)] = {old_alice_device_id}
+
+    replacement = alice.entity.enroll_device()
+    replacement_lifecycle = create_device_lifecycle_statement(
+        alice.entity,
+        replacement,
+        epoch=alice.device_lifecycle.statement.epoch + 1,
+        issued_at=alice.device_lifecycle.statement.issued_at + 1,
+    )
+    relay = node_client_factory(node_url)
+    relay.publish_device_lifecycle(
+        bytes(alice.entity.verify_key),
+        replacement_lifecycle,
+    )
+
+    assert run(
+        [
+            "inbox",
+            "--profile",
+            str(bob_profile),
+            "--contact-id",
+            alice_record_id,
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+        ratchet_engine_factory=engine_factory,
+    ) == 0
+    inbox = capsys.readouterr()
+    assert "queued before Alice rotates" not in inbox.out
+    assert "No readable ratcheted messages." in inbox.out
+    assert "Skipped 1 ratcheted message" in inbox.err
+
+    assert bob.contact_store_key is not None
+    refreshed = load_contact_store(
+        Path(f"{bob_profile}.contacts"),
+        bob.contact_store_key,
+    ).require_verified_contact(alice_record_id)
+    assert refreshed.device_id == replacement.device_id
+    assert old_alice_device_id not in session_state[str(bob_profile)]
+
+    retained = relay.receive_ratchet(bob.device)
+    assert len(retained) == 1
+    assert retained[0].sender_device_id == old_alice_device_id
+
+
 def test_cli_does_not_fall_back_to_static_v2_when_bootstrap_fails(
     tmp_path: Path,
     capsys,
