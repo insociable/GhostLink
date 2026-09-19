@@ -154,6 +154,30 @@ _PROTECTED_TABLES = (
     ),
 )
 
+_OPTIONAL_PROTECTED_TABLES = (
+    _TableSpec(
+        "device_lifecycle_v1",
+        (
+            _ColumnSpec("ghost_id", "TEXT", False, 1),
+            _ColumnSpec("epoch", "INTEGER", True, 0),
+            _ColumnSpec("issued_at", "INTEGER", True, 0),
+            _ColumnSpec("active_device_id", "TEXT", True, 0),
+            _ColumnSpec("identity_public_key", "TEXT", True, 0),
+            _ColumnSpec("statement", "TEXT", True, 0),
+        ),
+        ("ghost_id",),
+    ),
+    _TableSpec(
+        "device_lifecycle_devices_v1",
+        (
+            _ColumnSpec("device_id", "TEXT", False, 1),
+            _ColumnSpec("ghost_id", "TEXT", True, 0),
+            _ColumnSpec("lifecycle_epoch", "INTEGER", True, 0),
+        ),
+        ("device_id",),
+    ),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RelayStateMetadata:
@@ -425,27 +449,54 @@ def _validate_row(
     return validated
 
 
+def _table_exists(
+    connection: sqlite3.Connection,
+    table_name: str,
+) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        """,
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _protected_table_payload(
+    connection: sqlite3.Connection,
+    table: _TableSpec,
+) -> dict[str, object]:
+    _validate_protected_schema(connection, table)
+    column_sql = ", ".join(f'"{column.name}"' for column in table.columns)
+    order_sql = ", ".join(f'"{column}"' for column in table.order_by)
+    query = (
+        f'SELECT {column_sql} FROM "{table.name}" ORDER BY {order_sql}'  # noqa: S608
+    )
+    rows = connection.execute(query).fetchall()
+    return {
+        "name": table.name,
+        "rows": [
+            _validate_row(table, tuple(row))
+            for row in rows
+        ],
+    }
+
+
 def canonical_relay_payload(connection: sqlite3.Connection) -> bytes:
     """Return the strict canonical logical snapshot of protected relay tables."""
-    tables: list[dict[str, object]] = []
+    tables = [
+        _protected_table_payload(connection, table)
+        for table in _PROTECTED_TABLES
+    ]
 
-    for table in _PROTECTED_TABLES:
-        _validate_protected_schema(connection, table)
-        column_sql = ", ".join(f'"{column.name}"' for column in table.columns)
-        order_sql = ", ".join(f'"{column}"' for column in table.order_by)
-        query = (
-            f'SELECT {column_sql} FROM "{table.name}" ORDER BY {order_sql}'  # noqa: S608
-        )
-        rows = connection.execute(query).fetchall()
-        tables.append(
-            {
-                "name": table.name,
-                "rows": [
-                    _validate_row(table, tuple(row))
-                    for row in rows
-                ],
-            }
-        )
+    for table in _OPTIONAL_PROTECTED_TABLES:
+        if not _table_exists(connection, table.name):
+            continue
+        payload = _protected_table_payload(connection, table)
+        if payload["rows"]:
+            tables.append(payload)
 
     return _canonical_json(
         {

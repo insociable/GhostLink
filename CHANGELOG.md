@@ -63,7 +63,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - lifecycle-aware contact bundle v2 and contact-store enforcement that reject stale epochs, same-epoch equivocation and downgrade to legacy device-only state after adoption;
 - rollback-linked ratchet-vault recovery that creates fresh libsignal state for a replacement DeviceID only from the current witnessed ratchet checkpoint;
 - explicit crash-resumable `device-recover` CLI transaction that rotates DeviceID/lifecycle state, archives verified old ratchet state, builds a fresh linked vault and atomically promotes the replacement profile;
-- local profile v5 with persisted signed device lifecycle state, explicit v1-v4 migration, dedicated profile witness enrollment/reconciliation and crash-safe one-step profile witness recovery.
+- local profile v5 with persisted signed device lifecycle state, explicit v1-v4 migration, dedicated profile witness enrollment/reconciliation and crash-safe one-step profile witness recovery;
+- rollback-protected GhostNode device-lifecycle registry with identity-authorized monotonic publication/lookup and stale-device enforcement across protocol-v3 messaging and pre-key routes.
 
 ### Removed
 
@@ -87,14 +88,15 @@ The format follows Keep a Changelog and Semantic Versioning.
 - user-facing send/inbox fail closed on ratchet bootstrap/decrypt errors instead of retrying via static v2;
 - ratchet-vault, contact-store and state-coordination keys are kept inside the encrypted local profile and are not passed in argv or environment;
 - protocol-v3 submission requires sender DeviceID control, while mailbox list/delete require recipient DeviceID control;
+- once GhostNode has accepted newer identity-signed lifecycle state, known superseded DeviceIDs fail closed on v3 message and pre-key security-sensitive routes;
 - stale, replayed, tampered or ownership-mismatched v3 request proofs fail with generic authentication errors; optional Bearer access control remains additive;
 - relay Bearer tokens are loaded from mounted/local secret files instead of token values in argv or environment;
 - Oracle public ingress disables GhostNode access logs, leaves Caddy HTTP access logging off and explicitly disables Uvicorn proxy-header trust.
 
 ### Known limitations
 
-- compromise of a DeviceID signing key remains effective until complete device revocation/recovery is designed;
-- relay database rollback can also roll back persisted protocol-v3 request-replay state;
+- device revocation is relay-enforced only after that relay has learned enough identity-signed lifecycle history to associate the superseded DeviceID with its GhostID; an unregistered older device cannot be retroactively mapped from a later active-device-only statement;
+- the shared relay witness detects protected-database rollback only while the witness remains newer; rolling the database and reference witness back together remains outside the protection claim;
 - the libsignal ratchet engine and user-facing v3 CLI path provide tested forward-secrecy/post-compromise behavior, but GhostLink remains pre-alpha and unaudited;
 - traffic metadata remains visible to the relay;
 - the development SQLite monotonic witness can be rolled back together with a whole-filesystem snapshot, so complete whole-device anti-rollback is not claimed;

@@ -24,6 +24,10 @@ from ghostlink.ratchet_message import (
     RATCHET_MESSAGE_VERSION,
 )
 from ghostlink.relay_auth import require_relay_access
+from ghostlink.relay_device_lifecycle import (
+    DeviceLifecycleStore,
+    require_active_relay_device,
+)
 from ghostlink.relay_request_auth import (
     AUTH_DEVICE_ID_HEADER,
     AUTH_ISSUED_AT_HEADER,
@@ -471,6 +475,7 @@ def create_v3_router(
     settings: NodeSettings,
     store: V3MessageStore,
     request_replay_store: RelayRequestReplayStore | None = None,
+    device_lifecycle_store: DeviceLifecycleStore | None = None,
 ) -> APIRouter:
     """Create explicitly ratcheted protocol-v3 relay routes."""
     router = APIRouter()
@@ -515,6 +520,15 @@ def create_v3_router(
             issued_at=auth_issued_at,
             signature=auth_signature,
         )
+        if device_lifecycle_store is not None:
+            require_active_relay_device(
+                device_lifecycle_store,
+                envelope.sender_device_id,
+            )
+            require_active_relay_device(
+                device_lifecycle_store,
+                envelope.recipient_device_id,
+            )
         if not _relay_time_valid(envelope, _unix_time()):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -572,6 +586,11 @@ def create_v3_router(
             issued_at=auth_issued_at,
             signature=auth_signature,
         )
+        if device_lifecycle_store is not None:
+            require_active_relay_device(
+                device_lifecycle_store,
+                recipient_device_id,
+            )
         return store.list_for_recipient(recipient_device_id)
 
     @router.delete(
@@ -621,6 +640,11 @@ def create_v3_router(
             issued_at=auth_issued_at,
             signature=auth_signature,
         )
+        if device_lifecycle_store is not None:
+            require_active_relay_device(
+                device_lifecycle_store,
+                recipient_device_id,
+            )
         if not store.delete(recipient_device_id, message_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

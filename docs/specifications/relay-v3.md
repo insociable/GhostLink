@@ -8,7 +8,9 @@ The v3 relay surface is intentionally separate from static v2:
 
 - `POST /v3/messages` — store one ratcheted ciphertext envelope;
 - `GET /v3/messages/{recipient_device_id}` — list non-expired v3 envelopes;
-- `DELETE /v3/messages/{recipient_device_id}/{message_id}` — remove one delivered v3 envelope.
+- `DELETE /v3/messages/{recipient_device_id}/{message_id}` — remove one delivered v3 envelope;
+- `PUT /v3/device-lifecycle/{ghost_id}` — publish identity-signed monotonic device lifecycle state;
+- `GET /v3/device-lifecycle/{ghost_id}` — read the relay's highest accepted lifecycle state.
 
 The historical `/v2/messages...` surface is retired; current network message delivery uses `/v3/messages...` only.
 
@@ -53,9 +55,7 @@ Reusing the same key for different v3 envelope content returns HTTP 409.
 
 Persistent v3 envelopes use the dedicated `messages_v3` table.
 
-Static v2 uses `messages_v2`.
-
-This separation is deliberate so migration/cutover cannot silently reinterpret old ciphertext as ratcheted traffic.
+The historical static-v2 message runtime is retired. No current route can reinterpret old static ciphertext as ratcheted traffic.
 
 ## Device-authenticated request access
 
@@ -73,18 +73,37 @@ Invalid, stale, replayed or ownership-mismatched proofs return a generic HTTP 40
 
 The optional shared Bearer token remains an additional coarse access-control layer when configured. It is not the DeviceID identity mechanism.
 
+## Device lifecycle enforcement
+
+GhostNode can record the highest identity-signed lifecycle statement accepted for a GhostID. A newer epoch names the only active DeviceID for the current single-device architecture and makes previously observed DeviceIDs for that GhostID stale.
+
+Lifecycle publication is authorized by the GhostID identity signature and, when configured, the shared Bearer gate. It does not rely on the superseded device signing key.
+
+Once a relay has observed a newer lifecycle epoch, known superseded DeviceIDs are rejected on:
+
+- protocol-v3 message submission;
+- protocol-v3 inbox listing and deletion;
+- pre-key publication and owner status;
+- pre-key fetch when either the authenticated requester or target DeviceID is known to be superseded.
+
+Unknown DeviceIDs remain accepted during migration. Because the current lifecycle statement names only the active device, a relay that first learns an identity after rotation cannot retroactively map a never-registered older DeviceID to that GhostID. The client must therefore publish lifecycle state before normal relay use and publish the newer state after recovery. This is intentional compatibility behavior, not a claim of global revocation.
+
+Persistent lifecycle rows participate in the shared relay-state rollback checkpoint. Empty lifecycle tables are omitted from the canonical checkpoint payload so an already-enrolled pre-lifecycle database can be upgraded without invalidating its existing witnessed digest; once lifecycle rows exist, rolling them back while the witness remains newer fails closed.
+
+
 The complete wire decision is recorded in [ADR-0004](../adr/0004-device-authenticated-ratchet-relay.md).
 
-Static protocol-v2 message routes are not upgraded by this mechanism. They remain a legacy/diagnostic bearer-only surface and are never used as an automatic fallback from v3.
+Historical static protocol-v2 message routes are retired and are not an alternate path around lifecycle enforcement.
 
 ## Health
 
 `/health` requires all configured stores to be available:
 
-- static v2 message storage;
 - ratcheted v3 message storage;
 - pre-key publication/fetch storage;
-- protocol-v3 request-replay storage.
+- protocol-v3 request-replay storage;
+- device-lifecycle registry storage;
+- the shared relay-state rollback coordinator when persistent SQLite is configured.
 
 ## Relay visibility
 
@@ -113,4 +132,4 @@ A malicious relay can still:
 
 External metadata modification is detected by protocol v3 context-bound decryption. The ratchet transaction rolls back instead of committing the modified message.
 
-Availability and database rollback remain separate problems. A relay-database rollback can also roll back the persisted request-ID replay cache. Device-key compromise and identity-authorized device revocation/recovery remain separate problems.
+Availability remains a separate problem. Persistent relay state, including lifecycle rows and the request-ID replay cache, is covered by the shared monotonic witness while that witness remains newer than the protected database. A whole-volume or VM snapshot that rolls the database and reference witness back together remains outside that protection claim.

@@ -8,6 +8,10 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from ghostlink.config import NodeSettings
 from ghostlink.device import EnrolledGhostDevice
+from ghostlink.device_lifecycle import (
+    create_device_lifecycle_statement,
+    export_device_lifecycle_statement,
+)
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app, migrate_relay_state
 from ghostlink.prekey_fetch import create_prekey_fetch_request
@@ -137,6 +141,49 @@ def test_prekey_publication_is_cryptographically_verified_and_acknowledged() -> 
     assert response.json()["device_id"] == device.device_id
     assert response.json()["publication_sequence"] == 1
     assert response.json()["one_time_count"] == 2
+
+
+def test_revoked_device_cannot_publish_prekeys() -> None:
+    entity = GhostEntity.generate()
+    revoked = entity.enroll_device()
+    active = entity.enroll_device()
+    client = TestClient(create_app())
+    now = int(time.time())
+
+    for epoch, device, issued_at in (
+        (1, revoked, now - 1),
+        (2, active, now),
+    ):
+        lifecycle = create_device_lifecycle_statement(
+            entity,
+            device,
+            epoch=epoch,
+            issued_at=issued_at,
+        )
+        lifecycle_response = client.put(
+            f"/v3/device-lifecycle/{entity.ghost_id}",
+            json={
+                "version": 1,
+                "identity_public_key": base64.b64encode(
+                    bytes(entity.verify_key)
+                ).decode("ascii"),
+                "statement": export_device_lifecycle_statement(lifecycle),
+            },
+        )
+        assert lifecycle_response.status_code == 200
+
+    revoked_response = client.put(
+        f"/v2/prekeys/{revoked.device_id}",
+        json=publication_request(revoked, sequence=1, issued_at=now),
+    )
+    assert revoked_response.status_code == 401
+    assert revoked_response.json() == {"detail": "unauthorized"}
+
+    active_response = client.put(
+        f"/v2/prekeys/{active.device_id}",
+        json=publication_request(active, sequence=1, issued_at=now),
+    )
+    assert active_response.status_code == 200
 
 
 def test_prekey_publication_rejects_route_device_mismatch() -> None:

@@ -12,6 +12,11 @@ from ghostlink.prekey_relay import (
     create_prekey_publication_router,
     create_prekey_publication_store,
 )
+from ghostlink.relay_device_lifecycle import (
+    DeviceLifecycleStore,
+    create_device_lifecycle_router,
+    create_device_lifecycle_store,
+)
 from ghostlink.relay_request_auth import (
     RelayRequestReplayStore,
     create_relay_request_replay_store,
@@ -66,6 +71,7 @@ def migrate_relay_state(settings: NodeSettings) -> int:
     create_v3_message_store(settings)
     create_prekey_publication_store(settings)
     create_relay_request_replay_store(settings)
+    create_device_lifecycle_store(settings)
 
     checkpoint = coordinator.migrate_legacy()
     return checkpoint.revision
@@ -76,6 +82,7 @@ def create_app(
     prekey_store: PreKeyPublicationStore | None = None,
     ratchet_store: V3MessageStore | None = None,
     request_replay_store: RelayRequestReplayStore | None = None,
+    device_lifecycle_store: DeviceLifecycleStore | None = None,
 ) -> FastAPI:
     """Create GhostNode with ratcheted-v3 message and pre-key routes."""
     node_settings = settings or NodeSettings()
@@ -83,7 +90,12 @@ def create_app(
 
     if coordinator is not None and any(
         store is not None
-        for store in (prekey_store, ratchet_store, request_replay_store)
+        for store in (
+            prekey_store,
+            ratchet_store,
+            request_replay_store,
+            device_lifecycle_store,
+        )
     ):
         raise ValueError(
             "persistent GhostNode store overrides are incompatible with "
@@ -105,6 +117,11 @@ def create_app(
         if request_replay_store is not None
         else create_relay_request_replay_store(node_settings, coordinator)
     )
+    lifecycle_store = (
+        device_lifecycle_store
+        if device_lifecycle_store is not None
+        else create_device_lifecycle_store(node_settings, coordinator)
+    )
 
     if coordinator is not None:
         coordinator.reconcile()
@@ -121,10 +138,18 @@ def create_app(
             node_settings,
             v3_message_store,
             relay_request_replay_store,
+            lifecycle_store,
         )
     )
     app.include_router(
-        create_prekey_publication_router(node_settings, publication_store)
+        create_prekey_publication_router(
+            node_settings,
+            publication_store,
+            lifecycle_store,
+        )
+    )
+    app.include_router(
+        create_device_lifecycle_router(node_settings, lifecycle_store)
     )
 
     @app.get("/health")
@@ -135,6 +160,7 @@ def create_app(
             or not v3_message_store.is_healthy()
             or not publication_store.is_healthy()
             or not relay_request_replay_store.is_healthy()
+            or not lifecycle_store.is_healthy()
         ):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
