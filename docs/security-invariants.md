@@ -29,6 +29,8 @@ A coherent filesystem, volume or VM snapshot that restores both protected state 
 
 A GhostNode can reject a superseded DeviceID only from lifecycle history that it has actually learned. A relay that never observed an old DeviceID cannot infer its GhostID association from a later active-device-only lifecycle statement.
 
+If Relay A knows N+1 while Relay B still knows N, Relay B continues to treat the N device as active. A replacement DeviceID presented to Relay B before lifecycle N+1 is published there is merely an unknown self-authenticating DeviceID, so both old and replacement DeviceIDs can be accepted by that stale relay view. This is a knowledge limitation, not global revocation.
+
 ### B-4 — Peer lifecycle discovery is relay-dependent
 
 Persisted verified contacts refresh lifecycle state from the configured relay. A relay that has not learned a newer lifecycle cannot tell the peer that a rotation occurred. GhostLink currently has no independent key-transparency or globally witnessed lifecycle log.
