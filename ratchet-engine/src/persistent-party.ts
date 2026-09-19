@@ -610,6 +610,17 @@ export class PersistentRatchetParty {
     );
   }
 
+  async invalidateSessionWithAddress(remoteName: string): Promise<boolean> {
+    const remoteAddress = this.remoteAddress(remoteName);
+    return this.transaction(async (party) => {
+      const sessionRemoved = party.stores.session.removeSession(remoteAddress);
+      const identityRemoved = party.stores.identity.removeIdentity(remoteAddress);
+      const sequenceRemoved =
+        party.stores.remotePublicationSequences.remove(remoteName);
+      return sessionRemoved || identityRemoved || sequenceRemoved;
+    });
+  }
+
   async establishSessionWithAddress(
     remoteName: string,
     publicationSequence: number,

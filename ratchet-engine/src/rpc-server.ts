@@ -366,6 +366,8 @@ class RatchetRpcService {
         return this.establishSession(request.params);
       case 'has_session':
         return this.hasSession(request.params);
+      case 'invalidate_session':
+        return this.invalidateSession(request.params);
       case 'encrypt':
         return this.encrypt(request.params);
       case 'decrypt':
@@ -639,6 +641,22 @@ class RatchetRpcService {
     );
     return {
       exists: await this.requireParty().hasSessionWithAddress(
+        requireDeviceId(document, 'remote_device_id')
+      ),
+    };
+  }
+
+  private async invalidateSession(
+    params: unknown
+  ): Promise<Record<string, boolean>> {
+    const document = requireObject(params, 'invalidate_session params');
+    requireExactFields(
+      document,
+      ['remote_device_id'],
+      'invalidate_session params'
+    );
+    return {
+      invalidated: await this.requireParty().invalidateSessionWithAddress(
         requireDeviceId(document, 'remote_device_id')
       ),
     };

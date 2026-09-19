@@ -84,4 +84,4 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] explicit crash-resumable device recovery CLI transaction (#92);
 - [x] rollback-protected GhostNode lifecycle registry and stale-device enforcement (#92);
 - [x] client lifecycle publication before relay use plus fail-closed recovery publish/promote ordering (#92);
-- [ ] remote lifecycle refresh/contact update and ratchet-session invalidation after peer device replacement (#92).
+- [x] remote lifecycle refresh/contact update and durable ratchet-session invalidation after peer device replacement (#92).

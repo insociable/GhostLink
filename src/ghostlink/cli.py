@@ -23,6 +23,7 @@ from ghostlink.contact import (
     decode_contact_qr_payload,
     export_lifecycle_contact_bundle,
     export_lifecycle_contact_qr_payload,
+    export_verified_lifecycle_contact_bundle,
     import_contact_bundle,
 )
 from ghostlink.contact_qr import render_contact_qr_svg
@@ -852,6 +853,54 @@ def _resolve_message_contact(
     return import_contact_bundle(_read_text(Path(args.contact)))
 
 
+def _refresh_message_contact_lifecycle(
+    args: argparse.Namespace,
+    profile_path: Path,
+    profile: LocalProfile,
+    client: GhostNodeClient,
+    engine: RatchetEngineClient,
+    contact: ValidatedContact,
+) -> ValidatedContact:
+    if args.contact_id is None:
+        return contact
+
+    try:
+        relay = client.get_device_lifecycle(contact.ghost_id)
+    except GhostNodeRequestError as exc:
+        if exc.status_code == 404:
+            return contact
+        raise
+
+    if relay.identity_public_key != bytes(contact.identity_verify_key):
+        raise CLIError("relay lifecycle identity does not match the pinned contact")
+
+    bundle = export_verified_lifecycle_contact_bundle(
+        contact.identity_verify_key,
+        relay.lifecycle,
+    )
+    store = _load_profile_contact_store(
+        profile_path,
+        profile,
+        args.contacts,
+    )
+    record = store.get(args.contact_id)
+    if record.current_bundle == bundle:
+        return contact
+
+    updated = store.update_contact_bundle(args.contact_id, bundle)
+    refreshed = store.require_verified_contact(updated.record_id)
+    if refreshed.device_id != contact.device_id:
+        engine.invalidate_session(contact)
+
+    _save_profile_contact_store(
+        profile_path,
+        profile,
+        args.contacts,
+        store,
+    )
+    return refreshed
+
+
 def _publish_profile_lifecycle(
     client: GhostNodeClient,
     profile: LocalProfile,
@@ -916,6 +965,14 @@ def _command_send(
     _publish_profile_lifecycle(client, profile)
 
     with ratchet_engine_factory(profile, profile_path) as engine:
+        contact = _refresh_message_contact_lifecycle(
+            args,
+            profile_path,
+            profile,
+            client,
+            engine,
+            contact,
+        )
         maintain_prekeys(engine, client, profile.device)
         if not engine.has_session(contact):
             establish_session_from_relay(
@@ -962,6 +1019,14 @@ def _command_inbox(
     replayed = 0
 
     with ratchet_engine_factory(profile, profile_path) as engine:
+        contact = _refresh_message_contact_lifecycle(
+            args,
+            profile_path,
+            profile,
+            client,
+            engine,
+            contact,
+        )
         maintain_prekeys(engine, client, profile.device)
         messages = client.receive_ratchet(profile.device)
 

@@ -129,9 +129,17 @@ For an already human-verified GhostID:
 Message send, receive, pre-key bootstrap and ratchet binding verification use only the
 currently active device from the accepted lifecycle state.
 
+Before normal `send`/`inbox` use of a persisted verified contact, the client may query the
+configured relay for the highest lifecycle state of the pinned GhostID. A valid higher
+epoch for that same identity is applied through the same monotonic contact-store rules. If
+the active DeviceID changes, the client invalidates the old DeviceID's persisted libsignal
+session, cached remote identity and highest-seen remote pre-key sequence before persisting
+the replacement contact. A relay with no lifecycle record cannot prove that a rotation has
+not happened.
+
 ## Relay behavior
 
-GhostNode will expose an authenticated lifecycle publication/lookup mechanism.
+GhostNode exposes an authenticated lifecycle publication/lookup mechanism.
 
 The relay stores the highest accepted lifecycle statement per GhostID and an index from
 known DeviceIDs to lifecycle status.
@@ -192,8 +200,9 @@ may adopt epoch 1 if the identity key and active device certificate verify. Once
 that contact cannot downgrade to legacy device-only state.
 
 GhostNode lifecycle enforcement is activated for identities that have published lifecycle
-state. A later protocol milestone may make lifecycle registration mandatory for every
-persistent node.
+state. The current CLI registers its local lifecycle before normal pre-key/message relay
+use and refreshes persisted verified contacts from the configured relay, while still
+retaining 404 compatibility for relays that do not yet know that GhostID.
 
 ## Security consequences
 
@@ -203,7 +212,8 @@ This design provides:
 - cryptographic authorization of device replacement by the identity key;
 - explicit monotonic stale-device detection;
 - rollback/equivocation rejection in lifecycle-aware contact state;
-- a basis for relay-side stale-device enforcement;
+- relay-side stale-device enforcement after lifecycle registration;
+- automatic same-identity peer device refresh with durable stale-session invalidation;
 - clean separation between identity compromise and device compromise.
 
 It does not provide:

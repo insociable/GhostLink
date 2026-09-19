@@ -194,32 +194,45 @@ def export_contact_bundle(
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
-def export_lifecycle_contact_bundle(
-    entity: GhostEntity,
+def export_verified_lifecycle_contact_bundle(
+    identity_verify_key: VerifyKey,
     lifecycle: SignedDeviceLifecycleStatement,
 ) -> str:
-    """Export a version-2 contact bundle with monotonic device lifecycle state."""
+    """Export lifecycle contact material already anchored to a verified identity key."""
     try:
-        public_device = verify_device_lifecycle_statement(
+        verify_device_lifecycle_statement(
             lifecycle,
-            entity.verify_key,
+            identity_verify_key,
         )
     except DeviceLifecycleError as exc:
         raise ContactBundleError(str(exc)) from exc
-    if public_device.ghost_id != entity.ghost_id:
-        raise ContactBundleError("lifecycle contact GhostID does not match entity")
 
     lifecycle_document = json.loads(
         export_device_lifecycle_statement(lifecycle)
     )
     document: dict[str, object] = {
         "version": _LIFECYCLE_CONTACT_VERSION,
-        "identity_public_key": _encode_base64(bytes(entity.verify_key)),
+        "identity_public_key": _encode_base64(bytes(identity_verify_key)),
         "device_lifecycle": lifecycle_document,
     }
     serialized = json.dumps(document, sort_keys=True, separators=(",", ":"))
     if len(serialized.encode("utf-8")) > _MAX_BUNDLE_BYTES:
         raise ContactBundleError("contact bundle is too large")
+    return serialized
+
+
+def export_lifecycle_contact_bundle(
+    entity: GhostEntity,
+    lifecycle: SignedDeviceLifecycleStatement,
+) -> str:
+    """Export a version-2 contact bundle with monotonic device lifecycle state."""
+    serialized = export_verified_lifecycle_contact_bundle(
+        entity.verify_key,
+        lifecycle,
+    )
+    contact = import_contact_bundle(serialized)
+    if contact.ghost_id != entity.ghost_id:
+        raise ContactBundleError("lifecycle contact GhostID does not match entity")
     return serialized
 
 

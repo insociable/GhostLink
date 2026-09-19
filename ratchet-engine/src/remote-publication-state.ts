@@ -87,6 +87,11 @@ export class MemoryRemotePublicationSequenceStore {
     return this.sequences.get(deviceId) ?? null;
   }
 
+  remove(deviceId: string): boolean {
+    validateDeviceId(deviceId, 'remote DeviceID');
+    return this.sequences.delete(deviceId);
+  }
+
   exportState(): RemotePublicationSequenceState {
     return [...this.sequences.entries()].sort(([left], [right]) =>
       left.localeCompare(right)
