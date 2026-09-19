@@ -21,7 +21,7 @@ from ghostlink.state_witness import (
     StateWitnessError,
     advance_checkpoint,
     derive_checkpoint,
-    initialize_witness,
+    finalize_witness_bootstrap,
     reconcile_checkpoint,
     witness_record,
 )
@@ -255,6 +255,17 @@ class WitnessedSQLiteReplayCache:
             )
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not existed:
+            try:
+                if self.witness.get("replay") is not None:
+                    raise ReplayCacheError(
+                        "replay cache is missing while its witness is initialized"
+                    )
+                self.witness.prepare_bootstrap("replay")
+            except StateWitnessError as exc:
+                raise ReplayCacheError(
+                    f"unable to prepare replay bootstrap witness: {exc}"
+                ) from exc
         try:
             with self._connect() as connection:
                 _create_seen_schema(connection)
@@ -276,6 +287,15 @@ class WitnessedSQLiteReplayCache:
             raise ReplayCacheError("unable to read replay state metadata") from exc
 
         if metadata is None:
+            try:
+                bootstrap_pending = self.witness.has_bootstrap_intent("replay")
+            except StateWitnessError as exc:
+                raise ReplayCacheError(
+                    f"unable to read replay bootstrap witness: {exc}"
+                ) from exc
+            if bootstrap_pending:
+                self._initialize_new_state()
+                return
             if not self._allow_legacy_migration:
                 raise ReplayCacheError(
                     "legacy replay cache requires explicit rollback-state migration"
@@ -400,6 +420,7 @@ class WitnessedSQLiteReplayCache:
                 raise ReplayCacheError(
                     "replay cache is missing while its witness is initialized"
                 )
+            self.witness.prepare_bootstrap("replay")
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
@@ -416,7 +437,7 @@ class WitnessedSQLiteReplayCache:
                 connection.commit()
             with self._connect() as connection:
                 checkpoint, payload = self._checkpoint_from_connection(connection)
-            initialize_witness(
+            finalize_witness_bootstrap(
                 self.witness,
                 checkpoint,
                 coordination_key=self.coordination_key,
@@ -434,6 +455,7 @@ class WitnessedSQLiteReplayCache:
                 raise ReplayCacheError(
                     "replay witness already exists for legacy cache"
                 )
+            self.witness.prepare_bootstrap("replay")
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute(
@@ -450,7 +472,7 @@ class WitnessedSQLiteReplayCache:
                 connection.commit()
             with self._connect() as connection:
                 checkpoint, payload = self._checkpoint_from_connection(connection)
-            initialize_witness(
+            finalize_witness_bootstrap(
                 self.witness,
                 checkpoint,
                 coordination_key=self.coordination_key,

@@ -150,7 +150,9 @@ A witness backend is scoped to one `client_state_id`.
 It supports:
 
 - read current record by component;
-- initialize a component exactly once at revision 1;
+- persist an authenticated component-scoped bootstrap intent before first state publication;
+- atomically convert that intent into the component's revision-1 witness record;
+- initialize a component explicitly exactly once at revision 1 for controlled migration/test paths;
 - atomic compare-and-set from one exact record to its exactly-next revision.
 
 Compare-and-set checks both the expected revision and expected digest.
@@ -163,16 +165,35 @@ Given an authenticated component checkpoint and its exact canonical payload:
 
 1. recompute and verify the checkpoint digest;
 2. read the witness record;
-3. fail if the witness is missing after initialization;
-4. fail if component revision is lower than witness revision;
-5. at equal revisions, require equal digest;
-6. permit exactly one component revision ahead only when its previous digest equals the
+3. if the witness is missing at revision 1, permit initialization only when an authenticated
+   bootstrap intent for that state ID/component already exists in the witness backend;
+4. atomically convert that intent into the revision-1 witness record and consume the intent;
+5. otherwise fail if the witness is missing after initialization;
+6. fail if component revision is lower than witness revision;
+7. at equal revisions, require equal digest;
+8. permit exactly one component revision ahead only when its previous digest equals the
    current witness digest;
-7. in that one-ahead case, compare-and-set the witness forward;
-8. fail when the component is more than one revision ahead.
+9. in that one-ahead case, compare-and-set the witness forward;
+10. fail when the component is more than one revision ahead.
 
 The one-ahead rule exists only for a crash after durable component commit and before
 witness commit.
+
+First initialization uses a separate bootstrap transaction:
+
+1. write the authenticated bootstrap intent into the witness domain;
+2. publish revision-1 component state;
+3. atomically replace the intent with the revision-1 witness record.
+
+A crash before step 2 may retry the initial publication because no witness record has yet
+committed. A crash after step 2 but before step 3 may finalize only while the authenticated
+intent still exists. Deleting/replacing the witness database removes that authorization and
+normal open fails closed.
+
+The bootstrap intent is component-scoped, lives in the same rollback domain as the
+reference witness, and is not an external freshness source. Restoring a coherent old
+snapshot containing both a pending intent and matching revision-1 component state remains
+inside the already documented same-domain rollback limitation.
 
 A writer is not permitted to perform another security-relevant component mutation until
 its witness update succeeds.
@@ -183,8 +204,8 @@ its witness update succeeds.
 
 Properties:
 
-- SQLite `BEGIN IMMEDIATE` serialization for initialize/compare-and-set;
-- authenticated witness records;
+- SQLite `BEGIN IMMEDIATE` serialization for bootstrap/finalize/initialize/compare-and-set;
+- authenticated witness records and authenticated bootstrap intents;
 - private `0600` file mode on POSIX;
 - `synchronous=FULL`;
 - multiple state IDs may coexist in one database;
@@ -205,7 +226,7 @@ Phase 1 provides:
 - stale-writer rejection;
 - same-revision divergence detection;
 - older-component rollback detection when the witness remains current;
-- crash-safe one-step witness roll-forward.
+- crash-safe first-bootstrap completion plus one-step witness roll-forward.
 
 The contact-trust store is the first runtime component integrated with these checkpoints.
 Its legacy v1 format requires explicit migration, and normal CLI access uses witness

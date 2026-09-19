@@ -19,6 +19,7 @@ from ghostlink.state_witness import (
     WitnessRecord,
     advance_checkpoint,
     create_initial_checkpoint,
+    finalize_witness_bootstrap,
     initialize_witness,
     reconcile_checkpoint,
     verify_checkpoint,
@@ -339,6 +340,151 @@ def test_reconcile_rejects_more_than_one_revision_gap(tmp_path: Path) -> None:
         match="more than one revision ahead",
     ):
         _reconcile(witness, third, b"revision-three")
+
+
+def test_bootstrap_intent_is_persistent_and_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "state-witness.sqlite3"
+    witness = SQLiteMonotonicWitness(path, STATE_ID, KEY)
+
+    witness.prepare_bootstrap("contacts")
+    witness.prepare_bootstrap("contacts")
+
+    reopened = SQLiteMonotonicWitness(path, STATE_ID, KEY)
+    assert reopened.has_bootstrap_intent("contacts") is True
+    assert reopened.get("contacts") is None
+
+
+def test_bootstrap_finalization_requires_authenticated_intent(tmp_path: Path) -> None:
+    witness = _witness(tmp_path)
+    checkpoint = create_initial_checkpoint(
+        KEY,
+        STATE_ID,
+        "contacts",
+        PAYLOAD_V1,
+    )
+
+    with pytest.raises(
+        WitnessMissingError,
+        match="bootstrap intent is missing",
+    ):
+        finalize_witness_bootstrap(
+            witness,
+            checkpoint,
+            coordination_key=KEY,
+            payload=PAYLOAD_V1,
+        )
+
+    assert witness.get("contacts") is None
+
+
+def test_reconcile_finishes_interrupted_bootstrap(tmp_path: Path) -> None:
+    witness = _witness(tmp_path)
+    checkpoint = create_initial_checkpoint(
+        KEY,
+        STATE_ID,
+        "contacts",
+        PAYLOAD_V1,
+    )
+    witness.prepare_bootstrap("contacts")
+
+    assert _reconcile(witness, checkpoint, PAYLOAD_V1) == "witness_initialized"
+    assert witness.get("contacts") == witness_record(checkpoint)
+    assert witness.has_bootstrap_intent("contacts") is False
+    assert _reconcile(witness, checkpoint, PAYLOAD_V1) == "current"
+
+
+def test_deleted_witness_database_does_not_recover_from_component_state(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state-witness.sqlite3"
+    checkpoint = create_initial_checkpoint(
+        KEY,
+        STATE_ID,
+        "contacts",
+        PAYLOAD_V1,
+    )
+    witness = SQLiteMonotonicWitness(path, STATE_ID, KEY)
+    witness.prepare_bootstrap("contacts")
+    assert witness.has_bootstrap_intent("contacts") is True
+
+    path.unlink()
+    replacement = SQLiteMonotonicWitness(path, STATE_ID, KEY)
+
+    assert replacement.has_bootstrap_intent("contacts") is False
+    with pytest.raises(WitnessMissingError):
+        _reconcile(replacement, checkpoint, PAYLOAD_V1)
+    assert replacement.get("contacts") is None
+
+
+def test_bootstrap_intent_tampering_fails_authentication(tmp_path: Path) -> None:
+    witness = _witness(tmp_path)
+    witness.prepare_bootstrap("contacts")
+
+    with sqlite3.connect(witness.path) as connection:
+        connection.execute(
+            "UPDATE witness_bootstrap_intents "
+            "SET intent_mac = ? "
+            "WHERE state_id = ? AND component = ?",
+            ("0" * 64, STATE_ID, "contacts"),
+        )
+
+    with pytest.raises(
+        WitnessCorruptionError,
+        match="bootstrap intent authentication failed",
+    ):
+        witness.has_bootstrap_intent("contacts")
+
+
+def test_bootstrap_prepare_rejects_initialized_component(tmp_path: Path) -> None:
+    witness = _witness(tmp_path)
+    checkpoint = create_initial_checkpoint(
+        KEY,
+        STATE_ID,
+        "contacts",
+        PAYLOAD_V1,
+    )
+    _initialize(witness, checkpoint)
+
+    with pytest.raises(
+        WitnessConflictError,
+        match="already initialized",
+    ):
+        witness.prepare_bootstrap("contacts")
+
+
+def test_two_writers_can_only_finalize_one_bootstrap_value(tmp_path: Path) -> None:
+    path = tmp_path / "state-witness.sqlite3"
+    first_writer = SQLiteMonotonicWitness(path, STATE_ID, KEY)
+    second_writer = SQLiteMonotonicWitness(path, STATE_ID, KEY)
+    first = create_initial_checkpoint(
+        KEY,
+        STATE_ID,
+        "contacts",
+        PAYLOAD_V1,
+    )
+    divergent = create_initial_checkpoint(
+        KEY,
+        STATE_ID,
+        "contacts",
+        PAYLOAD_V2,
+    )
+
+    first_writer.prepare_bootstrap("contacts")
+    second_writer.prepare_bootstrap("contacts")
+    finalize_witness_bootstrap(
+        first_writer,
+        first,
+        coordination_key=KEY,
+        payload=PAYLOAD_V1,
+    )
+
+    with pytest.raises(
+        WitnessConflictError,
+        match="bootstrap conflicts",
+    ):
+        second_writer.finalize_bootstrap(witness_record(divergent))
+
+    assert first_writer.get("contacts") == witness_record(first)
 
 
 def test_reconcile_never_auto_initializes_missing_witness(

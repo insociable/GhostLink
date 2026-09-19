@@ -18,6 +18,7 @@ from typing import Literal, Protocol, cast
 
 CHECKPOINT_VERSION = 1
 WITNESS_RECORD_VERSION = 1
+BOOTSTRAP_INTENT_VERSION = 1
 MAX_REVISION = (1 << 53) - 1
 
 StateComponent = Literal["profile", "contacts", "ratchet", "replay"]
@@ -25,6 +26,7 @@ _ALLOWED_COMPONENTS = frozenset({"profile", "contacts", "ratchet", "replay"})
 _HEX = frozenset("0123456789abcdef")
 _CHECKPOINT_DOMAIN = b"ghostlink-client-state-checkpoint-v1\x00"
 _WITNESS_RECORD_DOMAIN = b"ghostlink-client-state-witness-record-v1\x00"
+_BOOTSTRAP_INTENT_DOMAIN = b"ghostlink-client-state-bootstrap-intent-v1\x00"
 
 
 class StateCheckpointError(ValueError):
@@ -211,8 +213,17 @@ class MonotonicWitness(Protocol):
     def get(self, component: StateComponent) -> WitnessRecord | None:
         """Return the latest witnessed record for a component."""
 
+    def prepare_bootstrap(self, component: StateComponent) -> None:
+        """Persist an authenticated first-initialization intent."""
+
+    def has_bootstrap_intent(self, component: StateComponent) -> bool:
+        """Return whether an authenticated bootstrap intent exists."""
+
+    def finalize_bootstrap(self, record: WitnessRecord) -> None:
+        """Atomically convert a pending bootstrap intent into revision 1."""
+
     def initialize(self, record: WitnessRecord) -> None:
-        """Initialize one component exactly once."""
+        """Explicitly initialize one component exactly once."""
 
     def compare_and_set(
         self,
@@ -338,17 +349,40 @@ def initialize_witness(
     witness.initialize(witness_record(checkpoint))
 
 
+def finalize_witness_bootstrap(
+    witness: MonotonicWitness,
+    checkpoint: ComponentCheckpoint,
+    *,
+    coordination_key: bytes,
+    payload: bytes,
+) -> None:
+    """Finalize a previously prepared revision-1 bootstrap intent."""
+    verify_checkpoint(coordination_key, checkpoint, payload)
+    if checkpoint.revision != 1 or checkpoint.previous_digest is not None:
+        raise StateCheckpointError(
+            "witness bootstrap finalization requires an initial checkpoint"
+        )
+    witness.finalize_bootstrap(witness_record(checkpoint))
+
+
 def reconcile_checkpoint(
     witness: MonotonicWitness,
     checkpoint: ComponentCheckpoint,
     *,
     coordination_key: bytes,
     payload: bytes,
-) -> Literal["current", "witness_advanced"]:
+) -> Literal["current", "witness_advanced", "witness_initialized"]:
     """Authenticate freshness and perform the sole crash-safe one-step catch-up."""
     verify_checkpoint(coordination_key, checkpoint, payload)
     current = witness.get(checkpoint.component)
     if current is None:
+        if (
+            checkpoint.revision == 1
+            and checkpoint.previous_digest is None
+            and witness.has_bootstrap_intent(checkpoint.component)
+        ):
+            witness.finalize_bootstrap(witness_record(checkpoint))
+            return "witness_initialized"
         raise WitnessMissingError(
             "required monotonic witness record is missing"
         )
@@ -418,6 +452,16 @@ class SQLiteMonotonicWitness:
                     )
                     """
                 )
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS witness_bootstrap_intents (
+                        state_id TEXT NOT NULL,
+                        component TEXT NOT NULL,
+                        intent_mac TEXT NOT NULL,
+                        PRIMARY KEY (state_id, component)
+                    )
+                    """
+                )
         except sqlite3.Error as exc:
             raise StateWitnessError(
                 "unable to initialize monotonic witness"
@@ -443,6 +487,51 @@ class SQLiteMonotonicWitness:
             _WITNESS_RECORD_DOMAIN + _canonical_json(document),
             hashlib.sha256,
         ).hexdigest()
+
+    def _bootstrap_intent_mac(self, component: StateComponent) -> str:
+        component = _validate_component(component)
+        document: dict[str, object] = {
+            "component": component,
+            "state_id": self.state_id,
+            "version": BOOTSTRAP_INTENT_VERSION,
+        }
+        return hmac.new(
+            self.coordination_key,
+            _BOOTSTRAP_INTENT_DOMAIN + _canonical_json(document),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _read_bootstrap_intent(
+        self,
+        connection: sqlite3.Connection,
+        component: StateComponent,
+    ) -> bool:
+        row = connection.execute(
+            """
+            SELECT intent_mac
+            FROM witness_bootstrap_intents
+            WHERE state_id = ? AND component = ?
+            """,
+            (self.state_id, component),
+        ).fetchone()
+        if row is None:
+            return False
+        if len(row) != 1:
+            raise WitnessCorruptionError(
+                "witness bootstrap intent row shape is invalid"
+            )
+        try:
+            intent_mac = _validate_digest(row[0], "intent_mac")
+        except StateCheckpointError as exc:
+            raise WitnessCorruptionError(
+                "witness bootstrap intent is malformed"
+            ) from exc
+        expected = self._bootstrap_intent_mac(component)
+        if not hmac.compare_digest(expected, intent_mac):
+            raise WitnessCorruptionError(
+                "witness bootstrap intent authentication failed"
+            )
+        return True
 
     def _decode_row(
         self,
@@ -505,6 +594,113 @@ class SQLiteMonotonicWitness:
                 "witness record belongs to a different client_state_id"
             )
 
+    def prepare_bootstrap(self, component: StateComponent) -> None:
+        """Persist an authenticated intent before first component publication."""
+        component = _validate_component(component)
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                if self._read_record(connection, component) is not None:
+                    raise WitnessConflictError(
+                        "monotonic witness is already initialized"
+                    )
+                if self._read_bootstrap_intent(connection, component):
+                    return
+                connection.execute(
+                    """
+                    INSERT INTO witness_bootstrap_intents (
+                        state_id,
+                        component,
+                        intent_mac
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (
+                        self.state_id,
+                        component,
+                        self._bootstrap_intent_mac(component),
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise StateWitnessError(
+                "unable to prepare witness bootstrap intent"
+            ) from exc
+
+    def has_bootstrap_intent(self, component: StateComponent) -> bool:
+        """Read and authenticate one pending bootstrap intent."""
+        component = _validate_component(component)
+        try:
+            with self._connect() as connection:
+                return self._read_bootstrap_intent(connection, component)
+        except sqlite3.Error as exc:
+            raise StateWitnessError(
+                "unable to read witness bootstrap intent"
+            ) from exc
+
+    def finalize_bootstrap(self, record: WitnessRecord) -> None:
+        """Atomically replace one bootstrap intent with revision-1 witness state."""
+        self._validate_scoped_record(record)
+        if record.revision != 1:
+            raise StateCheckpointError(
+                "witness bootstrap finalization requires revision 1"
+            )
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                current = self._read_record(connection, record.component)
+                if current is not None:
+                    if current != record:
+                        raise WitnessConflictError(
+                            "monotonic witness bootstrap conflicts with current state"
+                        )
+                    if self._read_bootstrap_intent(
+                        connection,
+                        record.component,
+                    ):
+                        connection.execute(
+                            """
+                            DELETE FROM witness_bootstrap_intents
+                            WHERE state_id = ? AND component = ?
+                            """,
+                            (self.state_id, record.component),
+                        )
+                    return
+                if not self._read_bootstrap_intent(
+                    connection,
+                    record.component,
+                ):
+                    raise WitnessMissingError(
+                        "required witness bootstrap intent is missing"
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO witness_records (
+                        state_id,
+                        component,
+                        revision,
+                        digest,
+                        record_mac
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.state_id,
+                        record.component,
+                        record.revision,
+                        record.digest,
+                        self._record_mac(record),
+                    ),
+                )
+                connection.execute(
+                    """
+                    DELETE FROM witness_bootstrap_intents
+                    WHERE state_id = ? AND component = ?
+                    """,
+                    (self.state_id, record.component),
+                )
+        except sqlite3.Error as exc:
+            raise StateWitnessError(
+                "unable to finalize witness bootstrap"
+            ) from exc
+
     def initialize(self, record: WitnessRecord) -> None:
         """Initialize one component record exactly once at revision 1."""
         self._validate_scoped_record(record)
@@ -537,6 +733,14 @@ class SQLiteMonotonicWitness:
                         self._record_mac(record),
                     ),
                 )
+                if self._read_bootstrap_intent(connection, record.component):
+                    connection.execute(
+                        """
+                        DELETE FROM witness_bootstrap_intents
+                        WHERE state_id = ? AND component = ?
+                        """,
+                        (self.state_id, record.component),
+                    )
         except sqlite3.Error as exc:
             raise StateWitnessError(
                 "unable to initialize witness record"

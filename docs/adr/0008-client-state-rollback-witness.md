@@ -116,6 +116,27 @@ witness.
 
 ## Crash recovery
 
+### First-bootstrap transaction
+
+Revision-1 enrollment is not performed as “write state, then initialize an absent witness”.
+The runtime first persists an authenticated component-scoped bootstrap intent inside the
+witness domain, then publishes revision-1 state, then atomically replaces the intent with
+the revision-1 witness record.
+
+If the process stops after the intent but before component publication, bootstrap may be
+retried. If the component is durable but witness finalization did not complete, restart may
+finish revision-1 enrollment only when that authenticated intent is still present.
+
+A revision-1 component with neither witness record nor bootstrap intent is rejected. This
+preserves the existing rule that deleting a witness database is not an ordinary recovery
+mechanism.
+
+The reference bootstrap intent shares the SQLite witness rollback domain. A coherent
+snapshot rollback that restores both an old pending intent and its revision-1 component
+state remains indistinguishable within the documented same-domain rollback boundary.
+
+### Later revisions
+
 Three crash points are valid:
 
 ### Before component commit

@@ -9,11 +9,16 @@ from ghostlink.profile import (
     decrypt_local_profile,
     encrypt_local_profile,
     initialize_profile_witness,
+    prepare_profile_witness_bootstrap,
     reconcile_profile_witness,
     rotate_local_profile_device,
     upgrade_local_profile,
 )
-from ghostlink.state_witness import SQLiteMonotonicWitness
+from ghostlink.state_witness import (
+    SQLiteMonotonicWitness,
+    StateWitnessError,
+    witness_record,
+)
 from nacl import utils
 from nacl.pwhash import argon2id
 from nacl.secret import SecretBox
@@ -537,6 +542,95 @@ def test_upgrade_is_idempotent_for_profile_v4() -> None:
     profile = create_local_profile()
 
     assert upgrade_local_profile(profile) is profile
+
+
+class _FailingProfileFinalizeWitness:
+    def __init__(self, delegate: SQLiteMonotonicWitness) -> None:
+        self.delegate = delegate
+
+    def get(self, component):
+        return self.delegate.get(component)
+
+    def prepare_bootstrap(self, component) -> None:
+        self.delegate.prepare_bootstrap(component)
+
+    def has_bootstrap_intent(self, component) -> bool:
+        return self.delegate.has_bootstrap_intent(component)
+
+    def finalize_bootstrap(self, record) -> None:
+        raise StateWitnessError("simulated profile bootstrap finalize failure")
+
+    def initialize(self, record) -> None:
+        self.delegate.initialize(record)
+
+    def compare_and_set(self, expected, next_record) -> None:
+        self.delegate.compare_and_set(expected, next_record)
+
+
+def test_profile_bootstrap_recovers_after_finalize_failure(tmp_path) -> None:
+    profile = create_local_profile()
+    assert profile.client_state_id is not None
+    assert profile.state_coordination_key is not None
+    password = "bootstrap profile password"  # noqa: S105
+    path = tmp_path / "profile.ghost"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "profile.witness.sqlite3",
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+    failing = _FailingProfileFinalizeWitness(witness)
+
+    prepare_profile_witness_bootstrap(profile, failing)
+    path.write_text(encrypt_local_profile(profile, password), encoding="utf-8")
+
+    with pytest.raises(
+        ProfileError,
+        match="simulated profile bootstrap finalize failure",
+    ):
+        initialize_profile_witness(profile, failing)
+
+    assert witness.get("profile") is None
+    assert witness.has_bootstrap_intent("profile") is True
+
+    restored = decrypt_local_profile(path.read_text(encoding="utf-8"), password)
+    checkpoint = reconcile_profile_witness(restored, witness)
+
+    assert witness.get("profile") == witness_record(checkpoint)
+    assert witness.has_bootstrap_intent("profile") is False
+
+
+def test_profile_bootstrap_does_not_repair_deleted_witness(tmp_path) -> None:
+    profile = create_local_profile()
+    assert profile.client_state_id is not None
+    assert profile.state_coordination_key is not None
+    password = "deleted witness profile password"  # noqa: S105
+    path = tmp_path / "profile.ghost"
+    witness_path = tmp_path / "profile.witness.sqlite3"
+    witness = SQLiteMonotonicWitness(
+        witness_path,
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+    failing = _FailingProfileFinalizeWitness(witness)
+
+    prepare_profile_witness_bootstrap(profile, failing)
+    path.write_text(encrypt_local_profile(profile, password), encoding="utf-8")
+    with pytest.raises(ProfileError):
+        initialize_profile_witness(profile, failing)
+
+    witness_path.unlink()
+    replacement = SQLiteMonotonicWitness(
+        witness_path,
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+    restored = decrypt_local_profile(path.read_text(encoding="utf-8"), password)
+
+    with pytest.raises(ProfileError, match="witness record is missing"):
+        reconcile_profile_witness(restored, replacement)
+
+    assert replacement.get("profile") is None
+    assert replacement.has_bootstrap_intent("profile") is False
 
 
 def test_profile_witness_initialization_and_reconciliation(tmp_path) -> None:

@@ -35,7 +35,7 @@ from ghostlink.state_witness import (
     StateWitnessError,
     create_initial_checkpoint,
     derive_checkpoint,
-    initialize_witness,
+    finalize_witness_bootstrap,
     reconcile_checkpoint,
 )
 
@@ -778,11 +778,11 @@ def derive_profile_checkpoint(profile: LocalProfile) -> ComponentCheckpoint:
         raise ProfileError(f"profile checkpoint is invalid: {exc}") from exc
 
 
-def initialize_profile_witness(
+def prepare_profile_witness_bootstrap(
     profile: LocalProfile,
     witness: MonotonicWitness,
 ) -> ComponentCheckpoint:
-    """Explicitly enroll a revision-1 lifecycle-aware profile in its witness."""
+    """Persist a bootstrap intent before publishing profile revision 1."""
     state_id = profile.client_state_id
     coordination_key = profile.state_coordination_key
     if state_id is None or coordination_key is None:
@@ -802,7 +802,32 @@ def initialize_profile_witness(
         )
         if witness.get("profile") is not None:
             raise ProfileError("profile monotonic witness is already initialized")
-        initialize_witness(
+        witness.prepare_bootstrap("profile")
+    except (StateCheckpointError, StateWitnessError) as exc:
+        raise ProfileError(
+            f"profile rollback witness bootstrap failed: {exc}"
+        ) from exc
+    return checkpoint
+
+
+def initialize_profile_witness(
+    profile: LocalProfile,
+    witness: MonotonicWitness,
+) -> ComponentCheckpoint:
+    """Explicitly enroll a revision-1 lifecycle-aware profile in its witness."""
+    state_id = profile.client_state_id
+    coordination_key = profile.state_coordination_key
+    if state_id is None or coordination_key is None:
+        raise ProfileError("profile has no rollback-state identity")
+    if profile.state_revision != 1 or profile.state_previous_digest is not None:
+        raise ProfileError(
+            "profile witness initialization requires revision 1"
+        )
+
+    payload = _serialize_secret(profile)
+    checkpoint = prepare_profile_witness_bootstrap(profile, witness)
+    try:
+        finalize_witness_bootstrap(
             witness,
             checkpoint,
             coordination_key=coordination_key,

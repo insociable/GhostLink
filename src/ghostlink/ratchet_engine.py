@@ -38,7 +38,6 @@ from ghostlink.state_witness import (
     StateWitnessError,
     WitnessRecord,
     derive_checkpoint,
-    initialize_witness,
     reconcile_checkpoint,
 )
 
@@ -877,17 +876,23 @@ class RatchetEngineClient:
         self._witness_pending = False
         self._rpc_timeout = float(rpc_timeout)
 
-        if allow_legacy_migration and witness is not None:
+        if state_id is not None and witness is not None:
             try:
-                if witness.get("ratchet") is not None:
+                current_ratchet_witness = witness.get("ratchet")
+                if allow_legacy_migration and current_ratchet_witness is not None:
                     raise RatchetEngineError(
                         "STATE_WITNESS",
                         "ratchet witness already exists; legacy migration refused",
                     )
+                if current_ratchet_witness is None:
+                    if not self._vault_path.exists() or allow_legacy_migration:
+                        witness.prepare_bootstrap("ratchet")
+                    else:
+                        witness.has_bootstrap_intent("ratchet")
             except StateWitnessError as exc:
                 raise RatchetEngineError(
                     "STATE_WITNESS",
-                    f"unable to read ratchet witness: {exc}",
+                    f"unable to prepare ratchet witness bootstrap: {exc}",
                 ) from exc
 
         try:
@@ -970,9 +975,7 @@ class RatchetEngineClient:
                         "PROTOCOL_ERROR",
                         "ratchet open response has invalid state_origin",
                     )
-                self._sync_vault_witness(
-                    allow_initialize=state_origin in {"created", "migrated"},
-                )
+                self._sync_vault_witness()
         except Exception:
             self._terminate()
             raise
@@ -1069,7 +1072,7 @@ class RatchetEngineClient:
             ) from exc
         return checkpoint, payload
 
-    def _sync_vault_witness(self, *, allow_initialize: bool) -> None:
+    def _sync_vault_witness(self) -> None:
         if self._state_id is None:
             return
         if self._coordination_key is None or self._witness is None:
@@ -1082,31 +1085,12 @@ class RatchetEngineClient:
         checkpoint, payload = self._checkpoint_from_rpc(checkpoint_value)
 
         try:
-            current = self._witness.get("ratchet")
-            if current is None:
-                if not allow_initialize:
-                    raise RatchetEngineError(
-                        "STATE_WITNESS",
-                        "ratchet witness is missing for an existing rollback-aware vault",
-                    )
-                if checkpoint.revision != 1 or checkpoint.previous_digest is not None:
-                    raise RatchetEngineError(
-                        "STATE_WITNESS",
-                        "ratchet witness initialization requires revision 1",
-                    )
-                initialize_witness(
-                    self._witness,
-                    checkpoint,
-                    coordination_key=self._coordination_key,
-                    payload=payload,
-                )
-            else:
-                reconcile_checkpoint(
-                    self._witness,
-                    checkpoint,
-                    coordination_key=self._coordination_key,
-                    payload=payload,
-                )
+            reconcile_checkpoint(
+                self._witness,
+                checkpoint,
+                coordination_key=self._coordination_key,
+                payload=payload,
+            )
         except (StateCheckpointError, StateWitnessError) as exc:
             self._witness_pending = True
             raise RatchetEngineError(
@@ -1146,7 +1130,7 @@ class RatchetEngineClient:
         result = self._request(method, params)
         if self._state_id is not None:
             try:
-                self._sync_vault_witness(allow_initialize=False)
+                self._sync_vault_witness()
             except Exception:
                 self._witness_pending = True
                 raise

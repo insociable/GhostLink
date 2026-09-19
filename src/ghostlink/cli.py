@@ -43,6 +43,7 @@ from ghostlink.profile import (
     decrypt_local_profile,
     encrypt_local_profile,
     initialize_profile_witness,
+    prepare_profile_witness_bootstrap,
     reconcile_profile_witness,
     rotate_local_profile_device,
     upgrade_local_profile,
@@ -309,11 +310,10 @@ def _command_init(args: argparse.Namespace, password_reader: PasswordReader) -> 
     password = _prompt_new_password(password_reader)
     profile = create_local_profile()
     serialized = encrypt_local_profile(profile, password)
+    witness = _profile_witness(path, profile)
+    prepare_profile_witness_bootstrap(profile, witness)
     _write_new_private_file(path, serialized)
-    initialize_profile_witness(
-        profile,
-        _profile_witness(path, profile),
-    )
+    initialize_profile_witness(profile, witness)
 
     print(f"Profile created: {path}")
     print(f"GhostID: {profile.entity.ghost_id}")
@@ -330,15 +330,18 @@ def _command_profile_upgrade(
     profile, password = _load_profile_with_password(path, password_reader)
     upgraded = upgrade_local_profile(profile)
     changed = upgraded is not profile
-    if changed:
-        serialized = encrypt_local_profile(upgraded, password)
-        _replace_private_file_atomic(path, serialized)
-
     witness = _profile_witness(path, upgraded)
     try:
         witness_record = witness.get("profile")
     except StateWitnessError as exc:
         raise CLIError(f"unable to read profile rollback witness: {exc}") from exc
+
+    if witness_record is None:
+        prepare_profile_witness_bootstrap(upgraded, witness)
+
+    if changed:
+        serialized = encrypt_local_profile(upgraded, password)
+        _replace_private_file_atomic(path, serialized)
 
     if witness_record is None:
         initialize_profile_witness(upgraded, witness)

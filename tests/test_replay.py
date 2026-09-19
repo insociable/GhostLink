@@ -269,11 +269,113 @@ class _FailingReplayWitness:
     def get(self, component):
         return self.delegate.get(component)
 
+    def prepare_bootstrap(self, component) -> None:
+        self.delegate.prepare_bootstrap(component)
+
+    def has_bootstrap_intent(self, component) -> bool:
+        return self.delegate.has_bootstrap_intent(component)
+
+    def finalize_bootstrap(self, record) -> None:
+        self.delegate.finalize_bootstrap(record)
+
     def initialize(self, record) -> None:
         self.delegate.initialize(record)
 
     def compare_and_set(self, expected, next_record) -> None:
         raise StateWitnessError("simulated replay witness failure")
+
+
+class _FailingReplayFinalizeWitness:
+    def __init__(self, delegate: SQLiteMonotonicWitness) -> None:
+        self.delegate = delegate
+
+    def get(self, component):
+        return self.delegate.get(component)
+
+    def prepare_bootstrap(self, component) -> None:
+        self.delegate.prepare_bootstrap(component)
+
+    def has_bootstrap_intent(self, component) -> bool:
+        return self.delegate.has_bootstrap_intent(component)
+
+    def finalize_bootstrap(self, record) -> None:
+        raise StateWitnessError("simulated replay bootstrap finalize failure")
+
+    def initialize(self, record) -> None:
+        self.delegate.initialize(record)
+
+    def compare_and_set(self, expected, next_record) -> None:
+        self.delegate.compare_and_set(expected, next_record)
+
+
+def test_replay_bootstrap_recovers_after_finalize_failure(tmp_path: Path) -> None:
+    path = tmp_path / "replay.sqlite3"
+    witness = _replay_witness(tmp_path)
+    failing = _FailingReplayFinalizeWitness(witness)
+
+    with pytest.raises(
+        ReplayCacheError,
+        match="simulated replay bootstrap finalize failure",
+    ):
+        WitnessedSQLiteReplayCache(
+            path,
+            _STATE_ID,
+            _COORDINATION_KEY,
+            failing,
+        )
+
+    assert path.exists()
+    assert witness.get("replay") is None
+    assert witness.has_bootstrap_intent("replay") is True
+
+    recovered = WitnessedSQLiteReplayCache(
+        path,
+        _STATE_ID,
+        _COORDINATION_KEY,
+        witness,
+    )
+
+    assert recovered.has_seen(ALICE_DEVICE_ID, MESSAGE_ID) is False
+    assert witness.get("replay") is not None
+    assert witness.get("replay").revision == 1
+    assert witness.has_bootstrap_intent("replay") is False
+
+
+def test_replay_bootstrap_does_not_repair_deleted_witness(tmp_path: Path) -> None:
+    path = tmp_path / "replay.sqlite3"
+    witness_path = tmp_path / "replay-witness.sqlite3"
+    witness = SQLiteMonotonicWitness(
+        witness_path,
+        _STATE_ID,
+        _COORDINATION_KEY,
+    )
+    failing = _FailingReplayFinalizeWitness(witness)
+
+    with pytest.raises(ReplayCacheError):
+        WitnessedSQLiteReplayCache(
+            path,
+            _STATE_ID,
+            _COORDINATION_KEY,
+            failing,
+        )
+
+    witness_path.unlink()
+    replacement = SQLiteMonotonicWitness(
+        witness_path,
+        _STATE_ID,
+        _COORDINATION_KEY,
+    )
+
+    with pytest.raises(ReplayCacheError, match="witness record is missing"):
+        WitnessedSQLiteReplayCache(
+            path,
+            _STATE_ID,
+            _COORDINATION_KEY,
+            replacement,
+        )
+
+    assert replacement.get("replay") is None
+    assert replacement.has_bootstrap_intent("replay") is False
 
 
 def test_replay_cache_recovers_one_step_after_witness_commit_crash(
