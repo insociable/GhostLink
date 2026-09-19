@@ -431,9 +431,23 @@ class _FailingRatchetWitness:
     def __init__(self, delegate: SQLiteMonotonicWitness) -> None:
         self.delegate = delegate
         self.fail_compare = False
+        self.fail_finalize = False
 
     def get(self, component):
         return self.delegate.get(component)
+
+    def prepare_bootstrap(self, component) -> None:
+        self.delegate.prepare_bootstrap(component)
+
+    def has_bootstrap_intent(self, component) -> bool:
+        return self.delegate.has_bootstrap_intent(component)
+
+    def finalize_bootstrap(self, record) -> None:
+        if self.fail_finalize:
+            raise StateWitnessError(
+                "simulated ratchet bootstrap finalize failure"
+            )
+        self.delegate.finalize_bootstrap(record)
 
     def initialize(self, record) -> None:
         self.delegate.initialize(record)
@@ -675,6 +689,110 @@ def test_ratchet_vault_and_reference_witness_coherent_restore_is_accepted(
         witness=restored_witness,
     ):
         assert restored_witness.get("ratchet").revision == 2
+
+
+def test_ratchet_bootstrap_recovers_after_finalize_failure(
+    tmp_path: Path,
+) -> None:
+    local = GhostEntity.generate().enroll_device()
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "bootstrap-recovery.ratchet"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "bootstrap-recovery-witness.sqlite3",
+        state_id,
+        coordination_key,
+    )
+    failing = _FailingRatchetWitness(witness)
+    failing.fail_finalize = True
+
+    with pytest.raises(
+        RatchetEngineError,
+        match="simulated ratchet bootstrap finalize failure",
+    ):
+        RatchetEngineClient(
+            command,
+            local,
+            vault_path,
+            master_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=failing,
+        )
+
+    assert vault_path.exists()
+    assert witness.get("ratchet") is None
+    assert witness.has_bootstrap_intent("ratchet") is True
+
+    with RatchetEngineClient(
+        command,
+        local,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ):
+        assert witness.get("ratchet") is not None
+        assert witness.get("ratchet").revision == 1
+        assert witness.has_bootstrap_intent("ratchet") is False
+
+
+def test_ratchet_bootstrap_does_not_repair_deleted_witness(
+    tmp_path: Path,
+) -> None:
+    local = GhostEntity.generate().enroll_device()
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "bootstrap-deleted-witness.ratchet"
+    witness_path = tmp_path / "bootstrap-deleted-witness.sqlite3"
+    witness = SQLiteMonotonicWitness(
+        witness_path,
+        state_id,
+        coordination_key,
+    )
+    failing = _FailingRatchetWitness(witness)
+    failing.fail_finalize = True
+
+    with pytest.raises(RatchetEngineError):
+        RatchetEngineClient(
+            command,
+            local,
+            vault_path,
+            master_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=failing,
+        )
+
+    assert vault_path.exists()
+    witness_path.unlink()
+    replacement = SQLiteMonotonicWitness(
+        witness_path,
+        state_id,
+        coordination_key,
+    )
+
+    with pytest.raises(
+        RatchetEngineError,
+        match="witness record is missing",
+    ):
+        RatchetEngineClient(
+            command,
+            local,
+            vault_path,
+            master_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=replacement,
+        )
+
+    assert replacement.get("ratchet") is None
+    assert replacement.has_bootstrap_intent("ratchet") is False
 
 
 def test_ratchet_vault_recovers_one_step_after_witness_commit_crash(

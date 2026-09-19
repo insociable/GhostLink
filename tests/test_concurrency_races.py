@@ -463,6 +463,15 @@ class _BarrierWitness:
     def get(self, component):
         return self.delegate.get(component)
 
+    def prepare_bootstrap(self, component) -> None:
+        self.delegate.prepare_bootstrap(component)
+
+    def has_bootstrap_intent(self, component) -> bool:
+        return self.delegate.has_bootstrap_intent(component)
+
+    def finalize_bootstrap(self, record) -> None:
+        self.delegate.finalize_bootstrap(record)
+
     def initialize(self, record) -> None:
         self.delegate.initialize(record)
 

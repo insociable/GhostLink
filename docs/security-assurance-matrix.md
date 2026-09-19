@@ -92,13 +92,20 @@ The current rollback-aware components now share an explicit tested matrix:
 | current component state + matching current witness | accepted |
 | older component state + newer witness | rejected as rollback |
 | same revision + different authenticated payload | rejected as divergence |
+| revision 1 + missing witness + authenticated pending bootstrap intent | intent is atomically consumed and revision-1 witness is installed |
+| revision 1 + missing witness + no bootstrap intent | fail closed; no witness recreation |
 | component exactly one revision ahead + valid previous digest | witness may catch up exactly one revision |
 | component more than one revision ahead | rejected as a gap |
-| enrolled component + missing witness | fail closed |
+| enrolled component + missing witness after bootstrap | fail closed |
 | protected state and reference witness both restored coherently to the same older snapshot | accepted as internally consistent; rollback is not detectable |
 | different components at different valid revisions | accepted; revisions are component-local, not a global transaction counter |
 
 The coherent-restore boundary is exercised directly for profile state, contact store, replay cache, ratchet vault and persistent relay state. This confirms that the reference SQLite/sidecar witnesses provide **component rollback detection only while the witness remains outside the restored snapshot**. They do not provide whole-filesystem, whole-volume or whole-VM rollback protection.
+
+First-bootstrap fault injection now covers profile, contact, replay and ratchet state.
+A failure after revision-1 state publication but before witness finalization is recoverable
+only through the authenticated pending intent. Removing the witness database removes the
+intent too and the same component state is rejected rather than silently re-enrolled.
 
 A profile at revision N+1 with contacts/replay/ratchet at revision N is therefore not inherently corrupt. Each component has its own authenticated lineage and witness row. What fails closed is a mismatch *within* one component's state/witness lineage, not unequal revision numbers across independent components.
 

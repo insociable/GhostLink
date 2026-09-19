@@ -406,6 +406,25 @@ Legacy profiles are upgraded explicitly.
 
 Silently treating legacy profile state as already enrolled rollback-aware lifecycle state.
 
+## STATE-2A — First witness bootstrap requires a pre-existing authenticated intent
+
+Before publishing rollback-aware revision-1 state, the runtime records an authenticated
+bootstrap intent for that client-state ID/component in the witness backend.
+
+If revision-1 state becomes durable and witness finalization is interrupted, reconciliation
+may atomically consume that intent and install exactly the revision-1 witness record.
+
+If the witness record is absent **and** no authenticated bootstrap intent exists, ordinary
+runtime still fails closed. Deleting the witness database therefore does not authorize
+witness recreation.
+
+The reference intent is stored in the same SQLite witness domain. It does not strengthen
+the known whole-filesystem/snapshot rollback boundary.
+
+**Verifiers**
+
+`state_witness.py` plus profile/contact/replay/ratchet first-bootstrap fault-injection tests.
+
 ## STATE-2 — Checkpoint state and witness must agree, except for one crash-recovery successor
 
 For any witnessed component:

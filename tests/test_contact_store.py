@@ -327,6 +327,114 @@ def _contact_witness(tmp_path):
     )
 
 
+class _FailingContactFinalizeWitness:
+    def __init__(self, delegate: SQLiteMonotonicWitness) -> None:
+        self.delegate = delegate
+
+    def get(self, component):
+        return self.delegate.get(component)
+
+    def prepare_bootstrap(self, component) -> None:
+        self.delegate.prepare_bootstrap(component)
+
+    def has_bootstrap_intent(self, component) -> bool:
+        return self.delegate.has_bootstrap_intent(component)
+
+    def finalize_bootstrap(self, record) -> None:
+        raise StateWitnessError("simulated contact bootstrap finalize failure")
+
+    def initialize(self, record) -> None:
+        self.delegate.initialize(record)
+
+    def compare_and_set(self, expected, next_record) -> None:
+        self.delegate.compare_and_set(expected, next_record)
+
+
+def test_contact_bootstrap_recovers_after_finalize_failure(tmp_path) -> None:
+    path = tmp_path / "contacts.sec"
+    key = utils.random(SecretBox.KEY_SIZE)
+    witness = _contact_witness(tmp_path)
+    failing = _FailingContactFinalizeWitness(witness)
+    _alice, bundle = _identity_bundle()
+    store = new_witnessed_contact_store(_STATE_ID)
+    store.add_contact("Alice", bundle)
+
+    with pytest.raises(
+        ContactTrustError,
+        match="simulated contact bootstrap finalize failure",
+    ):
+        save_contact_store_witnessed(
+            path,
+            key,
+            store,
+            state_id=_STATE_ID,
+            coordination_key=_COORDINATION_KEY,
+            witness=failing,
+        )
+
+    assert path.exists()
+    assert witness.get("contacts") is None
+    assert witness.has_bootstrap_intent("contacts") is True
+
+    recovered = load_contact_store_witnessed(
+        path,
+        key,
+        state_id=_STATE_ID,
+        coordination_key=_COORDINATION_KEY,
+        witness=witness,
+    )
+
+    assert recovered.revision == 1
+    assert recovered.list_records()[0].label == "Alice"
+    assert witness.get("contacts") is not None
+    assert witness.get("contacts").revision == 1
+    assert witness.has_bootstrap_intent("contacts") is False
+
+
+def test_contact_bootstrap_does_not_repair_deleted_witness(tmp_path) -> None:
+    path = tmp_path / "contacts.sec"
+    witness_path = tmp_path / "contact-witness.sqlite3"
+    key = utils.random(SecretBox.KEY_SIZE)
+    witness = SQLiteMonotonicWitness(
+        witness_path,
+        _STATE_ID,
+        _COORDINATION_KEY,
+    )
+    failing = _FailingContactFinalizeWitness(witness)
+    _alice, bundle = _identity_bundle()
+    store = new_witnessed_contact_store(_STATE_ID)
+    store.add_contact("Alice", bundle)
+
+    with pytest.raises(ContactTrustError):
+        save_contact_store_witnessed(
+            path,
+            key,
+            store,
+            state_id=_STATE_ID,
+            coordination_key=_COORDINATION_KEY,
+            witness=failing,
+        )
+
+    witness_path.unlink()
+    replacement = SQLiteMonotonicWitness(
+        witness_path,
+        _STATE_ID,
+        _COORDINATION_KEY,
+    )
+
+    with pytest.raises(ContactTrustError, match="witness record is missing"):
+        load_contact_store_witnessed(
+            path,
+            key,
+            state_id=_STATE_ID,
+            coordination_key=_COORDINATION_KEY,
+            witness=replacement,
+        )
+
+    assert replacement.get("contacts") is None
+    assert replacement.has_bootstrap_intent("contacts") is False
+
+
 def test_witnessed_contact_store_detects_rollback(tmp_path) -> None:
     path = tmp_path / "contacts.sec"
     key = utils.random(SecretBox.KEY_SIZE)
@@ -551,6 +659,15 @@ class _FailingCompareAndSetWitness:
 
     def get(self, component):
         return self.delegate.get(component)
+
+    def prepare_bootstrap(self, component) -> None:
+        self.delegate.prepare_bootstrap(component)
+
+    def has_bootstrap_intent(self, component) -> bool:
+        return self.delegate.has_bootstrap_intent(component)
+
+    def finalize_bootstrap(self, record) -> None:
+        self.delegate.finalize_bootstrap(record)
 
     def initialize(self, record) -> None:
         self.delegate.initialize(record)

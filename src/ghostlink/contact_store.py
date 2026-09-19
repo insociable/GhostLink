@@ -31,7 +31,7 @@ from ghostlink.state_witness import (
     advance_checkpoint,
     create_initial_checkpoint,
     derive_checkpoint,
-    initialize_witness,
+    finalize_witness_bootstrap,
     reconcile_checkpoint,
     witness_record,
 )
@@ -871,12 +871,13 @@ def save_contact_store_witnessed(
                 raise ContactTrustError(
                     "contact witness already exists for unwitnessed store"
                 )
+            witness.prepare_bootstrap("contacts")
         except (StateCheckpointError, StateWitnessError) as exc:
             raise _wrap_witness_error(exc) from exc
 
         _atomic_write_contact_store(path, encrypt_contact_store(store, key))
         try:
-            initialize_witness(
+            finalize_witness_bootstrap(
                 witness,
                 checkpoint,
                 coordination_key=coordination_key,
