@@ -327,3 +327,102 @@ test('legacy vault needs explicit rollback-state migration', async () => {
   });
   migrated.close();
 });
+
+
+test('rollback-aware recovery creates a fresh linked vault for a new device', async () => {
+  const directory = await temporaryDirectory();
+  const key = randomBytes(32);
+  const path = join(directory, 'recovered.ratchet');
+  const stateId = '00112233445566778899aabbccddeeff';
+  const previousDigest = 'b'.repeat(64);
+
+  const recovered = await PersistentRatchetParty.open(
+    DEVICE_B,
+    1,
+    path,
+    key,
+    stateId,
+    false,
+    7,
+    previousDigest
+  );
+
+  assert.equal(recovered.getStateOrigin(), 'recovered');
+  assert.deepEqual(recovered.getCheckpointMetadata(), {
+    stateId,
+    revision: 8,
+    previousDigest,
+  });
+  recovered.close();
+
+  const reopened = await PersistentRatchetParty.open(
+    DEVICE_B,
+    1,
+    path,
+    key,
+    stateId
+  );
+
+  assert.equal(reopened.getStateOrigin(), 'existing');
+  assert.deepEqual(reopened.getCheckpointMetadata(), {
+    stateId,
+    revision: 8,
+    previousDigest,
+  });
+  reopened.close();
+});
+
+
+test('rollback-aware recovery refuses to overwrite an existing vault', async () => {
+  const directory = await temporaryDirectory();
+  const key = randomBytes(32);
+  const path = join(directory, 'existing-before-recovery.ratchet');
+  const stateId = '00112233445566778899aabbccddeeff';
+
+  const existing = await PersistentRatchetParty.open(
+    DEVICE_A,
+    1,
+    path,
+    key,
+    stateId
+  );
+  existing.close();
+
+  await assert.rejects(
+    () =>
+      PersistentRatchetParty.open(
+        DEVICE_B,
+        1,
+        path,
+        key,
+        stateId,
+        false,
+
+        1,
+        'c'.repeat(64)
+      ),
+    /previous vault to be removed after verification/
+  );
+});
+
+
+test('rollback-aware recovery validates seed arguments', async () => {
+  const directory = await temporaryDirectory();
+  const key = randomBytes(32);
+  const path = join(directory, 'bad-recovery.ratchet');
+  const stateId = '00112233445566778899aabbccddeeff';
+
+  await assert.rejects(
+    () =>
+      PersistentRatchetParty.open(
+        DEVICE_B,
+        1,
+        path,
+        key,
+        stateId,
+        false,
+        1
+      ),
+    /both previous revision and digest/
+  );
+});

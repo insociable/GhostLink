@@ -395,19 +395,25 @@ class RatchetRpcService {
 
     const document = requireObject(params, 'open params');
     const rollbackAware = Object.hasOwn(document, 'state_id');
+    const recoveryMode =
+      Object.hasOwn(document, 'recovery_previous_revision') ||
+      Object.hasOwn(document, 'recovery_previous_digest');
 
     if (rollbackAware) {
-      requireExactFields(
-        document,
-        [
-          'device_id',
-          'vault_path',
-          'master_key',
-          'state_id',
-          'allow_legacy_migration',
-        ],
-        'open params'
-      );
+      const fields = [
+        'device_id',
+        'vault_path',
+        'master_key',
+        'state_id',
+        'allow_legacy_migration',
+      ];
+      if (recoveryMode) {
+        fields.push(
+          'recovery_previous_revision',
+          'recovery_previous_digest'
+        );
+      }
+      requireExactFields(document, fields, 'open params');
     } else {
       requireExactFields(
         document,
@@ -425,6 +431,17 @@ class RatchetRpcService {
     const allowLegacyMigration = rollbackAware
       ? requireBoolean(document, 'allow_legacy_migration')
       : false;
+    const recoveryPreviousRevision = recoveryMode
+      ? requireIntegerField(
+          document,
+          'recovery_previous_revision',
+          1,
+          Number.MAX_SAFE_INTEGER - 1
+        )
+      : undefined;
+    const recoveryPreviousDigest = recoveryMode
+      ? requireText(document, 'recovery_previous_digest')
+      : undefined;
 
     try {
       this.party = await PersistentRatchetParty.open(
@@ -433,7 +450,9 @@ class RatchetRpcService {
         vaultPath,
         masterKey,
         stateId,
-        allowLegacyMigration
+        allowLegacyMigration,
+        recoveryPreviousRevision,
+        recoveryPreviousDigest
       );
     } finally {
       masterKey.fill(0);

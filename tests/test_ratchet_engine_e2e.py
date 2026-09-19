@@ -1247,3 +1247,173 @@ def test_cli_v3_cutover_round_trip_survives_process_restarts(
     ) == 0
     alice_inbox = capsys.readouterr()
     assert "hello Alice over the persisted ratchet" in alice_inbox.out
+
+
+def test_ratchet_vault_device_recovery_links_to_current_witness(
+    tmp_path: Path,
+) -> None:
+    entity = GhostEntity.generate()
+    old_device = entity.enroll_device()
+    new_device = entity.enroll_device()
+    peer = GhostEntity.generate()
+    peer_device = peer.enroll_device()
+    peer_contact = import_contact_bundle(
+        export_contact_bundle(peer, peer_device),
+    )
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "device-recovery.ratchet"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "device-recovery-witness.sqlite3",
+        state_id,
+        coordination_key,
+    )
+    with RatchetEngineClient(
+        command,
+        old_device,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ) as old_engine:
+        peer_engine = RatchetEngineClient(
+            command,
+            peer_device,
+            tmp_path / "peer-recovery.ratchet",
+            os.urandom(32),
+        )
+        try:
+            material = peer_engine.create_prekey_material()
+            binding = create_ratchet_prekey_binding(
+                peer_device,
+                material,
+                publication_sequence=1,
+                bundle_kind="one_time",
+            )
+            old_engine.establish_session(
+                sign_ratchet_prekey_binding(binding, peer_device),
+                peer_contact,
+            )
+            assert old_engine.has_session(peer_contact)
+        finally:
+            peer_engine.close()
+
+    previous = witness.get("ratchet")
+    assert previous is not None
+    previous_revision = previous.revision
+    vault_path.unlink()
+
+    with RatchetEngineClient(
+        command,
+        new_device,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+        recovery_previous_checkpoint=previous,
+    ) as recovered:
+        assert recovered.local_device_id == new_device.device_id
+        assert not recovered.has_session(peer_contact)
+
+    current = witness.get("ratchet")
+    assert current is not None
+    assert current.revision == previous_revision + 1
+    assert current.digest != previous.digest
+
+
+def test_ratchet_vault_device_recovery_refuses_existing_vault(
+    tmp_path: Path,
+) -> None:
+    entity = GhostEntity.generate()
+    old_device = entity.enroll_device()
+    new_device = entity.enroll_device()
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "device-recovery-existing.ratchet"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "device-recovery-existing-witness.sqlite3",
+        state_id,
+        coordination_key,
+    )
+
+    with RatchetEngineClient(
+        command,
+        old_device,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ):
+        pass
+
+    previous = witness.get("ratchet")
+    assert previous is not None
+
+    with pytest.raises(
+        RatchetEngineError,
+        match="previous vault to be removed after verification",
+    ):
+        RatchetEngineClient(
+            command,
+            new_device,
+            vault_path,
+            master_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=witness,
+            recovery_previous_checkpoint=previous,
+        )
+
+
+def test_ratchet_vault_device_recovery_refuses_stale_checkpoint(
+    tmp_path: Path,
+) -> None:
+    entity = GhostEntity.generate()
+    old_device = entity.enroll_device()
+    new_device = entity.enroll_device()
+    command = [_NODE or "node", str(_ENGINE)]
+    master_key = os.urandom(32)
+    coordination_key = os.urandom(32)
+    state_id = os.urandom(16).hex()
+    vault_path = tmp_path / "device-recovery-stale.ratchet"
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "device-recovery-stale-witness.sqlite3",
+        state_id,
+        coordination_key,
+    )
+
+    with RatchetEngineClient(
+        command,
+        old_device,
+        vault_path,
+        master_key,
+        state_id=state_id,
+        coordination_key=coordination_key,
+        witness=witness,
+    ) as engine:
+        stale = witness.get("ratchet")
+        assert stale is not None
+        engine.create_prekey_material()
+
+    vault_path.unlink()
+    with pytest.raises(
+        RatchetEngineError,
+        match="not the current witnessed state",
+    ):
+        RatchetEngineClient(
+            command,
+            new_device,
+            vault_path,
+            master_key,
+            state_id=state_id,
+            coordination_key=coordination_key,
+            witness=witness,
+            recovery_previous_checkpoint=stale,
+        )

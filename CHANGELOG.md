@@ -61,6 +61,7 @@ The format follows Keep a Changelog and Semantic Versioning.
 - rollback-aware persistent GhostNode SQLite coordination across v3 messages, pre-key publication/allocation/anti-drain state and authenticated-request replay state, with explicit migration, startup reconciliation, shared witness-gated mutations and fail-closed health.
 - identity-signed monotonic device lifecycle statements forming the basis for stable-GhostID device revocation and recovery;
 - lifecycle-aware contact bundle v2 and contact-store enforcement that reject stale epochs, same-epoch equivocation and downgrade to legacy device-only state after adoption;
+- rollback-linked ratchet-vault recovery that creates fresh libsignal state for a replacement DeviceID only from the current witnessed ratchet checkpoint;
 - local profile v5 with persisted signed device lifecycle state, explicit v1-v4 migration, dedicated profile witness enrollment/reconciliation and crash-safe one-step profile witness recovery.
 
 ### Removed
