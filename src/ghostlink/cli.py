@@ -1047,7 +1047,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     recovery_parser = subparsers.add_parser(
         "device-recover",
-        help="rotate the local DeviceID and reset ratchet state crash-safely",
+        help="rotate DeviceID, publish relay lifecycle and reset ratchet state crash-safely",
     )
     recovery_parser.add_argument("--profile", required=True)
     recovery_parser.add_argument("--node", required=True)
