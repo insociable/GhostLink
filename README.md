@@ -223,9 +223,10 @@ poetry install
 poetry run pytest
 poetry run ruff check .
 poetry run mypy src
+poetry run pip-audit
 ```
 
-CI also audits/builds/tests the ratchet-engine dependencies, runs Python-to-libsignal cross-language tests, validates Docker Compose, and exercises the GhostNode container.
+CI audits installed Python dependencies, reviews dependency changes on pull requests at high severity or above, audits/builds/tests the ratchet-engine dependencies, runs Python-to-libsignal cross-language tests, validates Docker Compose, and exercises the GhostNode container. See [the dependency security policy](docs/dependency-security-policy.md) for thresholds, exceptions and scanner limits.
 
 ## License
 
