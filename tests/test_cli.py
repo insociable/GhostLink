@@ -888,10 +888,12 @@ def test_device_recovery_rejects_cleanup_archive_without_replacement_vault(
     assert "replacement ratchet vault is missing" in failed.err
 
     active = decrypt_local_profile(profile_path.read_text(), password)
-    relay = node_client_factory("http://ghostnode.test").get_device_lifecycle(
-        active.entity.ghost_id
-    )
-    assert relay.active_device_id == active.device.device_id
+    assert active.entity.ghost_id
+    with pytest.raises(GhostNodeRequestError) as missing_lifecycle:
+        node_client_factory("http://ghostnode.test").get_device_lifecycle(
+            active.entity.ghost_id
+        )
+    assert missing_lifecycle.value.status_code == 404
     assert backup_path.exists()
 
 
