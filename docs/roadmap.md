@@ -81,4 +81,5 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] lifecycle-aware contact bundle/store monotonic enforcement (#92);
 - [x] lifecycle-aware profile v5 and dedicated profile witness coordination (#92);
 - [x] rollback-linked ratchet reset primitives for DeviceID recovery (#92);
-- [ ] explicit device recovery CLI transaction and relay stale-device enforcement (#92).
+- [x] explicit crash-resumable device recovery CLI transaction (#92);
+- [ ] relay stale-device enforcement (#92).

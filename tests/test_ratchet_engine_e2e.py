@@ -13,7 +13,12 @@ from ghostlink.client.node_client import GhostNodeClient
 from ghostlink.contact import export_contact_bundle, import_contact_bundle
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app
-from ghostlink.profile import decrypt_local_profile
+from ghostlink.profile import (
+    decrypt_local_profile,
+    encrypt_local_profile,
+    reconcile_profile_witness,
+    rotate_local_profile_device,
+)
 from ghostlink.ratchet_binding import (
     RatchetBindingError,
     SignedRatchetPreKeyBinding,
@@ -1417,3 +1422,206 @@ def test_ratchet_vault_device_recovery_refuses_stale_checkpoint(
             witness=witness,
             recovery_previous_checkpoint=stale,
         )
+
+
+def test_device_recover_cli_rotates_profile_without_ratchet_state(
+    tmp_path: Path,
+) -> None:
+    profile_path = tmp_path / "recover-profile-only.ghost"
+    password = os.urandom(24).hex()
+
+    def password_reader(prompt: str) -> str:
+        del prompt
+        return password
+
+    assert run_cli(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    before = decrypt_local_profile(
+        profile_path.read_text(encoding="utf-8"),
+        password,
+    )
+    assert before.device_lifecycle is not None
+
+    assert run_cli(
+        ["device-recover", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+
+    after = decrypt_local_profile(
+        profile_path.read_text(encoding="utf-8"),
+        password,
+    )
+    assert after.device_lifecycle is not None
+    assert after.entity.ghost_id == before.entity.ghost_id
+    assert after.device.device_id != before.device.device_id
+    assert (
+        after.device_lifecycle.statement.epoch
+        == before.device_lifecycle.statement.epoch + 1
+    )
+    assert after.state_revision == before.state_revision + 1
+    assert not Path(f"{profile_path}.device-recovery.pending").exists()
+    assert not Path(
+        f"{profile_path}.ratchet.device-recovery-old"
+    ).exists()
+
+    assert after.client_state_id is not None
+    assert after.state_coordination_key is not None
+    witness = SQLiteMonotonicWitness(
+        Path(f"{profile_path}.witness.sqlite3"),
+        after.client_state_id,
+        after.state_coordination_key,
+    )
+    profile_record = witness.get("profile")
+    assert profile_record is not None
+    assert profile_record.revision == after.state_revision
+
+
+def test_device_recover_cli_resets_existing_ratchet_vault(
+    tmp_path: Path,
+) -> None:
+    profile_path = tmp_path / "recover-with-ratchet.ghost"
+    password = os.urandom(24).hex()
+    def password_reader(prompt: str) -> str:
+        del prompt
+        return password
+
+    assert run_cli(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    before = decrypt_local_profile(
+        profile_path.read_text(encoding="utf-8"),
+        password,
+    )
+    assert before.client_state_id is not None
+    assert before.state_coordination_key is not None
+    assert before.ratchet_master_key is not None
+    witness = SQLiteMonotonicWitness(
+        Path(f"{profile_path}.witness.sqlite3"),
+        before.client_state_id,
+        before.state_coordination_key,
+    )
+    command = [_NODE or "node", str(_ENGINE)]
+    vault_path = Path(f"{profile_path}.ratchet")
+
+    with RatchetEngineClient(
+        command,
+        before.device,
+        vault_path,
+        before.ratchet_master_key,
+        state_id=before.client_state_id,
+        coordination_key=before.state_coordination_key,
+        witness=witness,
+    ) as engine:
+        engine.create_prekey_material()
+
+    old_ratchet = witness.get("ratchet")
+    assert old_ratchet is not None
+
+    assert run_cli(
+        ["device-recover", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+
+    after = decrypt_local_profile(
+        profile_path.read_text(encoding="utf-8"),
+        password,
+    )
+    assert after.device.device_id != before.device.device_id
+    new_ratchet = witness.get("ratchet")
+    assert new_ratchet is not None
+    assert new_ratchet.revision == old_ratchet.revision + 1
+    assert new_ratchet.digest != old_ratchet.digest
+    assert not Path(
+        f"{profile_path}.ratchet.device-recovery-old"
+    ).exists()
+    assert not Path(f"{profile_path}.device-recovery.pending").exists()
+
+    assert after.ratchet_master_key is not None
+    assert after.client_state_id is not None
+    assert after.state_coordination_key is not None
+    with RatchetEngineClient(
+        command,
+        after.device,
+        vault_path,
+        after.ratchet_master_key,
+        state_id=after.client_state_id,
+        coordination_key=after.state_coordination_key,
+        witness=witness,
+    ) as recovered:
+        assert recovered.local_device_id == after.device.device_id
+
+
+def test_device_recover_cli_resumes_after_old_vault_archive(
+    tmp_path: Path,
+) -> None:
+    profile_path = tmp_path / "recover-resume.ghost"
+    password = os.urandom(24).hex()
+
+    def password_reader(prompt: str) -> str:
+        del prompt
+        return password
+
+    assert run_cli(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    active = decrypt_local_profile(
+        profile_path.read_text(encoding="utf-8"),
+        password,
+    )
+    assert active.client_state_id is not None
+    assert active.state_coordination_key is not None
+    assert active.ratchet_master_key is not None
+    witness = SQLiteMonotonicWitness(
+        Path(f"{profile_path}.witness.sqlite3"),
+        active.client_state_id,
+        active.state_coordination_key,
+    )
+    command = [_NODE or "node", str(_ENGINE)]
+    vault_path = Path(f"{profile_path}.ratchet")
+    backup_path = Path(f"{profile_path}.ratchet.device-recovery-old")
+    pending_path = Path(f"{profile_path}.device-recovery.pending")
+
+    with RatchetEngineClient(
+        command,
+        active.device,
+        vault_path,
+        active.ratchet_master_key,
+        state_id=active.client_state_id,
+        coordination_key=active.state_coordination_key,
+        witness=witness,
+    ) as engine:
+        engine.create_prekey_material()
+
+    checkpoint = reconcile_profile_witness(active, witness)
+    candidate = rotate_local_profile_device(active, checkpoint, issued_at=123456)
+    pending_path.write_text(
+        encrypt_local_profile(candidate, password),
+        encoding="utf-8",
+    )
+    if os.name == "posix":
+        pending_path.chmod(0o600)
+    vault_path.replace(backup_path)
+    old_ratchet = witness.get("ratchet")
+    assert old_ratchet is not None
+
+    assert run_cli(
+        ["device-recover", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+
+    recovered = decrypt_local_profile(
+        profile_path.read_text(encoding="utf-8"),
+        password,
+    )
+    assert recovered.device.device_id == candidate.device.device_id
+    assert not pending_path.exists()
+    assert not backup_path.exists()
+    assert vault_path.exists()
+
+    new_ratchet = witness.get("ratchet")
+    assert new_ratchet is not None
+    assert new_ratchet.revision == old_ratchet.revision + 1
