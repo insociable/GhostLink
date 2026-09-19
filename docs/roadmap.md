@@ -74,7 +74,7 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] context-bound ratcheted message-v3 envelope and isolated GhostNode v3 relay transport;
 - [x] user-facing CLI send/inbox cutover to ratcheted v3 with no static fallback;
 - [ ] external cryptographic review;
-- [ ] dependency review and automated vulnerability policy;
+- [x] dependency review and automated vulnerability policy (#102);
 - [ ] reproducible releases;
 - [ ] signed artifacts;
 - [x] recovery, rotation and device-revocation design (ADR-0010 / #92);
