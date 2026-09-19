@@ -541,6 +541,317 @@ def test_device_recovery_does_not_promote_before_relay_revocation(
     assert revoked.value.status_code == 401
 
 
+def test_device_recovery_retries_after_pending_profile_write_failure(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "pending write recovery password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "pending-write-recovery.ghost"
+    node_url = "http://ghostnode.test"
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(profile_path.read_text(), password)
+    real_write = cli_module._write_new_private_file
+
+    def fail_write(path: Path, content: str) -> None:
+        del path, content
+        raise OSError("injected pending profile write failure")
+
+    monkeypatch.setattr(cli_module, "_write_new_private_file", fail_write)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "injected pending profile write failure" in failed.err
+    assert not Path(f"{profile_path}.device-recovery.pending").exists()
+
+    still_active = decrypt_local_profile(profile_path.read_text(), password)
+    assert still_active.device.device_id == before.device.device_id
+    relay = node_client_factory(node_url).get_device_lifecycle(
+        before.entity.ghost_id
+    )
+    assert relay.active_device_id == before.device.device_id
+
+    monkeypatch.setattr(cli_module, "_write_new_private_file", real_write)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    recovered = decrypt_local_profile(profile_path.read_text(), password)
+    assert recovered.device.device_id != before.device.device_id
+    assert recovered.device_lifecycle is not None
+    assert before.device_lifecycle is not None
+    assert (
+        recovered.device_lifecycle.statement.epoch
+        == before.device_lifecycle.statement.epoch + 1
+    )
+
+
+def test_device_recovery_resumes_same_candidate_after_profile_promotion_failure(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "promotion failure recovery password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "promotion-failure-recovery.ghost"
+    pending_path = Path(f"{profile_path}.device-recovery.pending")
+    node_url = "http://ghostnode.test"
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(profile_path.read_text(), password)
+    real_replace = cli_module.os.replace
+
+    def fail_promotion(source, destination) -> None:
+        if Path(source) == pending_path and Path(destination) == profile_path:
+            raise OSError("injected profile promotion failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(cli_module.os, "replace", fail_promotion)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "injected profile promotion failure" in failed.err
+    assert pending_path.exists()
+
+    candidate = decrypt_local_profile(pending_path.read_text(), password)
+    still_active = decrypt_local_profile(profile_path.read_text(), password)
+    assert still_active.device.device_id == before.device.device_id
+    relay = node_client_factory(node_url).get_device_lifecycle(
+        before.entity.ghost_id
+    )
+    assert relay.active_device_id == candidate.device.device_id
+
+    monkeypatch.setattr(cli_module.os, "replace", real_replace)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    recovered = decrypt_local_profile(profile_path.read_text(), password)
+    assert recovered.device.device_id == candidate.device.device_id
+    assert not pending_path.exists()
+
+
+def test_device_recovery_retry_after_post_promotion_fsync_starts_fresh_rotation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "post promotion fsync password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "post-promotion-fsync.ghost"
+    node_url = "http://ghostnode.test"
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(profile_path.read_text(), password)
+    assert before.device_lifecycle is not None
+    real_fsync = cli_module._fsync_directory
+
+    def fail_fsync(path: Path) -> None:
+        del path
+        raise OSError("injected post-promotion fsync failure")
+
+    monkeypatch.setattr(cli_module, "_fsync_directory", fail_fsync)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "injected post-promotion fsync failure" in failed.err
+
+    promoted = decrypt_local_profile(profile_path.read_text(), password)
+    assert promoted.device.device_id != before.device.device_id
+    assert promoted.device_lifecycle is not None
+    assert (
+        promoted.device_lifecycle.statement.epoch
+        == before.device_lifecycle.statement.epoch + 1
+    )
+    assert not Path(f"{profile_path}.device-recovery.pending").exists()
+
+    monkeypatch.setattr(cli_module, "_fsync_directory", real_fsync)
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    recovered = decrypt_local_profile(profile_path.read_text(), password)
+    assert recovered.device_lifecycle is not None
+    assert recovered.device.device_id != promoted.device.device_id
+    assert (
+        recovered.device_lifecycle.statement.epoch
+        == promoted.device_lifecycle.statement.epoch + 1
+    )
+
+
+def test_device_recovery_retry_after_profile_witness_failure_starts_fresh_rotation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    api_client = TestClient(create_app())
+    requester = create_test_requester(api_client)
+
+    def node_client_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=requester)
+
+    password = "profile witness recovery password"  # noqa: S105
+    password_reader = lambda prompt: password  # noqa: E731
+    profile_path = tmp_path / "profile-witness-recovery.ghost"
+    node_url = "http://ghostnode.test"
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(profile_path.read_text(), password)
+    assert before.device_lifecycle is not None
+    real_reconcile = cli_module.reconcile_profile_witness
+    calls = 0
+
+    def fail_second_reconcile(profile, witness):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise cli_module.CLIError("injected profile witness reconciliation failure")
+        return real_reconcile(profile, witness)
+
+    monkeypatch.setattr(
+        cli_module,
+        "reconcile_profile_witness",
+        fail_second_reconcile,
+    )
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 1
+    failed = capsys.readouterr()
+    assert "injected profile witness reconciliation failure" in failed.err
+
+    promoted = decrypt_local_profile(profile_path.read_text(), password)
+    assert promoted.device_lifecycle is not None
+    assert promoted.device.device_id != before.device.device_id
+    assert (
+        promoted.device_lifecycle.statement.epoch
+        == before.device_lifecycle.statement.epoch + 1
+    )
+
+    monkeypatch.setattr(
+        cli_module,
+        "reconcile_profile_witness",
+        real_reconcile,
+    )
+    assert run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=node_client_factory,
+    ) == 0
+    capsys.readouterr()
+
+    recovered = decrypt_local_profile(profile_path.read_text(), password)
+    assert recovered.device_lifecycle is not None
+    assert recovered.device.device_id != promoted.device.device_id
+    assert (
+        recovered.device_lifecycle.statement.epoch
+        == promoted.device_lifecycle.statement.epoch + 1
+    )
+
+
 def test_cli_send_refreshes_verified_contact_after_remote_device_rotation(
     tmp_path: Path,
     capsys,
