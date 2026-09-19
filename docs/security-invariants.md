@@ -176,6 +176,10 @@ Trusted contact resolution raises an error and messaging aborts.
 
 `contact.py`, `contact_store.py`, CLI contact commands.
 
+**Concurrency boundary**
+
+One in-process `ContactTrustStore` serializes lifecycle bundle updates so competing same-instance refreshes re-check monotonicity after the prior update. The encrypted contact file and SQLite witness do not form a cross-process transaction: concurrent independent writers can produce a compare-and-set conflict, and a losing writer may leave bytes whose digest no longer matches the winning witness. A later witnessed load must then fail closed. No multi-process shared-contact-file synchronization guarantee is claimed.
+
 ## ID-6 — Remote device rotation invalidates old device-bound ratchet state before contact persistence
 
 **Valid transition**
@@ -456,7 +460,7 @@ A stronger whole-device claim requires a witness outside the rollback domain.
 
 The persistent v3 message store, pre-key store, authenticated request-replay store and lifecycle registry use the same configured relay-state coordinator for the same SQLite database.
 
-Independent coordinators for those protected stores are not valid persistent configuration.
+Independent coordinators for those protected stores are not valid persistent configuration. One runtime coordinator serializes lifecycle, message, pre-key and authenticated request-replay mutations. Multiple GhostNode processes independently coordinating the same database/witness are not a supported distributed-consensus model.
 
 ## RELAY-2 — Persistent relay readiness requires successful database/witness reconciliation
 
