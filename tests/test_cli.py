@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import ghostlink.cli as cli_module
+import pytest
 from fastapi.testclient import TestClient
 from ghostlink.cli import run
 from ghostlink.client import GhostNodeClient, GhostNodeRequestError
