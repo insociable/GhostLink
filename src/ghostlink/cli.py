@@ -17,8 +17,8 @@ from ghostlink.contact import (
     ContactBundleError,
     ValidatedContact,
     decode_contact_qr_payload,
-    export_contact_bundle,
-    export_contact_qr_payload,
+    export_lifecycle_contact_bundle,
+    export_lifecycle_contact_qr_payload,
     import_contact_bundle,
 )
 from ghostlink.contact_qr import render_contact_qr_svg
@@ -384,7 +384,14 @@ def _command_contact_export(
     password_reader: PasswordReader,
 ) -> int:
     profile = _load_profile(Path(args.profile), password_reader)
-    bundle = export_contact_bundle(profile.entity, profile.device)
+    if profile.device_lifecycle is None:
+        raise CLIError(
+            "profile has no device lifecycle state; run profile-upgrade first"
+        )
+    bundle = export_lifecycle_contact_bundle(
+        profile.entity,
+        profile.device_lifecycle,
+    )
     output = Path(args.output)
     _write_new_public_file(output, bundle)
 
@@ -399,7 +406,14 @@ def _command_contact_export_qr(
     password_reader: PasswordReader,
 ) -> int:
     profile = _load_profile(Path(args.profile), password_reader)
-    payload = export_contact_qr_payload(profile.entity, profile.device)
+    if profile.device_lifecycle is None:
+        raise CLIError(
+            "profile has no device lifecycle state; run profile-upgrade first"
+        )
+    payload = export_lifecycle_contact_qr_payload(
+        profile.entity,
+        profile.device_lifecycle,
+    )
     svg = render_contact_qr_svg(payload)
     output = Path(args.output)
     _write_new_public_file(output, svg)
