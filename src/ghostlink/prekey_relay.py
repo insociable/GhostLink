@@ -40,6 +40,10 @@ from ghostlink.ratchet_publication import (
     import_ratchet_prekey_publication,
 )
 from ghostlink.relay_auth import require_relay_access
+from ghostlink.relay_device_lifecycle import (
+    DeviceLifecycleStore,
+    require_active_relay_device,
+)
 from ghostlink.relay_state import RelayStateCoordinator
 
 _PUBLICATION_REQUEST_VERSION = 1
@@ -1013,6 +1017,7 @@ def _verified_generation(
 def create_prekey_publication_router(
     settings: NodeSettings,
     store: PreKeyPublicationStore,
+    device_lifecycle_store: DeviceLifecycleStore | None = None,
 ) -> APIRouter:
     """Create authenticated ratchet pre-key publication and fetch routes."""
     router = APIRouter()
@@ -1033,6 +1038,11 @@ def create_prekey_publication_router(
             device_id,
             now=int(time.time()),
         )
+        if device_lifecycle_store is not None:
+            require_active_relay_device(
+                device_lifecycle_store,
+                device_id,
+            )
         try:
             stored = store.publish(generation)
         except PreKeyPublicationConflictError as exc:
@@ -1066,6 +1076,12 @@ def create_prekey_publication_router(
                 detail=str(exc),
             ) from exc
 
+        if device_lifecycle_store is not None:
+            require_active_relay_device(
+                device_lifecycle_store,
+                device_id,
+            )
+
         try:
             return store.status(device_id)
         except PreKeyStatusNotFoundError as exc:
@@ -1096,6 +1112,16 @@ def create_prekey_publication_router(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=str(exc),
             ) from exc
+
+        if device_lifecycle_store is not None:
+            require_active_relay_device(
+                device_lifecycle_store,
+                requester_device_id,
+            )
+            require_active_relay_device(
+                device_lifecycle_store,
+                device_id,
+            )
 
         try:
             return store.fetch(
