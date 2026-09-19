@@ -4,7 +4,11 @@ import os
 import stat
 
 import pytest
-from ghostlink.contact import export_contact_bundle, import_contact_bundle
+from ghostlink.contact import (
+    export_contact_bundle,
+    export_lifecycle_contact_bundle,
+    import_contact_bundle,
+)
 from ghostlink.contact_store import (
     ContactTrustError,
     ContactTrustState,
@@ -18,6 +22,7 @@ from ghostlink.contact_store import (
     save_contact_store,
     save_contact_store_witnessed,
 )
+from ghostlink.device_lifecycle import create_device_lifecycle_statement
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import derive_identity_fingerprint
 from ghostlink.state_witness import (
@@ -32,6 +37,21 @@ def _identity_bundle(entity: GhostEntity | None = None) -> tuple[GhostEntity, st
     owner = GhostEntity.generate() if entity is None else entity
     device = owner.enroll_device()
     return owner, export_contact_bundle(owner, device)
+
+
+def _lifecycle_bundle(
+    entity: GhostEntity,
+    *,
+    epoch: int,
+    issued_at: int,
+) -> str:
+    lifecycle = create_device_lifecycle_statement(
+        entity,
+        entity.enroll_device(),
+        epoch=epoch,
+        issued_at=issued_at,
+    )
+    return export_lifecycle_contact_bundle(entity, lifecycle)
 
 
 def _fingerprint(bundle: str) -> str:
@@ -530,3 +550,102 @@ def test_contact_store_recovers_one_step_after_witness_commit_crash(tmp_path) ->
     assert recovered.revision == 2
     assert recovered.list_records()[0].state is ContactTrustState.VERIFIED
     assert witness.get("contacts").revision == 2
+
+
+def test_verified_contact_accepts_newer_lifecycle_without_reverification() -> None:
+    alice = GhostEntity.generate()
+    first_bundle = _lifecycle_bundle(alice, epoch=1, issued_at=100)
+    second_bundle = _lifecycle_bundle(alice, epoch=2, issued_at=101)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", first_bundle)
+    verified = store.verify_identity(imported.record_id, _fingerprint(first_bundle))
+
+    updated = store.update_contact_bundle(verified.record_id, second_bundle)
+
+    assert updated.state is ContactTrustState.VERIFIED
+    assert updated.pinned_ghost_id == alice.ghost_id
+    assert updated.current_contact.lifecycle_epoch == 2
+    assert updated.current_contact.device_id != verified.current_contact.device_id
+
+
+def test_verified_contact_rejects_lifecycle_rollback() -> None:
+    alice = GhostEntity.generate()
+    newer_bundle = _lifecycle_bundle(alice, epoch=3, issued_at=103)
+    older_bundle = _lifecycle_bundle(alice, epoch=2, issued_at=102)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", newer_bundle)
+    verified = store.verify_identity(imported.record_id, _fingerprint(newer_bundle))
+
+    with pytest.raises(ContactTrustError, match="lifecycle rollback"):
+        store.update_contact_bundle(verified.record_id, older_bundle)
+
+
+    assert store.get(verified.record_id) == verified
+
+
+def test_verified_contact_rejects_lifecycle_downgrade_to_legacy() -> None:
+    alice = GhostEntity.generate()
+    lifecycle_bundle = _lifecycle_bundle(alice, epoch=2, issued_at=100)
+    legacy_bundle = export_contact_bundle(alice, alice.enroll_device())
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", lifecycle_bundle)
+    verified = store.verify_identity(
+        imported.record_id,
+        _fingerprint(lifecycle_bundle),
+    )
+
+    with pytest.raises(ContactTrustError, match="cannot downgrade"):
+        store.update_contact_bundle(verified.record_id, legacy_bundle)
+
+
+def test_verified_contact_rejects_same_epoch_equivocation() -> None:
+    alice = GhostEntity.generate()
+    first_bundle = _lifecycle_bundle(alice, epoch=4, issued_at=100)
+    divergent_bundle = _lifecycle_bundle(alice, epoch=4, issued_at=101)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", first_bundle)
+    verified = store.verify_identity(imported.record_id, _fingerprint(first_bundle))
+
+    with pytest.raises(ContactTrustError, match="equivocation"):
+        store.update_contact_bundle(verified.record_id, divergent_bundle)
+
+
+def test_verified_contact_accepts_idempotent_lifecycle_replay() -> None:
+    alice = GhostEntity.generate()
+    bundle = _lifecycle_bundle(alice, epoch=5, issued_at=100)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", bundle)
+    verified = store.verify_identity(imported.record_id, _fingerprint(bundle))
+
+    replayed = store.update_contact_bundle(verified.record_id, bundle)
+
+    assert replayed is verified
+    assert store.get(verified.record_id) is verified
+
+
+def test_verified_legacy_contact_can_upgrade_to_lifecycle_state() -> None:
+    alice = GhostEntity.generate()
+    legacy_bundle = export_contact_bundle(alice, alice.enroll_device())
+    lifecycle_bundle = _lifecycle_bundle(alice, epoch=1, issued_at=100)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", legacy_bundle)
+    verified = store.verify_identity(imported.record_id, _fingerprint(legacy_bundle))
+
+    updated = store.update_contact_bundle(
+        verified.record_id,
+        lifecycle_bundle,
+    )
+
+    assert updated.state is ContactTrustState.VERIFIED
+    assert updated.current_contact.lifecycle_epoch == 1
+
+
+def test_imported_lifecycle_contact_also_rejects_rollback() -> None:
+    alice = GhostEntity.generate()
+    newer_bundle = _lifecycle_bundle(alice, epoch=3, issued_at=103)
+    older_bundle = _lifecycle_bundle(alice, epoch=2, issued_at=102)
+    store = ContactTrustStore()
+    imported = store.add_contact("Alice", newer_bundle)
+
+    with pytest.raises(ContactTrustError, match="lifecycle rollback"):
+        store.update_contact_bundle(imported.record_id, older_bundle)

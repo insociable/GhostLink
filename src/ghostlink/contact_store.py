@@ -66,6 +66,33 @@ class ContactTrustError(ValueError):
     """Raised when local contact trust state cannot be used safely."""
 
 
+def _require_monotonic_lifecycle_update(
+    current: ValidatedContact,
+    candidate: ValidatedContact,
+    *,
+    current_bundle: str,
+    candidate_bundle: str,
+) -> bool:
+    """Reject lifecycle rollback/downgrade and report idempotent updates."""
+    if current.ghost_id != candidate.ghost_id:
+        return False
+    current_epoch = current.lifecycle_epoch
+    if current_epoch is None:
+        return False
+    candidate_epoch = candidate.lifecycle_epoch
+    if candidate_epoch is None:
+        raise ContactTrustError(
+            "lifecycle-aware contact cannot downgrade to a legacy device bundle"
+        )
+    if candidate_epoch < current_epoch:
+        raise ContactTrustError("contact device lifecycle rollback rejected")
+    if candidate_epoch == current_epoch:
+        if candidate_bundle != current_bundle:
+            raise ContactTrustError("contact device lifecycle equivocation rejected")
+        return True
+    return False
+
+
 class ContactTrustState(StrEnum):
     """Human trust state for one locally saved contact."""
 
@@ -165,6 +192,13 @@ class ContactTrustStore:
             )
 
         if record.state is ContactTrustState.IMPORTED:
+            if _require_monotonic_lifecycle_update(
+                record.current_contact,
+                contact,
+                current_bundle=record.current_bundle,
+                candidate_bundle=canonical_bundle,
+            ):
+                return record
             updated = ContactTrustRecord(
                 record_id=record.record_id,
                 label=record.label,
@@ -180,6 +214,13 @@ class ContactTrustStore:
             raise ContactTrustError("verified contact is missing its pinned identity")
 
         if contact.ghost_id == record.pinned_ghost_id:
+            if _require_monotonic_lifecycle_update(
+                record.current_contact,
+                contact,
+                current_bundle=record.current_bundle,
+                candidate_bundle=canonical_bundle,
+            ):
+                return record
             updated = ContactTrustRecord(
                 record_id=record.record_id,
                 label=record.label,

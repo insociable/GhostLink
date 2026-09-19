@@ -7,9 +7,12 @@ from ghostlink.contact import (
     ValidatedContact,
     export_contact_bundle,
     export_contact_qr_payload,
+    export_lifecycle_contact_bundle,
+    export_lifecycle_contact_qr_payload,
     import_contact_bundle,
     import_contact_qr_payload,
 )
+from ghostlink.device_lifecycle import create_device_lifecycle_statement
 from ghostlink.entity import GhostEntity
 from ghostlink.identity import derive_identity_fingerprint
 
@@ -171,7 +174,7 @@ def test_contact_qr_payload_rejects_unsupported_version() -> None:
         ContactBundleError,
         match="unsupported GhostLink contact QR version",
     ):
-        import_contact_qr_payload("ghostlink:contact:2:AAAA")
+        import_contact_qr_payload("ghostlink:contact:3:AAAA")
 
 
 def test_contact_qr_payload_rejects_noncanonical_bundle_json() -> None:
@@ -200,3 +203,82 @@ def test_contact_qr_payload_cannot_import_trust_state() -> None:
 
     with pytest.raises(ContactBundleError, match="unknown fields: trust_state"):
         import_contact_qr_payload(f"ghostlink:contact:1:{encoded}")
+
+
+def test_lifecycle_contact_bundle_round_trip() -> None:
+    alice = GhostEntity.generate()
+    device = alice.enroll_device()
+    lifecycle = create_device_lifecycle_statement(
+        alice,
+        device,
+        epoch=7,
+        issued_at=1_700_000_000,
+    )
+
+    serialized = export_lifecycle_contact_bundle(alice, lifecycle)
+    contact = import_contact_bundle(serialized)
+
+    assert json.loads(serialized)["version"] == 2
+    assert contact.ghost_id == alice.ghost_id
+    assert contact.device_id == device.device_id
+    assert contact.lifecycle_epoch == 7
+    assert contact.lifecycle_statement is not None
+    assert contact.is_lifecycle_aware
+
+
+def test_lifecycle_contact_rejects_wrong_identity_key() -> None:
+    alice = GhostEntity.generate()
+    lifecycle = create_device_lifecycle_statement(
+        alice,
+        alice.enroll_device(),
+        epoch=1,
+        issued_at=100,
+    )
+    document = json.loads(export_lifecycle_contact_bundle(alice, lifecycle))
+    document["identity_public_key"] = base64.b64encode(
+        bytes(GhostEntity.generate().verify_key)
+    ).decode("ascii")
+
+    with pytest.raises(ContactBundleError, match="GhostID"):
+        import_contact_bundle(json.dumps(document))
+
+
+def test_lifecycle_contact_qr_round_trip() -> None:
+    alice = GhostEntity.generate()
+    device = alice.enroll_device()
+    lifecycle = create_device_lifecycle_statement(
+        alice,
+        device,
+        epoch=2,
+        issued_at=100,
+    )
+
+    payload = export_lifecycle_contact_qr_payload(alice, lifecycle)
+    contact = import_contact_qr_payload(payload)
+
+    assert payload.startswith("ghostlink:contact:2:")
+    assert contact.lifecycle_epoch == 2
+    assert contact.device_id == device.device_id
+
+
+def test_lifecycle_contact_bundle_does_not_export_private_keys() -> None:
+    alice = GhostEntity.generate()
+    device = alice.enroll_device()
+    lifecycle = create_device_lifecycle_statement(
+        alice,
+        device,
+        epoch=1,
+        issued_at=100,
+    )
+
+    serialized = export_lifecycle_contact_bundle(alice, lifecycle)
+
+    assert base64.b64encode(bytes(alice.signing_key)).decode("ascii") not in serialized
+    assert (
+        base64.b64encode(bytes(device.device.signing_key)).decode("ascii")
+        not in serialized
+    )
+    assert (
+        base64.b64encode(bytes(device.device.encryption_key)).decode("ascii")
+        not in serialized
+    )
