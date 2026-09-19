@@ -59,7 +59,8 @@ The format follows Keep a Changelog and Semantic Versioning.
 - rollback-aware replay-state SQLite coordination with explicit legacy migration, atomic prune/accept + revision commits and one-step witness recovery;
 - rollback-aware ratchet-vault payload v2 with explicit legacy migration, Python-verified checkpoints, witness-gated mutations, highest-seen rollback detection and one-step crash recovery;
 - rollback-aware persistent GhostNode SQLite coordination across v3 messages, pre-key publication/allocation/anti-drain state and authenticated-request replay state, with explicit migration, startup reconciliation, shared witness-gated mutations and fail-closed health.
-- identity-signed monotonic device lifecycle statements forming the basis for stable-GhostID device revocation and recovery.
+- identity-signed monotonic device lifecycle statements forming the basis for stable-GhostID device revocation and recovery;
+- lifecycle-aware contact bundle v2 and contact-store enforcement that reject stale epochs, same-epoch equivocation and downgrade to legacy device-only state after adoption.
 
 ### Removed
 
