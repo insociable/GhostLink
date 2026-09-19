@@ -378,6 +378,113 @@ def test_cli_prekey_sync_runs_ratchet_maintenance(
     assert lifecycle.epoch == profile.device_lifecycle.statement.epoch
 
 
+def test_device_recovery_does_not_promote_before_relay_revocation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    api_client = TestClient(create_app())
+    real_requester = create_test_requester(api_client)
+    lifecycle_puts = 0
+
+    def failing_requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        nonlocal lifecycle_puts
+        path = urllib.parse.urlparse(url).path
+        if method == "PUT" and path.startswith("/v3/device-lifecycle/"):
+            lifecycle_puts += 1
+            if lifecycle_puts == 2:
+                return 503, {"detail": "injected lifecycle outage"}
+        return real_requester(method, url, payload, timeout, headers)
+
+    def failing_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=failing_requester)
+
+    def healthy_factory(base_url: str) -> GhostNodeClient:
+        return GhostNodeClient(base_url, requester=real_requester)
+
+    password_reader = lambda prompt: "recovery relay password"  # noqa: E731
+    profile_path = tmp_path / "relay-recovery.ghost"
+    node_url = "http://ghostnode.test"
+
+    assert run(
+        ["init", "--profile", str(profile_path)],
+        password_reader=password_reader,
+    ) == 0
+    capsys.readouterr()
+
+    before = decrypt_local_profile(
+        profile_path.read_text(),
+        "recovery relay password",
+    )
+    assert before.device_lifecycle is not None
+
+    failed = run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=failing_factory,
+    )
+    failed_output = capsys.readouterr()
+    assert failed == 1
+    assert "injected lifecycle outage" in failed_output.err
+
+    still_active = decrypt_local_profile(
+        profile_path.read_text(),
+        "recovery relay password",
+    )
+    assert still_active.device.device_id == before.device.device_id
+    pending_path = Path(f"{profile_path}.device-recovery.pending")
+    assert pending_path.exists()
+
+    relay_before = healthy_factory(node_url).get_device_lifecycle(
+        before.entity.ghost_id
+    )
+    assert relay_before.active_device_id == before.device.device_id
+    assert relay_before.epoch == before.device_lifecycle.statement.epoch
+
+    resumed = run(
+        [
+            "device-recover",
+            "--profile",
+            str(profile_path),
+            "--node",
+            node_url,
+        ],
+        password_reader=password_reader,
+        node_client_factory=healthy_factory,
+    )
+    assert resumed == 0
+    capsys.readouterr()
+
+    after = decrypt_local_profile(
+        profile_path.read_text(),
+        "recovery relay password",
+    )
+    assert after.device_lifecycle is not None
+    assert after.device.device_id != before.device.device_id
+    assert not pending_path.exists()
+
+    relay_after = healthy_factory(node_url).get_device_lifecycle(
+        after.entity.ghost_id
+    )
+    assert relay_after.active_device_id == after.device.device_id
+    assert relay_after.epoch == after.device_lifecycle.statement.epoch
+
+    with pytest.raises(GhostNodeRequestError) as revoked:
+        healthy_factory(node_url).prekey_status(before.device)
+    assert revoked.value.status_code == 401
+
+
 def test_cli_does_not_fall_back_to_static_v2_when_bootstrap_fails(
     tmp_path: Path,
     capsys,
