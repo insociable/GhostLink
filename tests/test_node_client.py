@@ -2,6 +2,8 @@ import base64
 import time
 import urllib.parse
 from collections.abc import Callable
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
 import pytest
 from fastapi.testclient import TestClient
@@ -52,6 +54,102 @@ def create_test_requester(
         return response.status_code, body
 
     return requester
+
+
+@pytest.mark.parametrize("status_code", [301, 302, 303, 307, 308])
+def test_node_client_never_follows_http_redirects(status_code: int) -> None:
+    target_requests: list[dict[str, str]] = []
+
+    class TargetHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            target_requests.append(dict(self.headers))
+            body = b'{"status":"ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), TargetHandler)
+    target_thread = Thread(target=target.serve_forever, daemon=True)
+    target_thread.start()
+    target_url = f"http://127.0.0.1:{target.server_port}/captured"
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(status_code)
+            self.send_header("Location", target_url)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    redirect = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    redirect_thread = Thread(target=redirect.serve_forever, daemon=True)
+    redirect_thread.start()
+
+    try:
+        client = GhostNodeClient(
+            f"http://127.0.0.1:{redirect.server_port}",
+            access_token=base64.b64encode(b"redirect-token").decode("ascii"),
+        )
+        with pytest.raises(GhostNodeRequestError) as error:
+            client.health()
+
+        assert error.value.status_code == status_code
+        assert target_requests == []
+    finally:
+        redirect.shutdown()
+        redirect.server_close()
+        target.shutdown()
+        target.server_close()
+        redirect_thread.join(timeout=2)
+        target_thread.join(timeout=2)
+
+
+def test_node_client_never_follows_relative_redirects() -> None:
+    request_paths: list[str] = []
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            request_paths.append(self.path)
+            if self.path == "/health":
+                self.send_response(302)
+                self.send_header("Location", "/redirected")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = b'{"status":"ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = GhostNodeClient(
+            f"http://127.0.0.1:{server.server_port}",
+            access_token=base64.b64encode(b"redirect-token").decode("ascii"),
+        )
+        with pytest.raises(GhostNodeRequestError) as error:
+            client.health()
+
+        assert error.value.status_code == 302
+        assert request_paths == ["/health"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_node_client_reports_health() -> None:
