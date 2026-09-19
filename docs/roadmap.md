@@ -82,6 +82,6 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [x] lifecycle-aware profile v5 and dedicated profile witness coordination (#92);
 - [x] rollback-linked ratchet reset primitives for DeviceID recovery (#92);
 - [x] explicit crash-resumable device recovery CLI transaction (#92);
-- [x] rollback-protected GhostNode lifecycle registry and stale-device enforcement (#92);
+- [x] rollback-aware GhostNode lifecycle registry and stale-device enforcement while the relay witness remains current (#92);
 - [x] client lifecycle publication before relay use plus fail-closed recovery publish/promote ordering (#92);
 - [x] remote lifecycle refresh/contact update and durable ratchet-session invalidation after peer device replacement (#92).
