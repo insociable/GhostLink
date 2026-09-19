@@ -8,8 +8,12 @@ from ghostlink.profile import (
     create_local_profile,
     decrypt_local_profile,
     encrypt_local_profile,
+    initialize_profile_witness,
+    reconcile_profile_witness,
+    rotate_local_profile_device,
     upgrade_local_profile,
 )
+from ghostlink.state_witness import SQLiteMonotonicWitness
 from nacl import utils
 from nacl.pwhash import argon2id
 from nacl.secret import SecretBox
@@ -192,6 +196,33 @@ def _legacy_v3_profile(profile, password: str) -> str:
     )
 
 
+def _legacy_v4_profile(profile, password: str) -> str:
+    current = json.loads(encrypt_local_profile(profile, password))
+    salt = base64.b64decode(current["kdf"]["salt"])
+    key = argon2id.kdf(
+        SecretBox.KEY_SIZE,
+        password.encode("utf-8"),
+        salt,
+        opslimit=argon2id.OPSLIMIT_INTERACTIVE,
+        memlimit=argon2id.MEMLIMIT_INTERACTIVE,
+    )
+    plaintext = SecretBox(key).decrypt(
+        base64.b64decode(current["ciphertext"])
+    )
+    secret = json.loads(plaintext)
+    secret.pop("device_lifecycle")
+    legacy_plaintext = json.dumps(
+        secret,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    current["version"] = 4
+    current["ciphertext"] = base64.b64encode(
+        bytes(SecretBox(key).encrypt(legacy_plaintext))
+    ).decode("ascii")
+    return json.dumps(current, sort_keys=True, separators=(",", ":"))
+
+
 def test_encrypted_profile_round_trip_preserves_identity_and_device() -> None:
     profile = create_local_profile()
 
@@ -229,6 +260,9 @@ def test_encrypted_profile_round_trip_preserves_identity_and_device() -> None:
     }
     assert restored.state_revision == 1
     assert restored.state_previous_digest is None
+    assert restored.device_lifecycle == profile.device_lifecycle
+    assert restored.device_lifecycle is not None
+    assert restored.device_lifecycle.statement.epoch == 1
 
 
 def test_encrypted_profile_does_not_expose_private_key_material() -> None:
@@ -298,12 +332,12 @@ def test_empty_password_is_rejected() -> None:
 
 
 
-def test_profile_v4_outer_version_is_explicit() -> None:
+def test_profile_v5_outer_version_is_explicit() -> None:
     profile = create_local_profile()
 
     document = json.loads(encrypt_local_profile(profile, "password"))
 
-    assert document["version"] == 4
+    assert document["version"] == 5
 
 
 def test_legacy_v1_profile_is_readable_but_has_no_ratchet_key() -> None:
@@ -503,3 +537,154 @@ def test_upgrade_is_idempotent_for_profile_v4() -> None:
     profile = create_local_profile()
 
     assert upgrade_local_profile(profile) is profile
+
+
+def test_profile_witness_initialization_and_reconciliation(tmp_path) -> None:
+    profile = create_local_profile()
+    assert profile.client_state_id is not None
+    assert profile.state_coordination_key is not None
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "profile.witness.sqlite3",
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+
+    initialized = initialize_profile_witness(profile, witness)
+    reconciled = reconcile_profile_witness(profile, witness)
+
+    assert reconciled == initialized
+    assert reconciled.component == "profile"
+    assert reconciled.revision == 1
+
+
+def test_profile_witness_rejects_same_revision_divergence(tmp_path) -> None:
+    profile = create_local_profile()
+    assert profile.client_state_id is not None
+    assert profile.state_coordination_key is not None
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "profile.witness.sqlite3",
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+    initialize_profile_witness(profile, witness)
+    divergent = type(profile)(
+        entity=profile.entity,
+        device=profile.device,
+        ratchet_master_key=utils.random(32),
+        contact_store_key=profile.contact_store_key,
+        client_state_id=profile.client_state_id,
+        state_coordination_key=profile.state_coordination_key,
+        state_revision=profile.state_revision,
+        state_previous_digest=profile.state_previous_digest,
+        device_lifecycle=profile.device_lifecycle,
+    )
+
+    with pytest.raises(ProfileError, match="diverges"):
+        reconcile_profile_witness(divergent, witness)
+
+
+def test_profile_device_rotation_advances_lifecycle_and_checkpoint(tmp_path) -> None:
+    profile = create_local_profile()
+    assert profile.client_state_id is not None
+    assert profile.state_coordination_key is not None
+    assert profile.device_lifecycle is not None
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "profile.witness.sqlite3",
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+    current = initialize_profile_witness(profile, witness)
+
+    rotated = rotate_local_profile_device(
+        profile,
+        current,
+        issued_at=profile.device_lifecycle.statement.issued_at + 1,
+    )
+    assert rotated.entity.ghost_id == profile.entity.ghost_id
+    assert rotated.device.device_id != profile.device.device_id
+    assert rotated.device_lifecycle is not None
+    assert rotated.device_lifecycle.statement.epoch == 2
+    assert rotated.state_revision == 2
+    assert rotated.state_previous_digest == current.digest
+    assert rotated.ratchet_master_key == profile.ratchet_master_key
+    assert rotated.contact_store_key == profile.contact_store_key
+
+    recovered = reconcile_profile_witness(rotated, witness)
+    assert recovered.revision == 2
+    assert witness.get("profile") is not None
+    assert witness.get("profile").revision == 2  # type: ignore[union-attr]
+
+    with pytest.raises(ProfileError, match="older than monotonic witness"):
+        reconcile_profile_witness(profile, witness)
+
+
+def test_profile_device_rotation_requires_verified_current_checkpoint(
+    tmp_path,
+) -> None:
+    profile = create_local_profile()
+    assert profile.client_state_id is not None
+    assert profile.state_coordination_key is not None
+    witness = SQLiteMonotonicWitness(
+        tmp_path / "profile.witness.sqlite3",
+        profile.client_state_id,
+        profile.state_coordination_key,
+    )
+    current = initialize_profile_witness(profile, witness)
+    divergent = type(current)(
+        state_id=current.state_id,
+        component=current.component,
+        revision=current.revision,
+        previous_digest=current.previous_digest,
+        digest="0" * 64,
+    )
+
+    with pytest.raises(ProfileError, match="current verified checkpoint"):
+        rotate_local_profile_device(profile, divergent)
+
+
+def test_profile_v4_is_readable_and_requires_lifecycle_upgrade() -> None:
+    profile = create_local_profile()
+    serialized = _legacy_v4_profile(profile, "v4 password")
+
+    restored = decrypt_local_profile(serialized, "v4 password")
+
+    assert restored.entity.ghost_id == profile.entity.ghost_id
+    assert restored.device.device_id == profile.device.device_id
+    assert restored.ratchet_master_key == profile.ratchet_master_key
+    assert restored.contact_store_key == profile.contact_store_key
+    assert restored.client_state_id == profile.client_state_id
+    assert restored.state_coordination_key == profile.state_coordination_key
+    assert restored.state_revision == 1
+    assert restored.state_previous_digest is None
+    assert restored.device_lifecycle is None
+
+    with pytest.raises(ProfileError, match="device lifecycle state"):
+        encrypt_local_profile(restored, "v4 password")
+
+
+def test_upgrade_v4_adds_epoch_one_lifecycle_without_changing_device() -> None:
+    profile = create_local_profile()
+    legacy = decrypt_local_profile(
+        _legacy_v4_profile(profile, "v4 password"),
+        "v4 password",
+    )
+
+    upgraded = upgrade_local_profile(legacy)
+
+    assert upgraded.entity.ghost_id == legacy.entity.ghost_id
+    assert upgraded.device.device_id == legacy.device.device_id
+    assert upgraded.ratchet_master_key == legacy.ratchet_master_key
+    assert upgraded.contact_store_key == legacy.contact_store_key
+    assert upgraded.client_state_id == legacy.client_state_id
+    assert upgraded.state_coordination_key == legacy.state_coordination_key
+    assert upgraded.state_revision == 1
+    assert upgraded.state_previous_digest is None
+    assert upgraded.device_lifecycle is not None
+    assert upgraded.device_lifecycle.statement.epoch == 1
+    assert upgraded.device_lifecycle.statement.device_id == legacy.device.device_id
+
+    restored = decrypt_local_profile(
+        encrypt_local_profile(upgraded, "v4 password"),
+        "v4 password",
+    )
+    assert restored.device_lifecycle == upgraded.device_lifecycle

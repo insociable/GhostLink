@@ -37,6 +37,8 @@ from ghostlink.profile import (
     create_local_profile,
     decrypt_local_profile,
     encrypt_local_profile,
+    initialize_profile_witness,
+    reconcile_profile_witness,
     upgrade_local_profile,
 )
 from ghostlink.ratchet_engine import RatchetEngineClient, RatchetEngineError
@@ -53,7 +55,7 @@ from ghostlink.replay import (
     WitnessedSQLiteReplayCache,
     migrate_replay_cache_to_witness,
 )
-from ghostlink.state_witness import SQLiteMonotonicWitness
+from ghostlink.state_witness import SQLiteMonotonicWitness, StateWitnessError
 
 PasswordReader = Callable[[str], str]
 NodeClientFactory = Callable[[str], GhostNodeClient]
@@ -247,6 +249,15 @@ def _load_profile_with_password(
 
 def _load_profile(path: Path, password_reader: PasswordReader) -> LocalProfile:
     profile, _password = _load_profile_with_password(path, password_reader)
+    if profile.device_lifecycle is None:
+        return profile
+    try:
+        reconcile_profile_witness(
+            profile,
+            _profile_witness(path, profile),
+        )
+    except ProfileError as exc:
+        raise CLIError(str(exc)) from exc
     return profile
 
 
@@ -256,6 +267,10 @@ def _command_init(args: argparse.Namespace, password_reader: PasswordReader) -> 
     profile = create_local_profile()
     serialized = encrypt_local_profile(profile, password)
     _write_new_private_file(path, serialized)
+    initialize_profile_witness(
+        profile,
+        _profile_witness(path, profile),
+    )
 
     print(f"Profile created: {path}")
     print(f"GhostID: {profile.entity.ghost_id}")
@@ -270,24 +285,33 @@ def _command_profile_upgrade(
 ) -> int:
     path = Path(args.profile)
     profile, password = _load_profile_with_password(path, password_reader)
-    if (
-        profile.ratchet_master_key is not None
-        and profile.contact_store_key is not None
-        and profile.client_state_id is not None
-        and profile.state_coordination_key is not None
-        and profile.state_revision is not None
-    ):
-        print("Profile already uses the current local secret format.")
-        return 0
-
     upgraded = upgrade_local_profile(profile)
-    serialized = encrypt_local_profile(upgraded, password)
-    _replace_private_file_atomic(path, serialized)
+    changed = upgraded is not profile
+    if changed:
+        serialized = encrypt_local_profile(upgraded, password)
+        _replace_private_file_atomic(path, serialized)
 
-    print(f"Profile upgraded atomically: {path}")
+    witness = _profile_witness(path, upgraded)
+    try:
+        witness_record = witness.get("profile")
+    except StateWitnessError as exc:
+        raise CLIError(f"unable to read profile rollback witness: {exc}") from exc
+
+    if witness_record is None:
+        initialize_profile_witness(upgraded, witness)
+        witness_status = "Profile rollback witness initialized."
+    else:
+        reconcile_profile_witness(upgraded, witness)
+        witness_status = "Profile rollback witness verified."
+
+    if changed:
+        print(f"Profile upgraded atomically: {path}")
+    else:
+        print("Profile already uses the current local secret format.")
+    print(witness_status)
     print(
-        "Ratcheted protocol-v3, contact-store and rollback-coordination "
-        "secrets are available."
+        "Ratcheted protocol-v3, contact-store, lifecycle and "
+        "rollback-coordination secrets are available."
     )
     return 0
 

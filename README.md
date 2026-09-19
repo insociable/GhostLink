@@ -13,7 +13,7 @@ GhostLink is still pre-alpha, but the repository now contains substantially more
 - self-certifying GhostID and DeviceID identities;
 - identity-signed device authorization certificates;
 - cryptographically validated public contact bundles;
-- password-encrypted local profile v4 with independent ratchet/contact/rollback-coordination secrets;
+- password-encrypted local profile v5 with independent ratchet/contact/rollback-coordination secrets and identity-signed monotonic device lifecycle state;
 - persistent replay protection for authenticated message IDs;
 - ciphertext-only GhostNode relay with optional SQLite persistence;
 - ratcheted protocol-v3 messaging used by the current `send` / `inbox` CLI runtime;
@@ -157,7 +157,7 @@ poetry run ghostlink prekey-sync \
   --node http://127.0.0.1:8000
 ```
 
-Existing profile-v1/v2/v3 files remain readable, but the current profile-v4 state identity requires an explicit one-time migration:
+Existing profile-v1/v2/v3/v4 files remain readable, but the current profile-v5 lifecycle-aware state requires an explicit one-time migration:
 
 ```bash
 poetry run ghostlink profile-upgrade --profile alice.ghost

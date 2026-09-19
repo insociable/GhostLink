@@ -79,4 +79,5 @@ This roadmap distinguishes implemented building blocks from security work that i
 - [ ] signed artifacts;
 - [x] recovery, rotation and device-revocation design (ADR-0010 / #92);
 - [x] lifecycle-aware contact bundle/store monotonic enforcement (#92);
-- [ ] lifecycle-aware profile recovery and relay stale-device enforcement (#92).
+- [x] lifecycle-aware profile v5 and dedicated profile witness coordination (#92);
+- [ ] explicit device recovery/ratchet reset and relay stale-device enforcement (#92).
