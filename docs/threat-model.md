@@ -92,7 +92,7 @@ The current codebase includes:
 
 These are implemented building blocks, not a production-security certification.
 
-The claim-by-claim status and failure boundaries are summarized in `docs/security-assurance-matrix.md`.
+The claim-by-claim status and failure boundaries are summarized in `docs/security-assurance-matrix.md`; the corresponding state and transition rules are formalized in `docs/security-invariants.md`.
 
 ## Current known gaps
 
