@@ -11,6 +11,7 @@ from ghostlink.client.node_client import (
     GhostNodeRequestError,
 )
 from ghostlink.config import NodeSettings
+from ghostlink.device_lifecycle import create_device_lifecycle_statement
 from ghostlink.entity import GhostEntity
 from ghostlink.node import create_app
 from ghostlink.ratchet_message import RatchetMessage
@@ -61,6 +62,83 @@ def test_node_client_reports_health() -> None:
     )
 
     assert client.health()
+
+
+def test_node_client_publishes_and_verifies_device_lifecycle() -> None:
+    entity = GhostEntity.generate()
+    device = entity.enroll_device()
+    lifecycle = create_device_lifecycle_statement(
+        entity,
+        device,
+        epoch=1,
+        issued_at=123,
+    )
+    api_client = TestClient(create_app())
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=create_test_requester(api_client),
+    )
+
+    published = client.publish_device_lifecycle(
+        bytes(entity.verify_key),
+        lifecycle,
+    )
+    assert published.ghost_id == entity.ghost_id
+    assert published.epoch == 1
+    assert published.issued_at == 123
+    assert published.active_device_id == device.device_id
+    assert published.identity_public_key == bytes(entity.verify_key)
+    assert published.lifecycle == lifecycle
+
+    fetched = client.get_device_lifecycle(entity.ghost_id)
+    assert fetched == published
+
+
+def test_node_client_rejects_tampered_lifecycle_receipt() -> None:
+    entity = GhostEntity.generate()
+    device = entity.enroll_device()
+    lifecycle = create_device_lifecycle_statement(
+        entity,
+        device,
+        epoch=1,
+        issued_at=123,
+    )
+    api_client = TestClient(create_app())
+    real_requester = create_test_requester(api_client)
+    other_device_id = GhostEntity.generate().enroll_device().device_id
+
+    def requester(
+        method: str,
+        url: str,
+        payload: dict[str, object] | None,
+        timeout: float,
+        headers: dict[str, str],
+    ) -> tuple[int, object | None]:
+        status_code, body = real_requester(
+            method,
+            url,
+            payload,
+            timeout,
+            headers,
+        )
+        if status_code == 200 and isinstance(body, dict):
+            tampered = dict(body)
+            tampered["active_device_id"] = other_device_id
+            return status_code, tampered
+        return status_code, body
+
+    client = GhostNodeClient(
+        "http://ghostnode.test",
+        requester=requester,
+    )
+    with pytest.raises(
+        GhostNodeProtocolError,
+        match="DeviceID does not match",
+    ):
+        client.publish_device_lifecycle(
+            bytes(entity.verify_key),
+            lifecycle,
+        )
 
 
 def test_static_v2_transport_methods_are_retired() -> None:
