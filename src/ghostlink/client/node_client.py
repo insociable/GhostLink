@@ -13,7 +13,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from nacl.signing import VerifyKey
+
 from ghostlink.device import EnrolledGhostDevice, derive_device_id
+from ghostlink.device_lifecycle import (
+    DeviceLifecycleError,
+    SignedDeviceLifecycleStatement,
+    export_device_lifecycle_statement,
+    import_device_lifecycle_statement,
+    verify_device_lifecycle_statement,
+)
 from ghostlink.prekey_fetch import (
     PreKeyFetchResponse,
     create_prekey_fetch_request,
@@ -34,6 +43,8 @@ _HEX_ALPHABET = frozenset("0123456789abcdef")
 _PREKEY_PUBLICATION_VERSION = 1
 _PREKEY_FETCH_VERSION = 1
 _PREKEY_STATUS_VERSION = 1
+_DEVICE_LIFECYCLE_RELAY_VERSION = 1
+_MAX_DEVICE_LIFECYCLE_BYTES = 16_384
 _MAX_PREKEY_BINDING_BYTES = 32 * 1024
 _MAX_PUBLICATION_SEQUENCE = (1 << 53) - 1
 _MAX_ONE_TIME_PREKEYS = 256
@@ -62,6 +73,15 @@ _EXPECTED_PREKEY_STATUS_FIELDS = {
     "expires_at",
     "remaining_one_time_count",
 }
+_EXPECTED_DEVICE_LIFECYCLE_FIELDS = {
+    "version",
+    "ghost_id",
+    "epoch",
+    "issued_at",
+    "active_device_id",
+    "identity_public_key",
+    "statement",
+}
 _EXPECTED_RATCHET_MESSAGE_FIELDS = {
     "version",
     "message_id",
@@ -77,6 +97,19 @@ RequestFunction = Callable[
     [str, str, dict[str, object] | None, float, dict[str, str]],
     tuple[int, object | None],
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceLifecycleRelayRecord:
+    """Strictly verified relay view of one identity lifecycle head."""
+
+    version: int
+    ghost_id: str
+    epoch: int
+    issued_at: int
+    active_device_id: str
+    identity_public_key: bytes
+    lifecycle: SignedDeviceLifecycleStatement
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +280,107 @@ def _require_bounded_integer(
             f"{field} is outside the supported integer range"
         )
     return value
+
+
+def _parse_device_lifecycle_record(
+    value: object | None,
+) -> DeviceLifecycleRelayRecord:
+    document = _require_mapping(value, "device lifecycle response")
+    if set(document) != _EXPECTED_DEVICE_LIFECYCLE_FIELDS:
+        raise GhostNodeProtocolError(
+            "device lifecycle response fields do not match the protocol"
+        )
+
+    version = _require_bounded_integer(
+        document,
+        "version",
+        minimum=_DEVICE_LIFECYCLE_RELAY_VERSION,
+        maximum=_DEVICE_LIFECYCLE_RELAY_VERSION,
+    )
+    identity_public_key_text = _require_text(
+        document,
+        "identity_public_key",
+    )
+    try:
+        identity_public_key = base64.b64decode(
+            identity_public_key_text,
+            validate=True,
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise GhostNodeProtocolError(
+            "identity_public_key must be valid Base64"
+        ) from exc
+    if len(identity_public_key) != 32:
+        raise GhostNodeProtocolError(
+            "identity_public_key must decode to exactly 32 bytes"
+        )
+    if (
+        base64.b64encode(identity_public_key).decode("ascii")
+        != identity_public_key_text
+    ):
+        raise GhostNodeProtocolError(
+            "identity_public_key must use canonical Base64"
+        )
+
+    serialized = _require_text(document, "statement")
+    if len(serialized.encode("utf-8")) > _MAX_DEVICE_LIFECYCLE_BYTES:
+        raise GhostNodeProtocolError(
+            "device lifecycle statement exceeds the size limit"
+        )
+
+    try:
+        lifecycle = import_device_lifecycle_statement(serialized)
+        active_device = verify_device_lifecycle_statement(
+            lifecycle,
+            VerifyKey(identity_public_key),
+        )
+    except (DeviceLifecycleError, ValueError) as exc:
+        raise GhostNodeProtocolError(
+            f"device lifecycle response is not authentic: {exc}"
+        ) from exc
+    if export_device_lifecycle_statement(lifecycle) != serialized:
+        raise GhostNodeProtocolError(
+            "device lifecycle statement must use canonical JSON"
+        )
+
+    ghost_id = _require_text(document, "ghost_id")
+    epoch = _require_bounded_integer(
+        document,
+        "epoch",
+        minimum=1,
+        maximum=_MAX_PUBLICATION_SEQUENCE,
+    )
+    issued_at = _require_timestamp(document, "issued_at")
+    active_device_id = _validate_device_id(
+        _require_text(document, "active_device_id"),
+        "active_device_id",
+    )
+    if lifecycle.statement.ghost_id != ghost_id:
+        raise GhostNodeProtocolError(
+            "device lifecycle response GhostID does not match its statement"
+        )
+    if lifecycle.statement.epoch != epoch:
+        raise GhostNodeProtocolError(
+            "device lifecycle response epoch does not match its statement"
+        )
+    if lifecycle.statement.issued_at != issued_at:
+        raise GhostNodeProtocolError(
+            "device lifecycle response timestamp does not match its statement"
+        )
+    if active_device.device_id != active_device_id:
+        raise GhostNodeProtocolError(
+            "device lifecycle response DeviceID does not match its statement"
+        )
+
+    return DeviceLifecycleRelayRecord(
+        version=version,
+        ghost_id=ghost_id,
+        epoch=epoch,
+        issued_at=issued_at,
+        active_device_id=active_device_id,
+        identity_public_key=identity_public_key,
+        lifecycle=lifecycle,
+    )
 
 
 def _parse_prekey_receipt(value: object | None) -> PreKeyPublicationReceipt:
@@ -486,6 +620,89 @@ class GhostNodeClient:
             self.timeout,
             headers,
         )
+
+    def publish_device_lifecycle(
+        self,
+        identity_public_key: bytes,
+        lifecycle: SignedDeviceLifecycleStatement,
+    ) -> DeviceLifecycleRelayRecord:
+        """Publish one exact identity-signed lifecycle head."""
+        if len(identity_public_key) != 32:
+            raise ValueError(
+                "identity_public_key must contain exactly 32 bytes"
+            )
+        try:
+            active_device = verify_device_lifecycle_statement(
+                lifecycle,
+                VerifyKey(identity_public_key),
+            )
+            serialized = export_device_lifecycle_statement(lifecycle)
+        except (DeviceLifecycleError, ValueError) as exc:
+            raise ValueError(str(exc)) from exc
+
+        statement = lifecycle.statement
+        if active_device.device_id != statement.device_id:
+            raise ValueError(
+                "device lifecycle active DeviceID does not match its certificate"
+            )
+
+        encoded_ghost_id = urllib.parse.quote(statement.ghost_id, safe=":")
+        payload: dict[str, object] = {
+            "version": _DEVICE_LIFECYCLE_RELAY_VERSION,
+            "identity_public_key": base64.b64encode(
+                identity_public_key
+            ).decode("ascii"),
+            "statement": serialized,
+        }
+        status_code, body = self._request(
+            "PUT",
+            f"/v3/device-lifecycle/{encoded_ghost_id}",
+            payload,
+        )
+        if status_code != 200:
+            raise GhostNodeRequestError(
+                status_code,
+                _extract_error_detail(body),
+            )
+
+        record = _parse_device_lifecycle_record(body)
+        if record.ghost_id != statement.ghost_id:
+            raise GhostNodeProtocolError(
+                "device lifecycle receipt GhostID does not match the request"
+            )
+        if record.identity_public_key != identity_public_key:
+            raise GhostNodeProtocolError(
+                "device lifecycle receipt identity key does not match the request"
+            )
+        if record.lifecycle != lifecycle:
+            raise GhostNodeProtocolError(
+                "device lifecycle receipt differs from the submitted statement"
+            )
+        return record
+
+    def get_device_lifecycle(
+        self,
+        ghost_id: str,
+    ) -> DeviceLifecycleRelayRecord:
+        """Fetch and cryptographically verify one relay lifecycle head."""
+        if not ghost_id.startswith("ghost1:"):
+            raise ValueError("ghost_id must use the ghost1 format")
+        encoded_ghost_id = urllib.parse.quote(ghost_id, safe=":")
+        status_code, body = self._request(
+            "GET",
+            f"/v3/device-lifecycle/{encoded_ghost_id}",
+        )
+        if status_code != 200:
+            raise GhostNodeRequestError(
+                status_code,
+                _extract_error_detail(body),
+            )
+        record = _parse_device_lifecycle_record(body)
+        if record.ghost_id != ghost_id:
+            raise GhostNodeProtocolError(
+                "device lifecycle response GhostID does not match the request"
+            )
+        return record
 
     def health(self) -> bool:
         """Return whether GhostNode reports a healthy status."""
