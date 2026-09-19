@@ -526,7 +526,15 @@ A relay publication outage therefore leaves the previous profile active and the 
 
 Recognized pending/archive/vault combinations are either resumed according to the recovery checks or rejected as inconsistent.
 
-The consolidation test phase must enumerate every significant interruption point; this document does not assume current tests cover all of them.
+The adversarial interruption matrix establishes three classes:
+
+1. **before active-profile promotion**: the old profile remains authoritative; an existing valid pending N+1 candidate is resumed, otherwise retry creates a fresh N+1 candidate;
+2. **after active-profile promotion but before its witness is durably synchronized**: the promoted N+1 profile is a valid exactly-one-step successor, so startup reconciliation may advance the profile witness to N+1. A subsequent explicit `device-recover` request is then a new transaction and rotates to N+2;
+3. **after the candidate and witnesses are current but cleanup remains**: recognized leftover recovery artifacts are finalized without rotating the active DeviceID/epoch again.
+
+A pending recovery archive without the ratchet witness required to authenticate its predecessor, or a vault/witness existence mismatch, fails closed.
+
+This means recovery is fail-closed and resumable at the tested durability boundaries, but late post-promotion retry is not transaction-identity idempotent: it may consume an additional lifecycle epoch rather than reconstructing the already-promoted transaction marker.
 
 ---
 
