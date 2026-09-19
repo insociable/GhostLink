@@ -12,6 +12,7 @@ import tempfile
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from threading import RLock
 
 from nacl.exceptions import CryptoError
 from nacl.secret import SecretBox
@@ -134,6 +135,7 @@ class ContactTrustStore:
     revision: int | None = None
     previous_digest: str | None = None
     checkpoint_digest: str | None = field(default=None, repr=False)
+    _update_lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
     def list_records(self) -> tuple[ContactTrustRecord, ...]:
         """Return records in a stable display order."""
@@ -183,64 +185,65 @@ class ContactTrustStore:
         bundle: str,
     ) -> ContactTrustRecord:
         """Apply new valid public material without silently changing pinned identity."""
-        record = self.get(record_id)
-        canonical_bundle, contact = _validated_bundle(bundle)
+        with self._update_lock:
+            record = self.get(record_id)
+            canonical_bundle, contact = _validated_bundle(bundle)
 
-        if record.state is ContactTrustState.CHANGED:
-            raise ContactTrustError(
-                "contact identity change requires explicit verification or rejection"
-            )
+            if record.state is ContactTrustState.CHANGED:
+                raise ContactTrustError(
+                    "contact identity change requires explicit verification or rejection"
+                )
 
-        if record.state is ContactTrustState.IMPORTED:
-            if _require_monotonic_lifecycle_update(
-                record.current_contact,
-                contact,
-                current_bundle=record.current_bundle,
-                candidate_bundle=canonical_bundle,
-            ):
-                return record
-            updated = ContactTrustRecord(
-                record_id=record.record_id,
-                label=record.label,
-                state=ContactTrustState.IMPORTED,
-                current_bundle=canonical_bundle,
-                pinned_ghost_id=None,
-                candidate_bundle=None,
-            )
+            if record.state is ContactTrustState.IMPORTED:
+                if _require_monotonic_lifecycle_update(
+                    record.current_contact,
+                    contact,
+                    current_bundle=record.current_bundle,
+                    candidate_bundle=canonical_bundle,
+                ):
+                    return record
+                updated = ContactTrustRecord(
+                    record_id=record.record_id,
+                    label=record.label,
+                    state=ContactTrustState.IMPORTED,
+                    current_bundle=canonical_bundle,
+                    pinned_ghost_id=None,
+                    candidate_bundle=None,
+                )
+                self.records[record_id] = updated
+                return updated
+
+            if record.pinned_ghost_id is None:
+                raise ContactTrustError("verified contact is missing its pinned identity")
+
+            if contact.ghost_id == record.pinned_ghost_id:
+                if _require_monotonic_lifecycle_update(
+                    record.current_contact,
+                    contact,
+                    current_bundle=record.current_bundle,
+                    candidate_bundle=canonical_bundle,
+                ):
+                    return record
+                updated = ContactTrustRecord(
+                    record_id=record.record_id,
+                    label=record.label,
+                    state=ContactTrustState.VERIFIED,
+                    current_bundle=canonical_bundle,
+                    pinned_ghost_id=record.pinned_ghost_id,
+                    candidate_bundle=None,
+                )
+            else:
+                updated = ContactTrustRecord(
+                    record_id=record.record_id,
+                    label=record.label,
+                    state=ContactTrustState.CHANGED,
+                    current_bundle=record.current_bundle,
+                    pinned_ghost_id=record.pinned_ghost_id,
+                    candidate_bundle=canonical_bundle,
+                )
+
             self.records[record_id] = updated
             return updated
-
-        if record.pinned_ghost_id is None:
-            raise ContactTrustError("verified contact is missing its pinned identity")
-
-        if contact.ghost_id == record.pinned_ghost_id:
-            if _require_monotonic_lifecycle_update(
-                record.current_contact,
-                contact,
-                current_bundle=record.current_bundle,
-                candidate_bundle=canonical_bundle,
-            ):
-                return record
-            updated = ContactTrustRecord(
-                record_id=record.record_id,
-                label=record.label,
-                state=ContactTrustState.VERIFIED,
-                current_bundle=canonical_bundle,
-                pinned_ghost_id=record.pinned_ghost_id,
-                candidate_bundle=None,
-            )
-        else:
-            updated = ContactTrustRecord(
-                record_id=record.record_id,
-                label=record.label,
-                state=ContactTrustState.CHANGED,
-                current_bundle=record.current_bundle,
-                pinned_ghost_id=record.pinned_ghost_id,
-                candidate_bundle=canonical_bundle,
-            )
-
-        self.records[record_id] = updated
-        return updated
 
     def verify_identity(
         self,
